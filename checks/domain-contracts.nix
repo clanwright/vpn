@@ -196,7 +196,7 @@ let
       self.packages.${system}.adguardhome == inputs.nixpkgs.legacyPackages.${system}.adguardhome;
     unbound = machine.services.unbound.package == self.packages.${system}.unbound;
     unboundUpstream =
-      self.packages.${system}.unbound == inputs.nixpkgs.legacyPackages.${system}.unbound;
+      self.packages.${system}.unbound == inputs.nixpkgs.legacyPackages.${system}.unbound-with-systemd;
     mihomo = machine.networkCore.mihomo.packages == [ self.packages.${system}.mihomo ];
     awgOverlayPresent = awgOverlays != [ ];
     awgGo = (awgOverlay pkgs pkgs).amneziawg-go == self.packages.${system}.amneziawg-go;

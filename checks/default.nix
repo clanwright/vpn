@@ -35,4 +35,5 @@
     inherit pkgs self;
     lib = inputs.nixpkgs.lib;
   };
+  unbound-readiness = import ./unbound-readiness.nix { inherit pkgs self; };
 }

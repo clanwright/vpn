@@ -86,7 +86,8 @@ linux_checks() {
 		.#checks.x86_64-linux.domain-contracts \
 		.#checks.x86_64-linux.combined-clan-fixture \
 		.#checks.x86_64-linux.client-render-smoke \
-		.#checks.x86_64-linux.amneziawg-key-consistency
+		.#checks.x86_64-linux.amneziawg-key-consistency \
+		.#checks.x86_64-linux.unbound-readiness
 }
 
 owned_packages() {

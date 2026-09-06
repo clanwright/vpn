@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.1.1
+
+- Export the systemd-enabled Unbound package required by the native NixOS
+  `Type=notify` service.
+- Add a VM-free native-process check for Unbound readiness notification.
+
+This entry describes the candidate contents; it does not claim publication,
+consumer adoption, deployment or live endpoint acceptance.
+
 ## 0.1.0
 
 Initial public release candidate.
