@@ -19,5 +19,6 @@ complete local verification gate and retain its generated artifacts. A passing
 gate does not authorize deployment, provider/DNS changes, secret mutation or
 release publication.
 
-The repository skill `.agents/skills/rkn-vpn-hardening/SKILL.md` supports
-Russia-specific censorship and VPN detection analysis.
+The universal skill `.agents/skills/russia-vpn/SKILL.md` supports VPN
+selection, configuration and diagnosis for Russia, including RKN/TSPU blocking
+and app-side detection.

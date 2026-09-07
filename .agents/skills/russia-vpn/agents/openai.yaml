@@ -1,0 +1,4 @@
+interface:
+  display_name: "VPN для России"
+  short_description: "Выбор, настройка и диагностика VPN в РФ"
+  default_prompt: "Используй $russia-vpn для выбора, настройки или диагностики VPN в России с учетом текущих блокировок РКН/ТСПУ."

@@ -1,4 +1,0 @@
-interface:
-  display_name: "RKN VPN Hardening"
-  short_description: "VPN hardening for RKN/TSPU detection"
-  default_prompt: "Use $rkn-vpn-hardening to assess a VPN setup against RKN/TSPU detection risks."
