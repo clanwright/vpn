@@ -18,3 +18,6 @@ Operator commands belong only in `docs/operations/`. Before release, run the
 complete local verification gate and retain its generated artifacts. A passing
 gate does not authorize deployment, provider/DNS changes, secret mutation or
 release publication.
+
+The repository skill `.agents/skills/rkn-vpn-hardening/SKILL.md` supports
+Russia-specific censorship and VPN detection analysis.
