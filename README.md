@@ -24,6 +24,10 @@ See [architecture](docs/architecture.md), [contracts](docs/contracts.md),
 [package authority](docs/package-authority.md), and the
 [verification procedure](docs/operations/verify.md).
 
+The [September 2026 audit](docs/audit-2026-09.md) records the observed baseline,
+agreed requirements, recommendations and unresolved questions. Recommendations
+are not implemented configuration or authorization to deploy.
+
 ## Support
 
 Runtime modules and packages support `x86_64-linux`. Darwin outputs are limited
@@ -35,6 +39,11 @@ repository has no hosted CI or automatic merging.
 Follow the [verification procedure](docs/operations/verify.md). It retains
 stage logs, durations and a summary under the ignored `.work/verification/`
 directory. A passing build is not deployment or live endpoint evidence.
+
+This project does not use virtual machines. VM configurations and tests that
+create or boot VMs are prohibited; repository verification runs without them.
+Configuration and checks are defined in Nix; Python scripts and test harnesses
+are prohibited.
 
 ## License
 

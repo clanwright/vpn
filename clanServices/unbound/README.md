@@ -4,47 +4,66 @@
 
 Граница домена описана в [архитектуре](../../docs/architecture.md), публичный API — в [контрактах](../../docs/contracts.md).
 
-Это recursive DNS backend на native `services.unbound`. Роль намеренно
-ограничена loopback и может быть выбрана AdGuard Home как внутренний
-upstream.
+Это recursive DNS backend на native `services.unbound`. Роль ограничена
+loopback и может быть выбрана AdGuard Home как внутренний upstream. Она не
+задаёт AdGuard upstream и не открывает firewall: DNS-композиция остаётся у
+consumer.
 
 ## Settings
 
-Настройки: `listen.hosts`, `listen.port`, privacy flags
-`prefetch`, `hideIdentity`, `hideVersion`,
-`qnameMinimisation` и nullable
-`adguardIntegrationProvider`. Provider принимает только `null` или
-`dns-adguardhome`.
+`listen.hosts` принимает `null` либо непустой список loopback IP literals.
+Разрешены IPv4 из `127.0.0.0/8` и `::1`; hostnames, wildcard и public addresses
+отклоняются. `listen.port` принимает `1..65535`. Privacy flags:
+`prefetch`, `hideIdentity`, `hideVersion`, `qnameMinimisation`.
+`adguardIntegrationProvider` принимает только `null` или `dns-adguardhome`.
 
-## Defaults
+## Defaults and resolver policy
 
-Listen hosts — `127.0.0.1` и `::1`, порт — `5335`; privacy options
-включены. `resolveLocalQueries = false`. По умолчанию
-`adguardIntegrationProvider = "dns-adguardhome"`, поэтому Unbound по
-умолчанию задаёт ordering edge к AdGuard unit; значение `null` убирает
-эту зависимость.
+При `listen.hosts = null` effective listener — `127.0.0.1` и, только если host
+IPv6 включён, `::1`. Явные legacy lists сохраняются; явный `::1` на IPv4-only
+host отклоняется. Порт — `5335`, `resolveLocalQueries = false`.
+Inbound listener/ACL не управляет исходящей рекурсией: IPv4 recursion включена,
+а IPv6 recursion следует общей `networking.enableIPv6` host policy.
 
-## Exports and dependencies
+Native root trust anchor и DNSSEC validation остаются включены. Effective
+policy фиксирует validator module, запрещает permissive mode и локальные
+insecure trust exceptions, а также требует `harden-dnssec-stripped`. Unbound слушает
+UDP и TCP, использует EDNS buffer `1232`, QNAME minimisation без strict mode,
+`prefetch`, `cache-min-ttl = 0` и не получает ECS/per-query logging от роли.
+Bounded stale policy: `serve-expired = yes`, horizon `86400`, без TTL reset,
+fresh-answer wait `1800ms`, stale reply TTL `30s`.
 
-Typed export роль не публикует. При значении
-`adguardIntegrationProvider = "dns-adguardhome"` добавляются
-`After=` и `Requires=` для `adguardhome.service`; при `null`
-ordering edge отсутствует.
+## Integration dependency
+
+По умолчанию `adguardIntegrationProvider = "dns-adguardhome"` добавляет только
+soft `Wants=unbound.service` к `adguardhome.service`. Роль не добавляет
+`Requires=` или `After=`: отказ/медленный старт backend не должен блокировать
+AdGuard и его consumer-owned fallback. При `null` startup edge отсутствует.
+
+## Trust-anchor lifecycle
+
+Используется native NixOS lifecycle и `${stateDir}/root.key`. В закреплённом
+NixOS module `unbound-anchor` status `1` обрабатывается как событие обновления:
+upstream определяет его как использование builtin anchor или certificate
+update. Status `0` означает как отсутствие нужного обновления/RFC5011 success,
+так и ошибку; поэтому status сам по себе не различает сетевую ошибку при
+сохранённом usable anchor. Роль не заменяет native preStart ненадёжной проверкой
+и не отключает DNSSEC. Реальный refresh и журнал проверяются при последующей
+machine acceptance.
 
 ## State and secrets
 
 Собственных SOPS inputs и state paths нет; native Unbound runtime управляет
-своими рабочими файлами. Роль не материализует credentials.
-
-## Network exposure
-
-Unbound слушает только loopback на TCP/UDP `5335`; public, tailnet и
-WAN listeners не создаются. AdGuard принимает клиентский DNS отдельно и
-может направлять запросы на этот backend.
+рабочими файлами. Роль не материализует credentials.
 
 ## Verification
 
-Read-only evaluation:
-`nix eval --no-write-lock-file .#nixosConfigurations.<machine>.config.services.unbound`.
-Проверить loopback bind, privacy settings и наличие ordering edge только
-при выбранном provider; внешние DNS ports не должны появиться.
+`unbound-contracts` проверяет schema defaults/invalid values, IPv4-only policy,
+effective override assertions и парсит generated native configuration через
+закреплённый `unbound-checkconf`. Native-process checks отдельно проверяют
+`READY=1` и DNS behavior без VM. Это не доказывает systemd activation, Internet
+trust-anchor refresh или фактический AdGuard fallback на production machine.
+
+Freeform `include`, `include-toplevel` и server-level `include` отклоняются:
+они могли бы добавить listeners или ослабить DNSSEC после проверки typed attrs,
+а native NixOS checkconf отключается при top-level `include`.

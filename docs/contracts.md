@@ -33,3 +33,25 @@ change and a new release.
 Secret values are outside this contract. Modules accept declared runtime paths
 and metadata from the consumer; they do not own, generate or publish consumer
 credentials.
+
+The Naive add-on accepts an identity-to-secret-name map; the former
+`ibelyasov`, `bsv`, `probe` keys remain valid. `probeUserName` identifies the
+probe account and excludes it from ordinary device profiles. Secret values must
+be nonempty unpadded base64url strings without whitespace or a terminal newline.
+The consumer's Clan vars generator owns this constraint: sops-nix templates do
+literal runtime substitution and do not escape arbitrary Caddyfile tokens.
+
+Naive uses a native `sops.templates` fragment and the existing Caddy reload
+lifecycle. It has no dedicated generator, staging, refresh or rollback service.
+The selected public-site claim must have one explicit listener matching the
+declared bind address. `additionalDeny` accepts IP addresses/CIDRs only; hostname
+denies are excluded because the pinned upstream matcher is case-sensitive.
+
+The Unbound role accepts `listen.hosts = null` for automatic loopback selection:
+IPv4 loopback plus IPv6 loopback when the host enables IPv6. An explicit list
+must be nonempty and contain supported loopback IP literals; an explicit IPv6
+listener conflicts with a host that disables IPv6. Ports must be in 1-65535.
+The effective backend configuration retains loopback ACLs, DNSSEC validation and
+bounded stale policy. The optional AdGuard integration requests backend startup
+with `Wants=` and adds no backend readiness wait or hard service dependency.
+The consumer still supplies the AdGuard upstream binding explicitly.

@@ -1,70 +1,69 @@
 { pkgs, self }:
 pkgs.runCommand "vpn-unbound-readiness"
   {
-    nativeBuildInputs = [ pkgs.python3 ];
-    UNBOUND_EXE = "${self.packages.${pkgs.system}.unbound}/bin/unbound";
+    nativeBuildInputs = [
+      pkgs.coreutils
+      pkgs.gnugrep
+      pkgs.socat
+    ];
+    UNBOUND_EXE = "${self.packages.x86_64-linux.unbound}/bin/unbound";
   }
   ''
-    set -euo pipefail
-    python3 <<'PY'
-    import os
-    import pathlib
-    import socket
-    import subprocess
+        set -euo pipefail
+        mkdir -p "$out"
+        exec > >(tee "$out/test.log") 2>&1
 
-    workdir = pathlib.Path(os.environ["TMPDIR"])
-    notify_path = workdir / "notify.sock"
-    receiver = socket.socket(socket.AF_UNIX, socket.SOCK_DGRAM)
-    receiver.bind(str(notify_path))
-    receiver.settimeout(10)
+        workdir="$TMPDIR/readiness"
+        mkdir -p "$workdir"
+        notify_socket="$workdir/notify.sock"
+        notify_log="$workdir/notify.log"
+        unbound_log="$workdir/unbound.log"
+        receiver_pid=""
+        unbound_pid=""
 
-    port_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    port_socket.bind(("127.0.0.1", 0))
-    port = port_socket.getsockname()[1]
-    port_socket.close()
+        cleanup() {
+          if [ -n "$unbound_pid" ]; then
+            kill "$unbound_pid" 2>/dev/null || true
+            wait "$unbound_pid" 2>/dev/null || true
+          fi
+          if [ -n "$receiver_pid" ]; then
+            kill "$receiver_pid" 2>/dev/null || true
+            wait "$receiver_pid" 2>/dev/null || true
+          fi
+        }
+        trap cleanup EXIT
 
-    config_path = workdir / "unbound.conf"
-    config_path.write_text(
-        "server:\n"
-        "  interface: 127.0.0.1\n"
-        "  port: %d\n"
-        "  do-daemonize: no\n"
-        "  use-syslog: no\n"
-        '  username: ""\n'
-        '  chroot: ""\n'
-        '  directory: "%s"\n'
-        '  pidfile: ""\n'
-        '  logfile: ""\n' % (port, workdir)
-    )
+        port=$((20000 + $(od -An -N2 -tu2 /dev/urandom) % 20000))
+        cat > "$workdir/unbound.conf" <<EOF
+    server:
+      interface: 127.0.0.1
+      port: $port
+      do-daemonize: no
+      use-syslog: no
+      username: ""
+      chroot: ""
+      directory: "$workdir"
+      pidfile: ""
+      logfile: ""
+    EOF
 
-    environment = os.environ.copy()
-    environment["NOTIFY_SOCKET"] = str(notify_path)
-    process = subprocess.Popen(
-        [os.environ["UNBOUND_EXE"], "-d", "-c", str(config_path)],
-        env=environment,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.STDOUT,
-        text=True,
-    )
-    try:
-        message = receiver.recv(4096).decode("utf-8", errors="replace")
-        if "READY=1" not in message.splitlines():
-            raise RuntimeError("unexpected sd_notify message: %r" % message)
-        pathlib.Path(os.environ["out"]).touch()
-    except Exception:
-        process.terminate()
-        output, _ = process.communicate(timeout=5)
-        if output:
-            print(output, end="", file=os.sys.stderr)
-        raise
-    finally:
-        if process.poll() is None:
-            process.terminate()
-        try:
-            process.wait(timeout=5)
-        except subprocess.TimeoutExpired:
-            process.kill()
-            process.wait()
-        receiver.close()
-    PY
+        timeout 10s socat -u "UNIX-RECVFROM:$notify_socket" - > "$notify_log" &
+        receiver_pid=$!
+        for attempt in $(seq 1 100); do
+          [ -S "$notify_socket" ] && break
+          kill -0 "$receiver_pid" 2>/dev/null
+          sleep 0.02
+        done
+        test -S "$notify_socket"
+
+        NOTIFY_SOCKET="$notify_socket" "$UNBOUND_EXE" -d -c "$workdir/unbound.conf" > "$unbound_log" 2>&1 &
+        unbound_pid=$!
+        if ! wait "$receiver_pid"; then
+          cat "$unbound_log"
+          exit 1
+        fi
+        receiver_pid=""
+        grep -Fx 'READY=1' "$notify_log"
+        kill -0 "$unbound_pid"
+        echo 'PASS exact exported Unbound emitted READY=1 over a real NOTIFY_SOCKET'
   ''

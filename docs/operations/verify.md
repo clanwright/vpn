@@ -1,5 +1,12 @@
 # Verify a candidate
 
+Virtual machines are prohibited in this project, including VM configurations,
+NixOS VM tests and QEMU/KVM/TCG runners. All repository verification must run
+without creating or booting a VM.
+
+Checks are defined in Nix and invoke packaged CLI tools. Python scripts and
+Python-based test harnesses are prohibited.
+
 Run the complete local gate from the repository root:
 
 ```bash
@@ -13,7 +20,9 @@ The script enters the pinned development shell once and executes four stages:
 2. `flake-eval`: `x86_64-linux` flake evaluation and public module, check and
    package attribute evaluation.
 3. `linux-checks`: domain contracts, combined Clan fixture, client render smoke,
-   AmneziaWG key consistency and native Unbound readiness builds.
+   AmneziaWG key consistency, Unbound contracts/native readiness/DNS behavior and NaiveProxy
+   contracts. Native DNS tests use local fixture processes and temporary signing
+   keys; they do not create a VM or query production DNS.
 4. `owned-packages`: builds Mihomo, Mihomo keygen, Sing-box, NaiveProxy,
    AmneziaWG Go, AmneziaWG tools, AdGuard Home and Unbound.
 

@@ -36,4 +36,16 @@
     lib = inputs.nixpkgs.lib;
   };
   unbound-readiness = import ./unbound-readiness.nix { inherit pkgs self; };
+  unbound-contracts = import ./unbound-contracts.nix {
+    inherit
+      inputs
+      pkgs
+      self
+      system
+      ;
+  };
+  unbound-runtime = import ./unbound-runtime.nix { inherit pkgs self; };
+  naiveproxy-contracts = import ./naiveproxy-contracts.nix {
+    inherit inputs pkgs;
+  };
 }

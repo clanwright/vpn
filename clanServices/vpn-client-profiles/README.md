@@ -36,6 +36,26 @@ disabled, неоднозначный или несоответствующий p
 Mihomo, Sing-box и AmneziaWG tools передаются роли из `apps-nixpkgs`; сама
 роль не выбирает package stream и не собирает сторонние клиенты локально.
 
+Sing-box профиль сохраняет Naive как отдельный HTTPS/H2 outbound с проверкой
+TLS, `quic = false`, `udp_over_tcp = false` и `insecure_concurrency = 0`.
+UDP, совпавший с защищаемыми rule sets, отклоняется до Naive: TCP-only путь не
+получает скрытый DIRECT fallback. Ранее согласованные прямые исключения для
+LAN, router, Tailscale и DNS обрабатываются раньше. `route.final = DIRECT`
+сохраняет текущий selective scope; общий full mode этим модулем не реализован.
+DIRECT не входит в VPN selector: при отказе выбранного пути защищаемый трафик
+не переключается автоматически, а отключение VPN остаётся явным действием
+пользователя в клиенте.
+
+Если для публикуемого Sing-box профиля нет eligible Naive provider, renderer
+не создаёт пустой URLTest: `PROXY` остаётся валидным DIRECT-only selector, а
+Naive-specific UDP reject не применяется. Это сохраняет совместимость профилей,
+которые получают только другие protocol providers.
+
+Naive credentials выбираются по именам профилей из provider export. Карта не
+ограничена встроенными device names, а probe публикуется только если consumer
+явно включает его в `profiles` и `providerRefs`; штатный default исключает
+`probe` из публикации.
+
 ## State and secrets
 
 Runtime files находятся под `/run/mihomo-client-config/<machine>` и

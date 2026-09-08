@@ -138,7 +138,7 @@ let
         builtins.length machine.networkCore.mihomo.hysteria2 == 1
         && machine.systemd.services ? mihomo-gateway;
       vpn-amneziawg = machine.networking.wireguard.interfaces ? awg-fixture;
-      vpn-naiveproxy = machine.systemd.services ? naiveproxy-caddy-fragment-fixture;
+      vpn-naiveproxy = machine.sops.templates ? "naiveproxy-fixture.caddy";
       vpn-client-profiles = !(machine.systemd.services ? mihomo-client-caddy-fixture);
       dns-adguardhome = machine.services.adguardhome.enable;
       dns-unbound = machine.services.unbound.enable;
@@ -196,7 +196,10 @@ let
       self.packages.${system}.adguardhome == inputs.nixpkgs.legacyPackages.${system}.adguardhome;
     unbound = machine.services.unbound.package == self.packages.${system}.unbound;
     unboundUpstream =
-      self.packages.${system}.unbound == inputs.nixpkgs.legacyPackages.${system}.unbound-with-systemd;
+      self.packages.${system}.unbound == (import inputs.apps-nixpkgs { inherit system; })
+      .unbound-with-systemd
+      && self.packages.${system}.unbound.version == "1.26.0"
+      && builtins.elem "--enable-systemd" self.packages.${system}.unbound.configureFlags;
     mihomo = machine.networkCore.mihomo.packages == [ self.packages.${system}.mihomo ];
     awgOverlayPresent = awgOverlays != [ ];
     awgGo = (awgOverlay pkgs pkgs).amneziawg-go == self.packages.${system}.amneziawg-go;

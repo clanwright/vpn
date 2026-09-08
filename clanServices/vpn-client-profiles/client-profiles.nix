@@ -156,8 +156,10 @@ let
       type = "remote";
       inherit tag url;
       format = "binary";
-      download_detour = downloadDetour;
       update_interval = "1d";
+    }
+    // lib.optionalAttrs (downloadDetour != null) {
+      download_detour = downloadDetour;
     };
 
   upstreamRuleSets = [
@@ -278,9 +280,10 @@ let
     }
   ];
 
-  # Harbor fetches the upstream .srs on a timer (ruleSetMirrorService). Clients
-  # download only the mirrored copy through an already-created concrete
-  # outbound, avoiding a cold-start dependency on the censored direct path.
+  # Harbor fetches the upstream .srs on a timer (ruleSetMirrorService). Profiles
+  # with Naive download the mirrored copy through a concrete outbound, avoiding
+  # a cold-start dependency on the censored direct path. Profiles without an
+  # eligible Naive provider use sing-box's default direct downloader.
   mkSingBoxRuleSets =
     downloadDetour:
     map (
@@ -766,11 +769,7 @@ let
           (builtins.head alternateNaiveCredentials).tag
         else
           firstNaiveOutboundTag;
-      _ = lib.throwIf (
-        publishProfileJson && naiveCredentials == [ ]
-      ) "profile.json requires at least one NaiveProxy outbound for ${basename}" null;
-
-      profileJsonTemplate = lib.seq _ {
+      profileJsonTemplate = {
         log = {
           level = "info";
           timestamp = true;
@@ -837,20 +836,21 @@ let
           {
             type = "selector";
             tag = "PROXY";
-            outbounds = [
-              "PROXY-AUTO"
-              "DIRECT"
-            ]
-            ++ naiveOutboundTags;
-            default = if firstNaiveOutboundTag == null then "DIRECT" else "PROXY-AUTO";
+            # Profiles with Naive stay fail-closed. A profile with no eligible
+            # Naive provider retains the previous DIRECT-only behavior.
+            outbounds =
+              if naiveOutboundTags == [ ] then [ "DIRECT" ] else [ "PROXY-AUTO" ] ++ naiveOutboundTags;
+            default = if naiveOutboundTags == [ ] then "DIRECT" else "PROXY-AUTO";
           }
-          {
-            type = "urltest";
-            tag = "PROXY-AUTO";
-            outbounds = naiveOutboundTags;
-            url = probeUrl64k;
-            interval = "5m";
-          }
+        ]
+        ++ lib.optional (naiveOutboundTags != [ ]) {
+          type = "urltest";
+          tag = "PROXY-AUTO";
+          outbounds = naiveOutboundTags;
+          url = probeUrl64k;
+          interval = "5m";
+        }
+        ++ [
           {
             type = "direct";
             tag = "DIRECT";
@@ -895,28 +895,31 @@ let
             domain = settings.tailnetAdminDomains;
             outbound = "DIRECT";
           }
+          ++ lib.optional (naiveOutboundTags != [ ]) {
+            # Naive is TCP-only here (UoT and QUIC are disabled). Reject every
+            # UDP flow selected by the protected rule sets instead of allowing
+            # it to fall through to route.final = DIRECT. Private, multicast,
+            # tailnet-admin and DNS rules stay ahead of this policy gate.
+            network = "udp";
+            rule_set = [
+              "personal_proxy_domains"
+              "ai_non_cn_domains"
+              "ai_cn_domains"
+              "category_dev_domains"
+              "secure_dns_domains"
+              "youtube_domains"
+              "google_domains"
+              "google_ips"
+              "telegram_domains"
+              "telegram_ips"
+              "ru_blocked_and_geoblocked_domains"
+              "ru_blocked_asn_ips"
+              "refilter_blocked_domains"
+              "refilter_blocked_ips"
+            ];
+            action = "reject";
+          }
           ++ [
-            {
-              network = "udp";
-              port = 443;
-              rule_set = [
-                "personal_proxy_domains"
-                "ai_non_cn_domains"
-                "ai_cn_domains"
-                "category_dev_domains"
-                "secure_dns_domains"
-                "youtube_domains"
-                "google_domains"
-                "google_ips"
-                "telegram_domains"
-                "telegram_ips"
-                "ru_blocked_and_geoblocked_domains"
-                "ru_blocked_asn_ips"
-                "refilter_blocked_domains"
-                "refilter_blocked_ips"
-              ];
-              action = "reject";
-            }
             {
               rule_set = "personal_proxy_domains";
               outbound = "PROXY";

@@ -32,11 +32,16 @@ let
     && units ? mihomo-gateway-config-generator
     && lib.hasInfix "vless-in" generator.script
     && lib.hasInfix "hysteria2-in" generator.script
-    && units ? naiveproxy-caddy-fragment-fixture
+    && machine.sops.templates ? "naiveproxy-fixture.caddy"
+    && machine.sops.templates."naiveproxy-fixture.caddy".reloadUnits == [ "caddy.service" ]
+    && !(units ? naiveproxy-caddy-fragment-fixture)
+    && !(units ? naiveproxy-caddy-refresh-fixture)
     && machine.services.adguardhome.enable
     && machine.services.unbound.enable
-    && builtins.elem "unbound.service" units.adguardhome.after
-    && builtins.elem "unbound.service" units.adguardhome.requires
+    && builtins.elem "unbound.service" units.adguardhome.wants
+    && !(builtins.elem "unbound.service" units.adguardhome.after)
+    && !(builtins.elem "unbound.service" units.adguardhome.requires)
+    && machine.services.adguardhome.settings.dns.upstream_dns == [ "127.0.0.1:5335" ]
     && machine.networkCore.caddy.effectiveFragments ? fixture-site
     && builtins.elem "forward-proxy" machine.networkCore.caddy.effectiveFragments.fixture-site.capabilities;
 in

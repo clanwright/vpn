@@ -72,9 +72,13 @@
               amneziawg-tools
               ;
             inherit (pkgs) adguardhome;
-            unbound = pkgs.unbound-with-systemd;
+            unbound = appsPkgs.unbound-with-systemd;
           }
           // (import ./packages/naiveproxy.nix {
+            inherit system;
+            inherit apps-nixpkgs;
+          })
+          // (import ./packages/sing-box.nix {
             inherit system;
             inherit apps-nixpkgs;
           })

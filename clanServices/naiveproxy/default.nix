@@ -1,4 +1,55 @@
 { lib, ... }:
+let
+  identityPattern = "[A-Za-z0-9][A-Za-z0-9._-]{0,63}";
+  secretNamePattern = "[A-Za-z0-9_][A-Za-z0-9_.+-]*(/[A-Za-z0-9_][A-Za-z0-9_.+-]*)*";
+  validIdentity = value: builtins.match identityPattern value != null;
+  validSecretName = value: builtins.match secretNamePattern value != null;
+  parseCanonicalDecimal = value: builtins.match "(0|[1-9][0-9]{0,2})" value != null;
+  validPrefix =
+    maximum: value:
+    parseCanonicalDecimal value && builtins.fromJSON value >= 0 && builtins.fromJSON value <= maximum;
+  validIPv4 =
+    value:
+    let
+      octets = lib.splitString "." value;
+    in
+    lib.length octets == 4
+    && builtins.all (
+      octet: parseCanonicalDecimal octet && builtins.fromJSON octet >= 0 && builtins.fromJSON octet <= 255
+    ) octets;
+  validIPv6 =
+    value:
+    let
+      compressedParts = lib.splitString "::" value;
+      compressed = lib.length compressedParts == 2;
+      hextets = lib.concatMap (
+        part: if part == "" then [ ] else lib.splitString ":" part
+      ) compressedParts;
+      validHextet = hextet: builtins.match "[0-9A-Fa-f]{1,4}" hextet != null;
+    in
+    value != ""
+    && lib.length compressedParts <= 2
+    && builtins.all validHextet hextets
+    && (if compressed then lib.length hextets < 8 else lib.length hextets == 8);
+  validAclAddress =
+    value:
+    let
+      parts = lib.splitString "/" value;
+      address = builtins.head parts;
+      hasPrefix = lib.length parts == 2;
+      ipv6 = lib.hasInfix ":" address;
+      addressValid = if ipv6 then validIPv6 address else validIPv4 address;
+      prefixValid = !hasPrefix || validPrefix (if ipv6 then 128 else 32) (builtins.elemAt parts 1);
+    in
+    lib.length parts <= 2 && addressValid && prefixValid;
+  passwordSecretNamesType = lib.types.addCheck (lib.types.attrsOf lib.types.str) (
+    value:
+    value != { }
+    && builtins.all validIdentity (builtins.attrNames value)
+    && builtins.all validSecretName (builtins.attrValues value)
+    && lib.length (lib.unique (builtins.attrValues value)) == lib.length (builtins.attrValues value)
+  );
+in
 {
   _class = "clan.service";
   manifest = {
@@ -22,7 +73,7 @@
           };
 
           machineName = lib.mkOption {
-            type = lib.types.str;
+            type = lib.types.addCheck lib.types.str validIdentity;
             description = "Short machine token used in the fragment and systemd unit names.";
           };
 
@@ -56,23 +107,20 @@
           };
 
           passwordSecretNames = lib.mkOption {
-            type = lib.types.submodule (_: {
-              options = {
-                ibelyasov = lib.mkOption {
-                  type = lib.types.str;
-                  description = "SOPS secret name for the ibelyasov forward-proxy credential.";
-                };
-                bsv = lib.mkOption {
-                  type = lib.types.str;
-                  description = "SOPS secret name for the bsv forward-proxy credential.";
-                };
-                probe = lib.mkOption {
-                  type = lib.types.str;
-                  description = "SOPS secret name for the dedicated probe credential.";
-                };
-              };
-            });
-            description = "Exactly three machine-scoped SOPS names consumed by forward_proxy basic_auth.";
+            type = passwordSecretNamesType;
+            description = "Identity to machine-scoped SOPS secret-name map consumed by forward_proxy basic_auth.";
+          };
+
+          probeUserName = lib.mkOption {
+            type = lib.types.addCheck lib.types.str validIdentity;
+            default = "probe";
+            description = "Identity reserved for health probes and excluded from ordinary device profiles.";
+          };
+
+          additionalDeny = lib.mkOption {
+            type = lib.types.listOf (lib.types.addCheck lib.types.str validAclAddress);
+            default = [ ];
+            description = "Additional consumer-owned IPv4/IPv6 addresses or CIDRs denied before public Internet access is allowed.";
           };
         };
       };
@@ -100,6 +148,8 @@
             publicIPv4 = "";
             caddyBindIPv4 = "";
           };
+        userNames = builtins.attrNames settings.passwordSecretNames;
+        profileNames = builtins.filter (name: name != settings.probeUserName) userNames;
       in
       {
         exports = lib.optionalAttrs active (mkExports {
@@ -119,17 +169,10 @@
             transportMetadata = {
               protocol = "naiveproxy";
               tlsServerName = selectedPublicSiteEndpoint.domain;
-              userNames = [
-                "ibelyasov"
-                "bsv"
-                "probe"
-              ];
+              inherit userNames;
               port = 443;
             };
-            profileNames = [
-              "ibelyasov"
-              "bsv"
-            ];
+            inherit profileNames;
             secretNames = {
               password = settings.passwordSecretNames;
             };
@@ -139,13 +182,47 @@
           {
             config,
             lib,
-            pkgs,
             ...
           }:
           let
-            fragmentPath = "/run/caddy-auth/naiveproxy-${settings.machineName}.caddy";
-            serviceName = "naiveproxy-caddy-fragment-${settings.machineName}";
+            templateName = "naiveproxy-${settings.machineName}.caddy";
+            fragmentPath = config.sops.templates.${templateName}.path;
+            caddyConfig = config.services.caddy;
             secretNames = builtins.attrValues settings.passwordSecretNames;
+            publicOnlyDeny = [
+              "0.0.0.0/8"
+              "10.0.0.0/8"
+              "100.64.0.0/10"
+              "127.0.0.0/8"
+              "169.254.0.0/16"
+              "172.16.0.0/12"
+              "192.0.0.0/24"
+              "192.0.2.0/24"
+              "192.88.99.0/24"
+              "192.168.0.0/16"
+              "198.18.0.0/15"
+              "198.51.100.0/24"
+              "203.0.113.0/24"
+              "224.0.0.0/4"
+              "240.0.0.0/4"
+              "::/128"
+              "::1/128"
+              "64:ff9b:1::/48"
+              "100::/64"
+              "100:0:0:1::/64"
+              "2001::/32"
+              "2001:10::/28"
+              "2001:20::/28"
+              "2001:2::/48"
+              "2001:db8::/32"
+              "2002::/16"
+              "3fff::/20"
+              "5f00::/16"
+              "fc00::/7"
+              "fe80::/10"
+              "ff00::/8"
+            ];
+            denySubjects = lib.unique (publicOnlyDeny ++ settings.additionalDeny);
             selectedClaim =
               let
                 claims = ((config.networkCore or { }).caddy or { }).fragments or { };
@@ -159,14 +236,32 @@
                 null
               else
                 builtins.head selectedClaim.listenAddresses;
-            secretPath = name: lib.escapeShellArg config.sops.secrets.${name}.path;
-            restartUnits = [
-              "${serviceName}.service"
-              "caddy.service"
-            ];
+            basicAuthLines = lib.concatMapStringsSep "\n" (
+              identity:
+              "  basic_auth ${identity} ${config.sops.placeholder.${settings.passwordSecretNames.${identity}}}"
+            ) userNames;
+            fragmentContent = ''
+              forward_proxy {
+              ${basicAuthLines}
+                hide_ip
+                hide_via
+                acl {
+                  deny ${lib.concatStringsSep " " denySubjects}
+                  allow all
+                }
+                probe_resistance
+              }
+            '';
+            sopsUnits = lib.optional config.sops.useSystemdActivation "sops-install-secrets.service";
           in
           {
             assertions = [
+              {
+                assertion =
+                  !settings.enable
+                  || (caddyConfig.enableReload && caddyConfig.adapter == "caddyfile" && !caddyConfig.resume);
+                message = "naiveproxy: runtime credentials require native Caddyfile reload and resume disabled.";
+              }
               {
                 assertion = !settings.enable || settings.machineName != "";
                 message = "naiveproxy: machineName must not be empty when enabled.";
@@ -177,110 +272,82 @@
               }
               {
                 assertion =
+                  !settings.enable || builtins.hasAttr settings.probeUserName settings.passwordSecretNames;
+                message = "naiveproxy: probeUserName must name an identity in passwordSecretNames.";
+              }
+              {
+                assertion = !settings.enable || profileNames != [ ];
+                message = "naiveproxy: at least one non-probe device identity is required.";
+              }
+              {
+                assertion =
                   !settings.enable
                   || (
                     selectedClaim != null
+                    && (selectedClaim.publicSite or false)
                     && selectedPublicSiteEndpoint.domain != ""
                     && selectedPublicSiteEndpoint.domain == selectedClaim.hostName
                     && selectedPublicSiteEndpoint.publicIPv4 != ""
                     && selectedPublicSiteEndpoint.caddyBindIPv4 != ""
+                    && selectedPublicSiteEndpoint.caddyBindIPv4 != "0.0.0.0"
                     && selectedClaimPrimaryListenAddress != null
-                    && selectedPublicSiteEndpoint.caddyBindIPv4 == selectedClaimPrimaryListenAddress
+                    && selectedClaim.listenAddresses == [ selectedPublicSiteEndpoint.caddyBindIPv4 ]
                   );
-                message = "naiveproxy: selectedPublicSiteEndpoint must match the selected public-site claim domain/listen address.";
-              }
-              {
-                assertion = !settings.enable || builtins.all (name: name != "") secretNames;
-                message = "naiveproxy: password secret names must not be empty when enabled.";
-              }
-              {
-                assertion = !settings.enable || lib.length (lib.unique secretNames) == 3;
-                message = "naiveproxy: ibelyasov, bsv and probe secret names must be distinct.";
+                message = "naiveproxy: selected claim must be publicSite and have exactly the declared domain and isolated Caddy listener.";
               }
             ];
           }
           // lib.optionalAttrs settings.enable {
-            systemd.services.${serviceName} = {
-              description = "Generate NaiveProxy Caddy auth fragment for ${settings.machineName}";
-              before = [ "caddy.service" ];
-              requiredBy = [ "caddy.service" ];
-              serviceConfig = {
-                Type = "oneshot";
-                RemainAfterExit = true;
-                User = "root";
-                Group = "root";
-                UMask = "0027";
-              };
-              path = [ pkgs.coreutils ];
-              script = ''
-                set -euo pipefail
-
-                read_secret() {
-                  tr -d '\n' < "$1"
-                }
-
-                install -d -m 0750 -o root -g caddy /run/caddy-auth
-                fragment_tmp="$(mktemp /run/caddy-auth/.naiveproxy-${settings.machineName}.caddy.XXXXXX)"
-
-                printf 'forward_proxy {\n  basic_auth ibelyasov %s\n  basic_auth bsv %s\n  basic_auth probe %s\n  hide_ip\n  hide_via\n  ports 80 443\n  probe_resistance\n}\n' \
-                  "$(read_secret ${secretPath settings.passwordSecretNames.ibelyasov})" \
-                  "$(read_secret ${secretPath settings.passwordSecretNames.bsv})" \
-                  "$(read_secret ${secretPath settings.passwordSecretNames.probe})" \
-                  > "$fragment_tmp"
-
-                install -m 0640 -o root -g caddy "$fragment_tmp" ${lib.escapeShellArg fragmentPath}
-                rm -f "$fragment_tmp"
-              '';
+            sops.templates.${templateName} = {
+              content = fragmentContent;
+              owner = "root";
+              inherit (caddyConfig) group;
+              mode = "0440";
+              reloadUnits = [ "caddy.service" ];
             };
+            # Adapted config contains reversible auth material. Keep it in /run
+            # and memory; Caddy's default autosave must not persist credentials.
+            services.caddy.globalConfig = lib.mkAfter ''
+              persist_config off
+            '';
 
             sops.secrets = lib.genAttrs secretNames (name: {
               path = "/run/secrets/${name}";
               owner = "root";
               group = "root";
               mode = "0400";
-              inherit restartUnits;
             });
 
             networkCore.caddy.contributions = lib.optionalAttrs (selectedClaim != null) (
               lib.mapAttrs (
                 claimName: claim:
                 let
-                  selectedListeners = selectedClaim.listenAddresses;
-                  wildcard = addresses: addresses == [ ] || builtins.elem "0.0.0.0" addresses;
-                  shared =
-                    if wildcard claim.listenAddresses then
-                      selectedListeners
-                    else if wildcard selectedListeners then
-                      claim.listenAddresses
-                    else
-                      lib.intersectLists claim.listenAddresses selectedListeners;
-                  bothWildcard = wildcard claim.listenAddresses && wildcard selectedListeners;
-                  listenerExpression = lib.concatMapStringsSep " || " (
-                    address: ''{http.request.local.host} == "${address}"''
-                  ) shared;
                   isSelected = claimName == settings.selectedPublicSiteClaim;
-                  prelude =
-                    if isSelected || bothWildcard then
-                      "import ${fragmentPath}"
-                    else if shared == [ ] then
-                      ""
-                    else
-                      ''
-                        @naive_proxy_connect {
-                          method CONNECT
-                          expression `${listenerExpression}`
-                        }
-                        route @naive_proxy_connect {
-                          import ${fragmentPath}
-                        }
-                      '';
+                  wildcard = addresses: addresses == [ ] || builtins.elem "0.0.0.0" addresses;
+                  sharesSelectedListener =
+                    !isSelected
+                    && (
+                      wildcard claim.listenAddresses
+                      || builtins.elem selectedPublicSiteEndpoint.caddyBindIPv4 claim.listenAddresses
+                    );
+                  siblingConnectRoute = ''
+                    @naive_proxy_connect {
+                      method CONNECT
+                      expression `{http.request.local.host} == "${selectedPublicSiteEndpoint.caddyBindIPv4}" && {http.request.local.port} == "443"`
+                    }
+                    route @naive_proxy_connect {
+                      import ${fragmentPath}
+                    }
+                  '';
                 in
                 {
-                  preRouteConfigFragments = lib.optional (prelude != "") prelude;
+                  preRouteConfigFragments =
+                    lib.optional isSelected "import ${fragmentPath}"
+                    ++ lib.optional sharesSelectedListener siblingConnectRoute;
                   capabilities = lib.optional isSelected "forward-proxy";
                   siteAddress = if isSelected then ":443" else null;
-                  requiresUnits = lib.optional isSelected "${serviceName}.service";
-                  afterUnits = lib.optional isSelected "${serviceName}.service";
+                  wantsUnits = lib.optionals isSelected sopsUnits;
+                  afterUnits = lib.optionals isSelected sopsUnits;
                 }
               ) config.networkCore.caddy.fragments
             );
