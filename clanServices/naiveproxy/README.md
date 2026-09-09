@@ -83,8 +83,8 @@ parser сопоставляет их case-sensitive и раннее domain rule 
 
 Contract checks подтверждают legacy и произвольные identity maps, разделение
 probe, отрицательные assertions, оба sops-nix activation mode, template
-permissions/reload, ACL order и listener isolation. Runtime check использует
-точный Caddy/forwardproxy parser, dummy base64url credentials, cover site,
-положительную и отрицательную auth, нестандартный destination port и закрытые
-назначения. Read-only и NixOS generation rollback процедуры описаны в
+permissions/reload metadata, ACL order и listener isolation. Проверки — pure
+Nix; application parser/CLI, runtime tests, VM и тесты на реальных машинах
+запрещены. Реальные auth, relay и reload не объявляются проверенными.
+Границы проверки и native lifecycle описаны в
 [операционном runbook](../../docs/operations/naiveproxy.md).

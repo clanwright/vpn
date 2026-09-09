@@ -96,6 +96,46 @@
               lib.optional hasIPv4Listener "127.0.0.0/8 allow" ++ lib.optional hasIPv6Listener "::1/128 allow";
             effectiveSettings = config.services.unbound.settings;
             effectiveServer = config.services.unbound.settings.server;
+            # Review new native defaults explicitly when advancing the platform
+            # pin; freeform Unbound directives are not a public extension API.
+            allowedServerKeys = [
+              "access-control"
+              "auto-trust-anchor-file"
+              "cache-min-ttl"
+              "chroot"
+              "define-tag"
+              "directory"
+              "do-daemonize"
+              "do-ip4"
+              "do-ip6"
+              "do-tcp"
+              "do-udp"
+              "domain-insecure"
+              "edns-buffer-size"
+              "harden-dnssec-stripped"
+              "hide-identity"
+              "hide-version"
+              "interface"
+              "interface-automatic"
+              "ip-freebind"
+              "module-config"
+              "pidfile"
+              "port"
+              "prefetch"
+              "qname-minimisation"
+              "qname-minimisation-strict"
+              "serve-expired"
+              "serve-expired-client-timeout"
+              "serve-expired-reply-ttl"
+              "serve-expired-ttl"
+              "serve-expired-ttl-reset"
+              "tls-cert-bundle"
+              "trust-anchor"
+              "trust-anchor-file"
+              "trusted-keys-file"
+              "username"
+              "val-permissive-mode"
+            ];
           in
           {
             assertions = [
@@ -127,6 +167,25 @@
                   && !(effectiveServer ? include)
                   && config.services.unbound.checkconf;
                 message = "unbound: include directives cannot bypass the effective loopback and DNSSEC policy.";
+              }
+              {
+                assertion =
+                  builtins.attrNames effectiveSettings == [
+                    "remote-control"
+                    "server"
+                  ]
+                  && builtins.attrNames effectiveServer == allowedServerKeys
+                  &&
+                    builtins.attrNames effectiveSettings.remote-control == [
+                      "control-cert-file"
+                      "control-enable"
+                      "control-interface"
+                      "control-key-file"
+                      "server-cert-file"
+                      "server-key-file"
+                    ]
+                  && !effectiveSettings.remote-control.control-enable;
+                message = "unbound: freeform directives and remote control cannot replace the closed recursive backend policy.";
               }
               {
                 assertion =

@@ -5,17 +5,42 @@
   lib,
   ...
 }:
+let
+  identityPattern = "[A-Za-z0-9][A-Za-z0-9_-]{0,63}";
+  secretNamePattern = "[A-Za-z0-9_][A-Za-z0-9_.+-]*(/[A-Za-z0-9_][A-Za-z0-9_.+-]*)*";
+  decimalPattern = "(0|[1-9][0-9]{0,2})";
+  validIdentity = value: builtins.match identityPattern value != null;
+  validSecretName = value: builtins.match secretNamePattern value != null;
+  validIPv4 =
+    value:
+    let
+      octets = lib.splitString "." value;
+      validOctet =
+        octet:
+        builtins.match decimalPattern octet != null
+        && builtins.fromJSON octet >= 0
+        && builtins.fromJSON octet <= 255;
+    in
+    lib.length octets == 4 && builtins.all validOctet octets;
+  validListenIPv4 = value: validIPv4 value && value != "0.0.0.0";
+  validDnsName =
+    value:
+    value != ""
+    && builtins.match "[A-Za-z0-9]([A-Za-z0-9.-]*[A-Za-z0-9])?" value != null
+    && lib.hasInfix "." value;
+  validHttpsUrl = value: builtins.match "https://[^[:space:]]+" value != null;
+in
 {
   _class = "clan.service";
   manifest = {
     name = "@clanwright/vpn-mihomo-hysteria2";
-    description = "Independent Mihomo Hysteria2 gateway fragment";
+    description = "Independent Mihomo Hysteria2 gateway";
     readme = builtins.readFile ./README.md;
     exports.out = [ "vpnProvider" ];
   };
 
   roles.gateway = {
-    description = "Public Hysteria2 UDP gateway listener";
+    description = "Independent public Hysteria2 UDP gateway";
     interface =
       { lib, ... }:
       {
@@ -32,35 +57,46 @@
             default = true;
           };
           listenIPv4 = lib.mkOption {
-            type = lib.types.str;
-            description = "IPv4 address for the Hysteria2 listener.";
+            type = lib.types.addCheck lib.types.str validListenIPv4;
+            description = "IPv4 address for the Hysteria2 listener and destination-scoped firewall rule.";
           };
           port = lib.mkOption {
             type = lib.types.port;
             default = 443;
           };
           serverName = lib.mkOption {
-            type = lib.types.str;
-            description = "Existing Hysteria2 endpoint hostname; ALPN is fixed to h3.";
+            type = lib.types.addCheck lib.types.str validDnsName;
+            description = "Existing Hysteria2 TLS endpoint hostname; ALPN is fixed to h3.";
           };
           users = lib.mkOption {
             type = lib.types.listOf (
               lib.types.submodule (_: {
                 options = {
-                  name = lib.mkOption { type = lib.types.str; };
-                  passwordSecretName = lib.mkOption { type = lib.types.str; };
+                  name = lib.mkOption {
+                    type = lib.types.addCheck lib.types.str validIdentity;
+                    description = "Unique device identity exported to client profile generation.";
+                  };
+                  passwordSecretName = lib.mkOption {
+                    type = lib.types.addCheck lib.types.str validSecretName;
+                    description = "Consumer-owned SOPS secret containing an unpadded base64url password.";
+                  };
                 };
               })
             );
             default = [ ];
           };
-          masqueradeUrl = lib.mkOption { type = lib.types.str; };
-          ignoreClientBandwidth = lib.mkOption {
-            type = lib.types.bool;
-            default = true;
+          masqueradeUrl = lib.mkOption {
+            type = lib.types.addCheck lib.types.str validHttpsUrl;
+            description = "HTTPS fallback URL used by Mihomo for authenticated Hysteria2 requests.";
           };
-          acmeCertName = lib.mkOption { type = lib.types.str; };
-          obfsPasswordSecretName = lib.mkOption { type = lib.types.str; };
+          acmeCertName = lib.mkOption {
+            type = lib.types.addCheck lib.types.str validIdentity;
+            description = "Consumer-owned ACME certificate name under /var/lib/acme.";
+          };
+          obfsPasswordSecretName = lib.mkOption {
+            type = lib.types.addCheck lib.types.str validSecretName;
+            description = "Consumer-owned SOPS secret containing an unpadded base64url Gecko password.";
+          };
         };
       };
 
@@ -82,6 +118,7 @@
           else
             builtins.head (lib.splitString "--" instanceName);
         profileNames = map (user: user.name) settings.users;
+        userSecretNames = map (user: user.passwordSecretName) settings.users;
         secretNames = {
           users = lib.listToAttrs (
             map (user: {
@@ -112,13 +149,22 @@
               sni = settings.serverName;
               alpn = [ "h3" ];
               userNames = profileNames;
-              obfsName = "salamander";
+              obfsName = "gecko";
+              obfsMinPacketSize = 512;
+              obfsMaxPacketSize = 1200;
+              tlsVerify = true;
+              credentialEncoding = "base64url";
             };
             inherit profileNames secretNames;
           };
         });
+
         nixosModule =
-          { pkgs, ... }:
+          {
+            config,
+            pkgs,
+            ...
+          }:
           let
             system =
               if pkgs ? stdenv && pkgs.stdenv ? hostPlatform && pkgs.stdenv.hostPlatform ? system then
@@ -126,19 +172,168 @@
               else
                 builtins.currentSystem;
             mihomoPackage = mihomoPackageFor system;
-            active = settings.enable && (settings.lifecycle or "enabled") == "enabled";
+            serviceName = "mihomo-hysteria2";
+            serviceUnit = "${serviceName}.service";
+            templateName = "${serviceName}.json";
+            configPath = config.sops.templates.${templateName}.path;
+            sopsUnits = lib.optional config.sops.useSystemdActivation "sops-install-secrets.service";
+            certificateSource = "/var/lib/acme/${settings.acmeCertName}/fullchain.pem";
+            privateKeySource = "/var/lib/acme/${settings.acmeCertName}/key.pem";
+            credentialDirectory = "/run/credentials/${serviceUnit}";
+            certificatePath = "${credentialDirectory}/certificate.pem";
+            privateKeyPath = "${credentialDirectory}/private-key.pem";
+            bindCapability = lib.optional (settings.port < 1024) "CAP_NET_BIND_SERVICE";
+            users = lib.listToAttrs (
+              map (user: {
+                inherit (user) name;
+                value = config.sops.placeholder.${user.passwordSecretName};
+              }) settings.users
+            );
+            listener = {
+              name = "hysteria2-in";
+              type = "hysteria2";
+              listen = settings.listenIPv4;
+              inherit (settings) port;
+              inherit users;
+              masquerade = settings.masqueradeUrl;
+              "ignore-client-bandwidth" = true;
+              alpn = [ "h3" ];
+              certificate = certificatePath;
+              "private-key" = privateKeyPath;
+              obfs = "gecko";
+              "obfs-password" = config.sops.placeholder.${settings.obfsPasswordSecretName};
+              "obfs-min-packet-size" = 512;
+              "obfs-max-packet-size" = 1200;
+            };
+            renderedConfig = builtins.toJSON {
+              ipv6 = false;
+              "log-level" = "info";
+              listeners = [ listener ];
+            };
+            distinctUserNames = lib.length (lib.unique profileNames) == lib.length profileNames;
+            distinctSecretNames =
+              lib.length (lib.unique (userSecretNames ++ [ settings.obfsPasswordSecretName ]))
+              == lib.length userSecretNames + 1;
+            activeInstances = config.clanwright.vpn.hysteria2.activeInstances;
           in
           {
-            imports = [ ../../modules/edge/mihomo-runtime.nix ];
-            networkCore.mihomo.packages = lib.mkIf active (lib.mkForce [ mihomoPackage ]);
-            networkCore.mihomo.hysteria2 = lib.mkIf active [
-              (
-                (builtins.removeAttrs settings [ "lifecycle" ])
-                // {
-                  alpn = [ "h3" ];
+            options.clanwright.vpn.hysteria2.activeInstances = lib.mkOption {
+              type = lib.types.listOf lib.types.str;
+              default = [ ];
+              internal = true;
+              description = "Active Hysteria2 instances claiming the stable unit and template names.";
+            };
+
+            config = {
+              clanwright.vpn.hysteria2.activeInstances = lib.mkIf active [ instanceName ];
+
+              assertions = lib.optionals active [
+                {
+                  assertion = system == "x86_64-linux";
+                  message = "Hysteria2 runtime is supported only on x86_64-linux";
                 }
-              )
-            ];
+                {
+                  assertion = config.networking.firewall.enable;
+                  message = "Hysteria2 requires the NixOS firewall to be enabled";
+                }
+                {
+                  assertion = config.networking.firewall.backend == "nftables";
+                  message = "Hysteria2 destination-scoped ingress requires the nftables firewall backend";
+                }
+                {
+                  assertion = lib.length activeInstances == 1;
+                  message = "Only one active Hysteria2 instance may claim a machine";
+                }
+                {
+                  assertion = settings.users != [ ];
+                  message = "Hysteria2 requires at least one per-device user";
+                }
+                {
+                  assertion = distinctUserNames;
+                  message = "Hysteria2 device identities must be unique";
+                }
+                {
+                  assertion = distinctSecretNames;
+                  message = "Hysteria2 user and Gecko credentials must use distinct SOPS secrets";
+                }
+              ];
+
+              users.groups.${serviceName} = lib.mkIf active { };
+              users.users.${serviceName} = lib.mkIf active {
+                isSystemUser = true;
+                group = serviceName;
+              };
+
+              sops.secrets = lib.mkIf active (
+                lib.genAttrs (userSecretNames ++ [ settings.obfsPasswordSecretName ]) (_: {
+                  owner = "root";
+                  group = "root";
+                  mode = "0400";
+                })
+              );
+              sops.templates.${templateName} = lib.mkIf active {
+                content = renderedConfig;
+                owner = serviceName;
+                group = serviceName;
+                mode = "0400";
+                restartUnits = [ serviceUnit ];
+              };
+
+              systemd.services.${serviceName} = lib.mkIf active {
+                description = "Independent Mihomo Hysteria2 gateway";
+                after = [ "network-online.target" ] ++ sopsUnits;
+                wants = [ "network-online.target" ] ++ sopsUnits;
+                wantedBy = [ "multi-user.target" ];
+                restartTriggers = [ mihomoPackage ];
+                serviceConfig = {
+                  Type = "exec";
+                  User = serviceName;
+                  Group = serviceName;
+                  ExecStart = "${lib.getExe mihomoPackage} -d /var/lib/${serviceName} -f ${configPath}";
+                  Restart = "on-failure";
+                  RestartSec = "2s";
+                  StateDirectory = serviceName;
+                  StateDirectoryMode = "0750";
+                  UMask = "0077";
+                  AmbientCapabilities = bindCapability;
+                  CapabilityBoundingSet = bindCapability;
+                  LoadCredential = [
+                    "certificate.pem:${certificateSource}"
+                    "private-key.pem:${privateKeySource}"
+                  ];
+                  LockPersonality = true;
+                  NoNewPrivileges = true;
+                  PrivateDevices = true;
+                  PrivateTmp = true;
+                  ProtectClock = true;
+                  ProtectControlGroups = true;
+                  ProtectHome = true;
+                  ProtectHostname = true;
+                  ProtectKernelLogs = true;
+                  ProtectKernelModules = true;
+                  ProtectKernelTunables = true;
+                  ProtectProc = "invisible";
+                  ProtectSystem = "strict";
+                  RestrictAddressFamilies = [
+                    "AF_INET"
+                    "AF_INET6"
+                    "AF_UNIX"
+                  ];
+                  RestrictNamespaces = true;
+                  RestrictRealtime = true;
+                  RestrictSUIDSGID = true;
+                  SystemCallArchitectures = "native";
+                };
+              };
+
+              networking.firewall.extraInputRules = lib.mkIf active (
+                lib.mkAfter ''
+                  ip daddr ${settings.listenIPv4} udp dport ${toString settings.port} accept comment "mihomo hysteria2 destination-scoped ingress"
+                ''
+              );
+
+              security.acme.certs.${settings.acmeCertName}.reloadServices = lib.mkIf active [ serviceUnit ];
+            };
           };
       };
   };

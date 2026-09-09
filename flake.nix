@@ -2,9 +2,10 @@
   description = "Clanwright VPN and DNS domain services";
 
   inputs = {
-    # Preserve the consumer's current platform and application closures for v0.1.0.
+    # Separate platform and reviewed stock application revisions.
     nixpkgs.url = "https://releases.nixos.org/nixpkgs/nixpkgs-26.11pre1044894.59ea0b1c043c/nixexprs.tar.xz";
     apps-nixpkgs.url = "github:NixOS/nixpkgs/c27cdad491a991b11ed731760aa2ef8db0cb0410";
+    modern-apps-nixpkgs.url = "github:NixOS/nixpkgs/f3afd85cd82edf71f2dea9b96dcda2d6a64f26f4";
     # Test/integration dependency only; VPN does not re-export or enable it.
     network.url = "github:clanwright/network/v1.0.0";
     data-mesher.url = "path:./stubs/data-mesher";
@@ -20,6 +21,7 @@
       self,
       apps-nixpkgs,
       clan-core,
+      modern-apps-nixpkgs,
       nixpkgs,
       ...
     }:
@@ -32,6 +34,7 @@
       ];
       forAllSystems = lib.genAttrs systems;
       appsPkgsFor = system: import apps-nixpkgs { inherit system; };
+      modernAppsPkgsFor = system: import modern-apps-nixpkgs { inherit system; };
       domainAppsPkgsFor =
         system:
         let
@@ -51,38 +54,22 @@
       packageSet =
         system:
         let
-          pkgs = nixpkgs.legacyPackages.${system};
           appsPkgs = appsPkgsFor system;
+          modernAppsPkgs = modernAppsPkgsFor system;
         in
         {
           inherit (appsPkgs) mihomo;
-          inherit (appsPkgs) sing-box;
-          mihomo-keygen = appsPkgs.writeShellApplication {
-            name = "mihomo-keygen";
-            runtimeInputs = [ appsPkgs.mihomo ];
-            text = ''
-              exec mihomo generate reality-keypair
-            '';
-          };
+          inherit (modernAppsPkgs) sing-box;
         }
-        // lib.optionalAttrs (system == "x86_64-linux") (
-          {
-            inherit (appsPkgs)
-              amneziawg-go
-              amneziawg-tools
-              ;
-            inherit (pkgs) adguardhome;
-            unbound = appsPkgs.unbound-with-systemd;
-          }
-          // (import ./packages/naiveproxy.nix {
-            inherit system;
-            inherit apps-nixpkgs;
-          })
-          // (import ./packages/sing-box.nix {
-            inherit system;
-            inherit apps-nixpkgs;
-          })
-        );
+        // lib.optionalAttrs (system == "x86_64-linux") {
+          inherit (appsPkgs)
+            adguardhome
+            dnsproxy
+            xray
+            ;
+          inherit (modernAppsPkgs) amneziawg-go amneziawg-tools;
+          unbound = appsPkgs.unbound-with-systemd;
+        };
       vpnExports = { lib }: import ./modules/contracts/vpn-exports.nix { inherit lib; };
       exportInterfaces =
         { lib }:
@@ -99,7 +86,7 @@
         modules = {
           "@clanwright/vpn-mihomo-vless-xhttp" = service ./clanServices/mihomo-vless-xhttp/default.nix {
             inherit lib;
-            mihomoPackageFor = system: self.packages.${system}.mihomo;
+            xrayPackageFor = system: self.packages.${system}.xray;
           };
           "@clanwright/vpn-mihomo-hysteria2" = service ./clanServices/mihomo-hysteria2/default.nix {
             inherit lib;
@@ -118,6 +105,7 @@
           };
           "@clanwright/dns-adguardhome" = service ./clanServices/adguardhome/default.nix {
             adguardPackageFor = system: self.packages.${system}.adguardhome;
+            dnsproxyPackageFor = system: self.packages.${system}.dnsproxy;
           };
           "@clanwright/dns-unbound" = service ./clanServices/unbound/default.nix {
             unboundPackageFor = system: self.packages.${system}.unbound;
@@ -133,13 +121,6 @@
       lib = {
         inherit vpnExports;
         awgValidation = { lib }: import ./clanServices/amneziawg/validation.nix { inherit lib; };
-        awgPublicKeyCheck =
-          { pkgs }:
-          import ./clanServices/amneziawg/public-key-check.nix {
-            pkgs = pkgs // {
-              inherit (self.packages.${pkgs.system}) amneziawg-tools;
-            };
-          };
         clientProfiles =
           {
             config,
@@ -164,7 +145,7 @@
 
       packages = forAllSystems packageSet;
 
-      checks.x86_64-linux = import ./checks {
+      evaluationTests.x86_64-linux = import ./checks {
         inherit inputs self;
         pkgs = nixpkgs.legacyPackages.x86_64-linux;
       };

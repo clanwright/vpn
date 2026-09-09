@@ -1,37 +1,56 @@
 # Verify a candidate
 
-Virtual machines are prohibited in this project, including VM configurations,
-NixOS VM tests and QEMU/KVM/TCG runners. All repository verification must run
-without creating or booting a VM.
-
-Checks are defined in Nix and invoke packaged CLI tools. Python scripts and
-Python-based test harnesses are prohibited.
+Repository acceptance is limited to pure Nix evaluation and static source
+hygiene. The gate does not build packages or checks and does not execute VPN,
+DNS, parser, key-management, service or listener binaries. Python, virtual
+machines, VM-backed runners and tests on deployed machines are prohibited.
 
 Run the complete local gate from the repository root:
 
 ```bash
-scripts/verify.sh
+nix develop --offline --max-jobs 0 --builders '' --command scripts/verify.sh
 ```
 
-The script enters the pinned development shell once and executes four stages:
+To run the same static gate and one named evaluation contract through the same
+filtered snapshot path, pass its result name:
+
+```bash
+nix develop --offline --max-jobs 0 --builders '' --command scripts/verify.sh adguardhome-contracts
+```
+
+The outer command uses the already-cached development shell in offline mode
+with builders disabled. The script itself never enters another shell or
+installs tools. It executes two stages:
 
 1. `static`: diff whitespace, Nix formatting, Statix, Deadnix and redacted
    Gitleaks checks.
-2. `flake-eval`: `x86_64-linux` flake evaluation and public module, check and
-   package attribute evaluation.
-3. `linux-checks`: domain contracts, combined Clan fixture, client render smoke,
-   AmneziaWG key consistency, Unbound contracts/native readiness/DNS behavior and NaiveProxy
-   contracts. Native DNS tests use local fixture processes and temporary signing
-   keys; they do not create a VM or query production DNS.
-4. `owned-packages`: builds Mihomo, Mihomo keygen, Sing-box, NaiveProxy,
-   AmneziaWG Go, AmneziaWG tools, AdGuard Home and Unbound.
+2. `evaluation`: flake evaluation, public module and package-name evaluation,
+   then a forced JSON evaluation of `evaluationTests.x86_64-linux` with
+   offline mode, builders disabled, zero build jobs and import-from-derivation
+   disabled.
 
-Each run creates an ignored `.work/verification/<UTC-run-id>/` directory. Read
-`summary.tsv` for stage status, duration, log path and whole-run duration; the
-adjacent stage logs contain complete readable output. Preserve that directory
-with review evidence.
+Evaluation uses a temporary source snapshot outside the repository containing
+only tracked and non-ignored untracked files. The snapshot excludes `.git`,
+`.work`, environment files and common secret, private-key or certificate
+extensions before Nix copies the source into its store. The script removes the
+snapshot on exit.
 
-A passing gate proves the candidate source, public surface, Linux build set and
-that the exported Unbound binary emits an `sd_notify` readiness message when
-started as a native process. It does not prove consumer adoption, machine
-activation, endpoint reachability, provider/DNS state or secret correctness.
+The evaluation suite covers the seven stable module IDs, closed schemas,
+negative security overrides, generated server and client configuration
+structures, service isolation, package authority, secret/template wiring and
+combined Clan composition. Each named test returns JSON-safe booleans; the
+top-level `all` value is asserted only after `builtins.deepSeq` forces every
+result.
+
+Each run creates a unique ignored `.work/verification/<UTC-run-id>.<suffix>/`
+directory. `scope.txt` records `full` or the selected test name so a focused
+pass cannot be mistaken for the complete gate. Read `summary.tsv` for stage
+status, duration and log paths. The adjacent logs contain the complete readable
+output. Preserve that directory with review evidence.
+
+A passing gate proves that the evaluated Nix contracts and static source checks
+accepted the candidate. It does not prove that application configuration
+parsers accept generated files, packages can be built on Linux, systemd units
+start, DNS answers or fallback behave at runtime, VPN authentication or relay
+works, or any consumer machine adopted the change. Those runtime properties
+remain unverified under the accepted test boundary.

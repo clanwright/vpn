@@ -8,6 +8,7 @@
 let
   lib = inputs.nixpkgs.lib;
   fixture = import ./fixtures/example-clan.nix;
+  appsPkgs = import inputs.apps-nixpkgs { inherit system; };
   consume = import ./lib/consumer.nix { inherit inputs root self; };
   serviceSpecs = {
     vpn-mihomo-vless-xhttp.role = "gateway";
@@ -33,6 +34,7 @@ let
     vpn-mihomo-vless-xhttp = import ../clanServices/mihomo-vless-xhttp/default.nix {
       inherit lib;
       mihomoPackageFor = targetSystem: self.packages.${targetSystem}.mihomo;
+      xrayPackageFor = targetSystem: self.packages.${targetSystem}.xray;
     };
     vpn-mihomo-hysteria2 = import ../clanServices/mihomo-hysteria2/default.nix {
       inherit lib;
@@ -49,12 +51,95 @@ let
     };
     dns-adguardhome = import ../clanServices/adguardhome/default.nix {
       adguardPackageFor = targetSystem: self.packages.${targetSystem}.adguardhome;
+      dnsproxyPackageFor = targetSystem: self.packages.${targetSystem}.dnsproxy;
     };
     dns-unbound = import ../clanServices/unbound/default.nix {
       unboundPackageFor = targetSystem: self.packages.${targetSystem}.unbound;
     };
   };
   settingsFor = name: role: fixture.instances.${name}.roles.${role}.machines.vpn-fixture.settings;
+  awgInstance = services.vpn-amneziawg.roles.gateway.perInstance {
+    settings = settingsFor "vpn-amneziawg" "gateway";
+    instanceName = "vpn-amneziawg";
+    machine.name = "vpn-fixture";
+    mkExports = value: value;
+  };
+  awgProvider = awgInstance.exports.vpnProvider;
+  selectAwgProvider =
+    raw:
+    (self.lib.vpnExports { inherit lib; }).selectVpnProvider {
+      providerInstanceId = "vpn-amneziawg";
+      providerMachine = "vpn-fixture";
+      providerRole = "gateway";
+      protocol = "amneziawg";
+      consumerInstanceId = "contract-check";
+      selectExports = _predicate: exports: exports;
+      exports.only.vpnProvider = raw;
+    };
+  awgTransportContract =
+    builtins.deepSeq (selectAwgProvider awgProvider) true
+    && !(builtins.tryEval (
+      builtins.deepSeq (selectAwgProvider (
+        lib.recursiveUpdate awgProvider { endpoint.transport = "tcp"; }
+      )) true
+    )).success;
+  naiveSettings =
+    (lib.evalModules {
+      modules = [
+        (services.vpn-naiveproxy.roles.addon.interface { inherit lib; })
+        { config = settingsFor "vpn-naiveproxy" "addon"; }
+      ];
+    }).config;
+  naiveInstance = services.vpn-naiveproxy.roles.addon.perInstance {
+    settings = naiveSettings;
+    instanceName = "vpn-naiveproxy";
+    machine.name = "vpn-fixture";
+    mkExports = value: value;
+  };
+  naiveProvider = naiveInstance.exports.vpnProvider;
+  selectNaiveProvider =
+    raw:
+    (self.lib.vpnExports { inherit lib; }).selectVpnProvider {
+      providerInstanceId = "vpn-naiveproxy";
+      providerMachine = "vpn-fixture";
+      providerRole = "addon";
+      protocol = "naiveproxy";
+      consumerInstanceId = "contract-check";
+      selectExports = _predicate: exports: exports;
+      exports.only.vpnProvider = raw;
+    };
+  naiveProviderResults = {
+    actual = builtins.deepSeq (selectNaiveProvider naiveProvider) true;
+    unknownProfileRejected =
+      !(builtins.tryEval (
+        builtins.deepSeq (selectNaiveProvider (
+          naiveProvider
+          // {
+            profileNames = naiveProvider.profileNames ++ [ "unknown-profile" ];
+          }
+        )) true
+      )).success;
+    missingPasswordRejected =
+      !(builtins.tryEval (
+        builtins.deepSeq (selectNaiveProvider (
+          naiveProvider
+          // {
+            secretNames = naiveProvider.secretNames // {
+              password = builtins.removeAttrs naiveProvider.secretNames.password [ "probe" ];
+            };
+          }
+        )) true
+      )).success;
+    extraPasswordRejected =
+      !(builtins.tryEval (
+        builtins.deepSeq (selectNaiveProvider (
+          lib.recursiveUpdate naiveProvider {
+            secretNames.password.unexpected = "fixture-unexpected-secret";
+          }
+        )) true
+      )).success;
+  };
+  naiveProviderContract = builtins.all (value: value) (builtins.attrValues naiveProviderResults);
   schemaResult =
     name: value:
     let
@@ -132,19 +217,23 @@ let
     name: machine:
     {
       vpn-mihomo-vless-xhttp =
-        builtins.length machine.networkCore.mihomo.vlessXhttp == 1
-        && machine.systemd.services ? mihomo-gateway;
+        machine.services.xray.enable
+        && machine.systemd.services ? xray
+        && !((machine.networkCore.mihomo or { }) ? vlessXhttp);
       vpn-mihomo-hysteria2 =
-        builtins.length machine.networkCore.mihomo.hysteria2 == 1
-        && machine.systemd.services ? mihomo-gateway;
-      vpn-amneziawg = machine.networking.wireguard.interfaces ? awg-fixture;
+        machine.systemd.services ? mihomo-hysteria2
+        && machine.sops.templates ? "mihomo-hysteria2.json"
+        && !((machine.networkCore.mihomo or { }) ? hysteria2);
+      vpn-amneziawg =
+        machine.systemd.services ? wireguard-awg-fixture
+        && !(machine.networking.wireguard.interfaces ? awg-fixture);
       vpn-naiveproxy = machine.sops.templates ? "naiveproxy-fixture.caddy";
       vpn-client-profiles = !(machine.systemd.services ? mihomo-client-caddy-fixture);
       dns-adguardhome = machine.services.adguardhome.enable;
       dns-unbound = machine.services.unbound.enable;
     }
     .${name};
-  independentPlacements = builtins.all (
+  independentPlacementResults = lib.genAttrs serviceNames (
     name:
     let
       consumer = consume { instanceNames = [ name ]; };
@@ -157,15 +246,20 @@ let
     ]
     && builtins.length (builtins.attrNames consumer.config._services.allServices) == 4
     && placementBehavior name consumer.machine
-  ) serviceNames;
+  );
+  independentPlacements = builtins.all (value: value) (
+    builtins.attrValues independentPlacementResults
+  );
   combined = consume { instanceNames = serviceNames; };
   inherit (combined) machine;
   overrideAttempt = consume {
     instanceNames = serviceNames;
     extraModule = {
-      services.adguardhome.package = pkgs.hello;
-      services.unbound.package = pkgs.hello;
-      networkCore.mihomo.packages = [ pkgs.hello ];
+      services = {
+        adguardhome.package = pkgs.hello;
+        dnsproxy.package = pkgs.hello;
+        unbound.package = pkgs.hello;
+      };
     };
   };
   awgOverrideRejected =
@@ -192,15 +286,15 @@ let
   awgOverlay = builtins.head awgOverlays;
   packageAuthorityResults = {
     adguard = machine.services.adguardhome.package == self.packages.${system}.adguardhome;
-    adguardUpstream =
-      self.packages.${system}.adguardhome == inputs.nixpkgs.legacyPackages.${system}.adguardhome;
+    adguardPinned =
+      self.packages.${system}.adguardhome == appsPkgs.adguardhome
+      && self.packages.${system}.adguardhome.version == "0.107.78";
+    dnsproxy = machine.services.dnsproxy.package == self.packages.${system}.dnsproxy;
+    dnsproxyUpstream = self.packages.${system}.dnsproxy == appsPkgs.dnsproxy;
     unbound = machine.services.unbound.package == self.packages.${system}.unbound;
     unboundUpstream =
-      self.packages.${system}.unbound == (import inputs.apps-nixpkgs { inherit system; })
-      .unbound-with-systemd
-      && self.packages.${system}.unbound.version == "1.26.0"
-      && builtins.elem "--enable-systemd" self.packages.${system}.unbound.configureFlags;
-    mihomo = machine.networkCore.mihomo.packages == [ self.packages.${system}.mihomo ];
+      self.packages.${system}.unbound == appsPkgs.unbound-with-systemd
+      && self.packages.${system}.unbound.version == "1.26.0";
     awgOverlayPresent = awgOverlays != [ ];
     awgGo = (awgOverlay pkgs pkgs).amneziawg-go == self.packages.${system}.amneziawg-go;
     awgTools = (awgOverlay pkgs pkgs).amneziawg-tools == self.packages.${system}.amneziawg-tools;
@@ -209,10 +303,10 @@ let
     };
     adguardOverride =
       overrideAttempt.machine.services.adguardhome.package == self.packages.${system}.adguardhome;
+    dnsproxyOverride =
+      overrideAttempt.machine.services.dnsproxy.package == self.packages.${system}.dnsproxy;
     unboundOverride =
       overrideAttempt.machine.services.unbound.package == self.packages.${system}.unbound;
-    mihomoOverride =
-      overrideAttempt.machine.networkCore.mihomo.packages == [ self.packages.${system}.mihomo ];
     inherit awgOverrideRejected;
   };
   packageAuthority = builtins.all (value: value) (builtins.attrValues packageAuthorityResults);
@@ -234,19 +328,23 @@ let
     && invalidNestedFields
     && invalidFieldTypes
     && independentPlacements
+    && awgTransportContract
+    && naiveProviderContract
     && packageAuthority
     && dnsStatePreserved;
 in
-if contract then
-  pkgs.runCommand "vpn-domain-contracts" { passthru = { inherit contract; }; } ''touch "$out"''
-else
+if !contract then
   throw "VPN domain contract failed: ${
     builtins.toJSON {
       inherit
         closedSchemas
+        awgTransportContract
+        naiveProviderContract
+        naiveProviderResults
         awgOverrideRejected
         dnsStatePreserved
         dnsStateResults
+        independentPlacementResults
         independentPlacements
         invalidFieldTypes
         invalidNestedFields
@@ -258,3 +356,20 @@ else
         ;
     }
   }"
+else
+  {
+    all = true;
+    inherit
+      closedSchemas
+      awgTransportContract
+      naiveProviderContract
+      naiveProviderResults
+      dnsStatePreserved
+      independentPlacements
+      invalidFieldTypes
+      invalidNestedFields
+      packageAuthority
+      registeredSchemas
+      validSchemas
+      ;
+  }

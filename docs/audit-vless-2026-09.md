@@ -2,53 +2,67 @@
 
 ## Статус
 
-Разрешены исследование и документация. Пользователь согласовал архитектуру:
-отдельный Xray для VLESS вместо общего с Hysteria2 процесса Mihomo.
-Это принятие архитектурного решения, не разрешение на реализацию или deployment.
-Версия и параметры ниже остаются рекомендацией для будущего внедрения.
-Исходники, пакеты, firewall, credentials и работающие серверы не изменялись.
-Старые клиенты не ограничивают серверное проектирование, но их последующая
-совместимость остается обязательной частью внедрения.
+Независимое source review и полный репозиторный gate прошли;
+доказательства — в [основном аудите](audit-2026-09.md).
+
+Согласованная source-реализация выполнена: стабильный module ID
+`vpn-mihomo-vless-xhttp` теперь создаёт отдельный stock Xray 26.3.27 вместо
+общего с Hysteria2 процесса Mihomo. Изменены контракт, runtime-only SOPS
+template, systemd sandbox, firewall и pure Nix assertions. Deployment,
+provider/DNS, реальные credentials и работающие серверы не изменялись.
+
+По принятой границе проверки Xray/parser/listener не запускались. Поэтому этот
+статус подтверждает структуру исходников и вычисленную NixOS-конфигурацию, но не
+аутентификацию, достижимость, target TLS/SAN или клиентскую совместимость.
 
 ## Текущее состояние
 
-Проверена базовая ревизия `06b5652b932a9779931088626c60279618850505`.
+Исходная проблема зафиксирована на ревизии
+`06b5652b932a9779931088626c60279618850505`; после приёмки владелец
+9 сентября разрешил commit/push исправлений в `main`.
 
 | Область | Что есть | Оценка |
 |---|---|---|
-| Реализация | VLESS и Hysteria2 в одном `mihomo-gateway.service` | Общие generator/config/process создают зависимость отказов |
-| Transport | XHTTP с `path` и принудительным `packet-up` по умолчанию | Причина фиксации режима не зафиксирована; доступность не доказывает оптимальность |
-| REALITY | `dest`, private key, short IDs, server names | Основные поля есть; согласованность target/SNI и ключевой пары не доказана |
-| Ingress | Глобальный `allowedTCPPorts` для VLESS | Не соответствует обещанному ограничению по destination address |
-| Секреты | Runtime materialization, config с правами `0400` | Полезное свойство, которое нужно сохранить |
-| Проверки | Parser, готовность адреса и listener | Нет доказательства аутентификации и длительной передачи из целевых сетей |
+| Реализация | Отдельный native `xray.service`, stock Xray 26.3.27 | Процесс, package, config и restart не разделяются с Hysteria2 |
+| Transport | Прямой TCP, XHTTP `path`, server mode `auto` | Vision, fallback и ручные padding/XMUX overrides отсутствуют |
+| REALITY | Явный target `host:443`, TLS 1.3/H2 declarations, matching `serverNames` | Формат проверяется; live TLS/H2 и SAN pure evaluation не доказывает |
+| Ingress | nftables rule только для `bindIPv4:port` | Глобальный `allowedTCPPorts` модулем не добавляется |
+| Секреты | Native SOPS template `0400`, systemd credential | Private key и UUID остаются runtime-only placeholders при evaluation |
+| Изоляция | `DynamicUser`, `NoNewPrivileges`, только `CAP_NET_BIND_SERVICE` для низкого порта | Для высокого порта capabilities пусты; `CAP_NET_ADMIN` из native module удалён |
+| Проверки | Pure schema/render/package/service/firewall assertions | Application CLI, parser, listener и сеть намеренно не запускались |
 
-Основание: [контракт](../clanServices/mihomo-vless-xhttp/default.nix),
-[общий runtime](../modules/edge/mihomo-runtime.nix),
-[профили](../clanServices/vpn-client-profiles/client-profiles.nix).
+Основание: [контракт и runtime](../clanServices/mihomo-vless-xhttp/default.nix),
+[pure assertions](../checks/xray-contracts.nix),
+[профили](../clanServices/vpn-client-profiles/client-profiles.nix) и
+[операционная граница](operations/vless.md).
 Fingerprint, public key и DoH в export — параметры клиентов/публикации,
 а не дополнительные настройки серверного listener. Vision для XHTTP сейчас
 не включен — это корректно.
 
-Дополнительно нужны проверки формата target, пути XHTTP с начальным `/`,
-дубликатов пользователей/short IDs и соответствия public/private key.
-Проверка сертификата и доступности target требует runtime-приемки;
-одной проверки Nix schema для этого недостаточно. Глобальное разрешение порта
-со стороны других сервисов consumer проверяется отдельно.
+Schema отклоняет неверный IPv4, target port не `443`, path без начального `/`,
+short ID вне канонических 16 lowercase hex символов и public key неверного формата. Assertions отклоняют дубликаты
+profile names, UUID secret names, short IDs и `serverNames`, требуют target host
+в `serverNames`, ровно H2 и разные target/endpoint domains с учётом DNS case
+equivalence. Активный instance на машине один; firewall должен быть включён
+и использовать nftables. Соответствие
+public/private key, UUID values, сертификат и доступность target не устанавливаются
+этой source-only приёмкой. Итоговую exposure policy и возможное открытие того же порта
+другими сервисами проверяет consumer.
 
-## Рекомендуемая архитектура
+## Реализованная архитектура
 
-Отдельный Xray-core для прямого VLESS + REALITY + XHTTP на согласованном
-TCP endpoint, обычно `443`. Hysteria2 остается в своем Mihomo runtime.
+Отдельный Xray-core обслуживает прямой VLESS + REALITY + XHTTP на согласованном
+TCP endpoint, обычно `443`. Hysteria2 остаётся отдельным сервисом.
 Это инженерный выбор ради изоляции процессов и использования реализации
 авторов REALITY/XHTTP; он не доказывает превосходство Xray по скорости или
 доступности в РФ. Mihomo умеет обслуживать этот transport, его замена не
 является обязательным исправлением протокольной ошибки.
 
-Цена решения — еще один точный package pin, service и набор проверок.
+Цена решения — ещё один точный package pin, service и набор проверок.
 Стабильный module ID `vpn-mihomo-vless-xhttp` сохраняется; историческое имя
-не должно вынуждать сохранять старую реализацию. Миграцию контракта и consumer
-нужно описать явно. Конкретные адреса, exposure policy и привязки секретов
+не вынуждает сохранять старую реализацию. Контракт consumer теперь явно задаёт
+target и отдельные UUID secret name/short ID на устройство. Конкретные адреса,
+exposure policy и привязки секретов
 остаются у consumer; TCP sysctl/BBR/FQ принадлежат consumer, не этому модулю.
 
 | Настройка | Рекомендация | Причина |
@@ -81,11 +95,11 @@ TCP endpoint, обычно `443`. Hysteria2 остается в своем Mihom
 
 ## Выбранная версия и границы рекомендации
 
-Xray пока не является зависимостью проекта. На дату проверки
+Xray добавлен как точная stock-зависимость проекта. На дату исследования
 [v26.3.27](https://github.com/XTLS/Xray-core/releases/tag/v26.3.27) обозначен
 GitHub как Latest/stable; [v26.7.28](https://github.com/XTLS/Xray-core/releases/tag/v26.7.28)
 от 28 июля — **Pre-release**. Для исходного профиля рекомендуем точный
-**v26.3.27**, а не движущуюся `main`. Нужные этому профилю возможности уже
+**v26.3.27**, а не движущаяся `main`. Нужные этому профилю возможности уже
 есть в стабильной версии; исследование не установило обязательного для него
 исправления, ради которого следует принять риск июльского prerelease.
 Это выбор по требованиям и известным ограничениям, не доказательство отсутствия
@@ -109,7 +123,8 @@ GitHub как Latest/stable; [v26.7.28](https://github.com/XTLS/Xray-core/releas
 `show: false`, `xver: 0` и `xhttpSettings.path/mode: auto` поддерживаются.
 Для baseline `minClientVer` не задаем. В этом теге у него нет нижней границы
 по умолчанию; в v26.7.28 незаданное поле уже означает `26.3.27`.
-Это проверка source schema, не исполненный parser/runtime test нового service.
+Это проверка source schema и pure Nix render, не исполненный parser/runtime test
+нового service.
 
 ## Что известно о РФ
 
@@ -129,13 +144,17 @@ GitHub как Latest/stable; [v26.7.28](https://github.com/XTLS/Xray-core/releas
 обход запрета доступа к IP VPS настройкой SNI/XHTTP. Не переносим сообщения
 об отдельных timeout на все установки Mihomo.
 
-## Приемка будущего внедрения
+## Выполненная и будущая приемка
 
-Без сравнения нескольких параллельных профилей проверить один выбранный:
-рендер и parser точной версии; runtime-only secrets; адресную область firewall;
-независимость restart/failure от Hysteria2; согласованность target/SNI;
-положительную аутентификацию и отказ неверным credentials; обычное поведение
-REALITY fallback; длительные download/upload и UDP relay через VLESS;
-reconnect после idle. Повторить прикладную приемку на трех пользовательских сетях.
+Pure Nix assertions проверяют точный package, JSON render, `decryption: none`,
+отсутствие Vision/fallback/manual XMUX, runtime placeholders, systemd sandbox,
+отсутствие Mihomo service и destination-scoped ingress. Полный результат хранит
+repository verification gate.
 
-Эти проверки пока не проведены. Разрешение на реализацию и активацию отсутствует.
+После отдельного разрешения на consumer adoption и deployment остаются:
+live TLS 1.3/H2/SAN target check, соответствие public/private key, Xray parser,
+listener, положительная аутентификация и отказ неверным UUID/short ID,
+неавторизованное REALITY-поведение, длительные download/upload и UDP relay,
+idle reconnect и restart/failure isolation от Hysteria2. Прикладную приемку
+нужно повторить на Дом.ру, Т-Мобайл и Yota. Ни одна из этих runtime/network
+проверок текущим source-аудитом не объявляется пройденной.

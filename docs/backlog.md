@@ -212,8 +212,9 @@ but it requires a separate ownership decision, public contract, checks and
 release. It must preserve host applicability and must not silently alter VPN
 protocol behavior.
 
-## Package-source cleanup
+## Package-source cleanup — resolved in the September candidate
 
-Replace the manual NaiveProxy package only when the selected official package
-stream provides the required functionality and the candidate passes domain and
-consumer verification.
+The unused standalone NaiveProxy wrapper is removed. The client uses stock
+sing-box with native Naive support and stock Cronet; Network's Caddy remains
+the explicitly approved custom-package exception. Consumer adoption remains
+separate from repository verification.

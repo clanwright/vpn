@@ -2,20 +2,24 @@
 let
   inherit (lib) types;
   inherit (types) nonEmptyListOf nonEmptyStr;
+  safeIdentity =
+    value: builtins.isString value && builtins.match "[A-Za-z0-9][A-Za-z0-9._-]{0,63}" value != null;
+  safeSecretName =
+    value:
+    builtins.isString value
+    && builtins.match "[A-Za-z0-9_][A-Za-z0-9_.+-]*(/[A-Za-z0-9_][A-Za-z0-9_.+-]*)*" value != null;
+  safeIdentityStr = types.addCheck nonEmptyStr safeIdentity;
+  safeSecretNameStr = types.addCheck nonEmptyStr safeSecretName;
   fixed = value: types.enum [ value ];
   nullableNonEmptyStr = types.nullOr nonEmptyStr;
-  scalar = types.oneOf [
-    types.int
-    types.str
-  ];
-
   mkSubmodule = options: { inherit options; };
   mkOption = type: lib.mkOption { inherit type; };
 
   realityModule = mkSubmodule {
     serverName = mkOption nonEmptyStr;
-    dest = mkOption nonEmptyStr;
-    shortIds = mkOption (nonEmptyListOf nonEmptyStr);
+    serverNames = mkOption (nonEmptyListOf nonEmptyStr);
+    target = mkOption nonEmptyStr;
+    shortIdsByProfile = mkOption (types.attrsOf nonEmptyStr);
     publicKey = mkOption nonEmptyStr;
   };
   xhttpModule = mkSubmodule {
@@ -34,7 +38,7 @@ let
     ipv4 = mkOption nonEmptyStr;
   };
   awgPeerModule = mkSubmodule {
-    name = mkOption nonEmptyStr;
+    name = mkOption safeIdentityStr;
     publicKey = mkOption nonEmptyStr;
     allowedIPs = mkOption (nonEmptyListOf nonEmptyStr);
     clientPersistentKeepalive = lib.mkOption {
@@ -46,33 +50,23 @@ let
       default = null;
     };
   };
-  awgExtraOptionsModule = mkSubmodule (
-    builtins.listToAttrs (
-      map
-        (name: {
-          inherit name;
-          value = mkOption scalar;
-        })
-        [
-          "H1"
-          "H2"
-          "H3"
-          "H4"
-          "I1"
-          "I2"
-          "I3"
-          "I4"
-          "I5"
-          "Jc"
-          "Jmin"
-          "Jmax"
-          "S1"
-          "S2"
-          "S3"
-          "S4"
-        ]
-    )
-  );
+  awgPaddingModule = mkSubmodule {
+    min = mkOption types.int;
+    max = mkOption types.int;
+  };
+  awgProfileModule = mkSubmodule {
+    s1 = mkOption types.int;
+    s2 = mkOption types.int;
+    s3 = mkOption types.int;
+    s4 = mkOption types.int;
+    h1 = mkOption types.int;
+    h2 = mkOption types.int;
+    h3 = mkOption types.int;
+    h4 = mkOption types.int;
+    contentPaddingAddition = mkOption (types.submodule awgPaddingModule);
+    randomTrailers = mkOption types.bool;
+    disableCookies = mkOption types.bool;
+  };
 
   metadataModule = {
     options = {
@@ -89,7 +83,7 @@ let
         default = null;
       };
       userNames = lib.mkOption {
-        type = types.nullOr (nonEmptyListOf nonEmptyStr);
+        type = types.nullOr (nonEmptyListOf safeIdentityStr);
         default = null;
       };
       port = lib.mkOption {
@@ -124,6 +118,30 @@ let
         type = nullableNonEmptyStr;
         default = null;
       };
+      obfsMinPacketSize = lib.mkOption {
+        type = types.nullOr types.int;
+        default = null;
+      };
+      obfsMaxPacketSize = lib.mkOption {
+        type = types.nullOr types.int;
+        default = null;
+      };
+      tlsVerify = lib.mkOption {
+        type = types.nullOr types.bool;
+        default = null;
+      };
+      credentialEncoding = lib.mkOption {
+        type = nullableNonEmptyStr;
+        default = null;
+      };
+      generation = lib.mkOption {
+        type = types.nullOr types.int;
+        default = null;
+      };
+      profile = lib.mkOption {
+        type = types.nullOr (types.submodule awgProfileModule);
+        default = null;
+      };
       serverPublicKey = lib.mkOption {
         type = nullableNonEmptyStr;
         default = null;
@@ -148,10 +166,6 @@ let
         type = types.attrsOf nonEmptyStr;
         default = { };
       };
-      extraOptions = lib.mkOption {
-        type = types.nullOr (types.submodule awgExtraOptionsModule);
-        default = null;
-      };
     };
   };
   metadataFields = {
@@ -174,6 +188,10 @@ let
       "alpn"
       "userNames"
       "obfsName"
+      "obfsMinPacketSize"
+      "obfsMaxPacketSize"
+      "tlsVerify"
+      "credentialEncoding"
     ];
     amneziawg = [
       "protocol"
@@ -183,7 +201,8 @@ let
       "mtu"
       "peers"
       "peerPublicKeys"
-      "extraOptions"
+      "generation"
+      "profile"
     ];
   };
   validMetadataShape =
@@ -197,27 +216,31 @@ let
   secretNamesModule = {
     options = {
       password = lib.mkOption {
-        type = types.nullOr (types.attrsOf nonEmptyStr);
+        type = types.nullOr (types.attrsOf safeSecretNameStr);
         default = null;
       };
       realityPrivateKey = lib.mkOption {
-        type = nullableNonEmptyStr;
+        type = types.nullOr safeSecretNameStr;
         default = null;
       };
       vlessUuid = lib.mkOption {
-        type = types.nullOr (types.attrsOf nonEmptyStr);
+        type = types.nullOr (types.attrsOf safeSecretNameStr);
         default = null;
       };
       users = lib.mkOption {
-        type = types.nullOr (types.attrsOf nonEmptyStr);
+        type = types.nullOr (types.attrsOf safeSecretNameStr);
         default = null;
       };
       obfsPassword = lib.mkOption {
-        type = nullableNonEmptyStr;
+        type = types.nullOr safeSecretNameStr;
         default = null;
       };
       clientPrivateKey = lib.mkOption {
-        type = types.nullOr (types.attrsOf nonEmptyStr);
+        type = types.nullOr (types.attrsOf safeSecretNameStr);
+        default = null;
+      };
+      headerProtectionKey = lib.mkOption {
+        type = types.nullOr safeSecretNameStr;
         default = null;
       };
     };
@@ -232,7 +255,10 @@ let
       "users"
       "obfsPassword"
     ]
-    [ "clientPrivateKey" ]
+    [
+      "clientPrivateKey"
+      "headerProtectionKey"
+    ]
   ];
   validSecretNamesShape =
     value:
@@ -254,8 +280,8 @@ let
   vpnProviderModule = {
     options = {
       schemaVersion = mkOption (fixed 1);
-      instanceId = mkOption nonEmptyStr;
-      machine = mkOption nonEmptyStr;
+      instanceId = mkOption safeIdentityStr;
+      machine = mkOption safeIdentityStr;
       role = mkOption (
         types.enum [
           "gateway"
@@ -273,21 +299,21 @@ let
       enabled = mkOption (fixed true);
       endpoint = mkOption (types.submodule endpointModule);
       transportMetadata = mkOption metadataType;
-      profileNames = mkOption (nonEmptyListOf nonEmptyStr);
+      profileNames = mkOption (nonEmptyListOf safeIdentityStr);
       secretNames = mkOption secretNamesType;
     };
   };
 
   profileLinkModule = mkSubmodule {
-    name = mkOption nonEmptyStr;
+    name = mkOption safeIdentityStr;
     label = mkOption nonEmptyStr;
     accountDomain = mkOption nonEmptyStr;
   };
   vpnPublisherModule = {
     options = {
       schemaVersion = mkOption (fixed 1);
-      instanceId = mkOption nonEmptyStr;
-      machine = mkOption nonEmptyStr;
+      instanceId = mkOption safeIdentityStr;
+      machine = mkOption safeIdentityStr;
       role = mkOption (fixed "publisher");
       enabled = mkOption (fixed true);
       accountDomain = mkOption nonEmptyStr;
@@ -338,6 +364,12 @@ let
     && lib.subtractLists required (builtins.attrNames value) == [ ];
   allStrings =
     values: builtins.isList values && values != [ ] && builtins.all isNonEmptyString values;
+  allSafeIdentities =
+    values:
+    builtins.isList values
+    && values != [ ]
+    && builtins.all safeIdentity values
+    && values == lib.unique values;
 
   metadataKeys = {
     naiveproxy = [
@@ -359,6 +391,10 @@ let
       "alpn"
       "userNames"
       "obfsName"
+      "obfsMinPacketSize"
+      "obfsMaxPacketSize"
+      "tlsVerify"
+      "credentialEncoding"
     ];
     amneziawg = [
       "protocol"
@@ -368,48 +404,69 @@ let
       "mtu"
       "peers"
       "peerPublicKeys"
-      "extraOptions"
+      "generation"
+      "profile"
     ];
   };
 
-  awgExtraOptionKeys = [
-    "H1"
-    "H2"
-    "H3"
-    "H4"
-    "I1"
-    "I2"
-    "I3"
-    "I4"
-    "I5"
-    "Jc"
-    "Jmin"
-    "Jmax"
-    "S1"
-    "S2"
-    "S3"
-    "S4"
-  ];
-
-  validAwgExtraOptions =
+  validAwgProfile =
     value:
     builtins.isAttrs value
-    && attrsHaveExactly awgExtraOptionKeys value
-    && builtins.all (
-      name:
-      let
-        option = builtins.getAttr name value;
-      in
-      builtins.isInt option || builtins.isString option
-    ) (builtins.attrNames value);
+    && attrsHaveExactly [
+      "s1"
+      "s2"
+      "s3"
+      "s4"
+      "h1"
+      "h2"
+      "h3"
+      "h4"
+      "contentPaddingAddition"
+      "randomTrailers"
+      "disableCookies"
+    ] value
+    && builtins.all (name: builtins.isInt (builtins.getAttr name value)) [
+      "s1"
+      "s2"
+      "s3"
+      "s4"
+      "h1"
+      "h2"
+      "h3"
+      "h4"
+    ]
+    && builtins.isAttrs value.contentPaddingAddition
+    && attrsHaveExactly [ "min" "max" ] value.contentPaddingAddition
+    && builtins.isInt value.contentPaddingAddition.min
+    && builtins.isInt value.contentPaddingAddition.max
+    && builtins.isBool value.randomTrailers
+    && builtins.isBool value.disableCookies
+    && value.s1 == 12
+    && value.s2 == 12
+    && value.s3 == 12
+    && value.s4 == 12
+    && value.h1 == 1
+    && value.h2 == 2
+    && value.h3 == 3
+    && value.h4 == 4
+    && value.contentPaddingAddition.min == 2
+    && value.contentPaddingAddition.max == 10
+    && value.randomTrailers == true
+    && value.disableCookies == false;
 
   validReality =
     value:
     builtins.isAttrs value
-    && attrsHaveExactly [ "serverName" "dest" "shortIds" "publicKey" ] value
+    && attrsHaveExactly [ "serverName" "serverNames" "target" "shortIdsByProfile" "publicKey" ] value
     && isNonEmptyString (value.serverName or null)
-    && isNonEmptyString (value.dest or null)
-    && allStrings (value.shortIds or [ ])
+    && allStrings (value.serverNames or [ ])
+    && isNonEmptyString (value.target or null)
+    && builtins.match ".+:443" value.target != null
+    && builtins.elem value.serverName value.serverNames
+    && builtins.isAttrs value.shortIdsByProfile
+    && builtins.all (name: isNonEmptyString (builtins.getAttr name value.shortIdsByProfile)) (
+      builtins.attrNames value.shortIdsByProfile
+    )
     && isNonEmptyString (value.publicKey or null);
 
   validXhttp =
@@ -417,12 +474,7 @@ let
     builtins.isAttrs value
     && attrsHaveExactly [ "path" "mode" ] value
     && isNonEmptyString (value.path or null)
-    && builtins.elem (value.mode or null) [
-      "auto"
-      "stream-one"
-      "stream-up"
-      "packet-up"
-    ];
+    && (value.mode or null) == "auto";
 
   validDoh =
     value:
@@ -465,7 +517,7 @@ let
     builtins.isAttrs value
     && attrsHaveExactly profileNames value
     && builtins.all (
-      name: builtins.hasAttr name value && isNonEmptyString (builtins.getAttr name value)
+      name: builtins.hasAttr name value && safeSecretName (builtins.getAttr name value)
     ) profileNames;
 
   validateMetadata =
@@ -511,8 +563,14 @@ let
       && (
         !isNonEmptyString (metadata.sni or null)
         || !allStrings (metadata.alpn or [ ])
+        || metadata.alpn != [ "h3" ]
         || !allStrings (metadata.userNames or [ ])
         || !isNonEmptyString (metadata.obfsName or null)
+        || (metadata.obfsName or null) != "gecko"
+        || (metadata.obfsMinPacketSize or null) != 512
+        || (metadata.obfsMaxPacketSize or null) != 1200
+        || (metadata.tlsVerify or null) != true
+        || (metadata.credentialEncoding or null) != "base64url"
       )
     then
       fail context "Hysteria2 public transport metadata is incomplete"
@@ -526,8 +584,8 @@ let
         || !(builtins.all validAwgPeer (metadata.peers or [ ]))
         || !validPeerPublicKeys (metadata.peerPublicKeys or { })
         || !(builtins.isNull (metadata.mtu or null) || builtins.isInt (metadata.mtu or null))
-        || !builtins.hasAttr "extraOptions" metadata
-        || !validAwgExtraOptions metadata.extraOptions
+        || (metadata.generation or null) != 3
+        || !validAwgProfile (metadata.profile or null)
       )
     then
       fail context "AmneziaWG public transport metadata is incomplete"
@@ -586,7 +644,10 @@ let
           "users"
           "obfsPassword"
         ];
-        amneziawg = [ "clientPrivateKey" ];
+        amneziawg = [
+          "clientPrivateKey"
+          "headerProtectionKey"
+        ];
       };
       validSecretNames =
         builtins.isAttrs secretNames
@@ -595,13 +656,14 @@ let
           if protocol == "naiveproxy" then
             credentialMapExact metadata.userNames secretNames.password
           else if protocol == "vless-xhttp" then
-            isNonEmptyString (secretNames.realityPrivateKey or null)
+            safeSecretName (secretNames.realityPrivateKey or null)
             && credentialMapExact (raw.profileNames or [ ]) secretNames.vlessUuid
           else if protocol == "hysteria2" then
-            isNonEmptyString (secretNames.obfsPassword or null)
+            safeSecretName (secretNames.obfsPassword or null)
             && credentialMapExact metadata.userNames secretNames.users
           else if protocol == "amneziawg" then
             credentialMapExact (raw.profileNames or [ ]) secretNames.clientPrivateKey
+            && safeSecretName (secretNames.headerProtectionKey or null)
           else
             false
         );
@@ -621,8 +683,44 @@ let
         && (builtins.isNull endpoint.ipv4 || isNonEmptyString endpoint.ipv4)
         && builtins.isInt endpoint.port
         && endpoint.port > 0
-        && isNonEmptyString endpoint.transport
-        && allStrings (raw.profileNames or [ ])
+        &&
+          endpoint.transport == (
+            if
+              builtins.elem protocol [
+                "hysteria2"
+                "amneziawg"
+              ]
+            then
+              "udp"
+            else
+              "tcp"
+          )
+        && safeIdentity (raw.instanceId or null)
+        && safeIdentity (raw.machine or null)
+        && allSafeIdentities (raw.profileNames or [ ])
+        && (
+          protocol != "amneziawg"
+          || (
+            let
+              peerNames = map (peer: peer.name) (metadata.peers or [ ]);
+            in
+            peerNames == raw.profileNames
+            && peerNames == lib.unique peerNames
+            && attrsHaveExactly raw.profileNames (metadata.peerPublicKeys or { })
+          )
+        )
+        && (protocol != "hysteria2" || metadata.userNames == raw.profileNames)
+        && (
+          protocol != "naiveproxy"
+          || (
+            allSafeIdentities (metadata.userNames or [ ])
+            && lib.subtractLists metadata.userNames raw.profileNames == [ ]
+          )
+        )
+        && (
+          protocol != "vless-xhttp"
+          || credentialMapExact (raw.profileNames or [ ]) ((metadata.reality or { }).shortIdsByProfile or { })
+        )
         && validSecretNames;
     in
     if !builtins.isAttrs raw then
@@ -714,9 +812,10 @@ let
         value:
         builtins.isAttrs value
         && attrsHaveExactly [ "name" "label" "accountDomain" ] value
-        && isNonEmptyString (value.name or null)
+        && safeIdentity (value.name or null)
         && isNonEmptyString (value.label or null)
         && isNonEmptyString (value.accountDomain or null);
+      profileLinkNames = map (link: link.name or null) (raw.profileLinks or [ ]);
     in
     if !builtins.isAttrs raw || !(attrsHaveExactly fields raw) then
       fail context "vpnPublisher export shape is not the closed allowlist"
@@ -726,10 +825,13 @@ let
       || raw.machine != context.providerMachine
       || raw.role != "publisher"
       || raw.enabled != true
+      || !safeIdentity (raw.instanceId or null)
+      || !safeIdentity (raw.machine or null)
       || !isNonEmptyString (raw.accountDomain or null)
       || raw.pagePath != "/config-links/"
       || !builtins.isList (raw.profileLinks or [ ])
       || !(builtins.all validProfileLink (raw.profileLinks or [ ]))
+      || profileLinkNames != lib.unique profileLinkNames
     then
       fail context "vpnPublisher metadata does not match the requested publisher"
     else

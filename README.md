@@ -16,9 +16,9 @@ application packages and checks. Consumers own composition, machine facts,
 secret values and bindings, exposure policy, operator entrypoints, monitoring
 and cross-domain integration.
 
-`v0.1.0` is the first release. It keeps the existing shared
-Mihomo runtime, profile formats, AdGuard-to-Unbound DNS path and AWG2-compatible
-AmneziaWG parameters. It adds no HTTP/3 or other protocol change.
+The September candidate separates Xray VLESS/XHTTP from Mihomo Hysteria2,
+updates the AmneziaWG contract to generation 3, and retains Naive through
+Caddy and sing-box. Consumer adoption and release are separate owner actions.
 
 See [architecture](docs/architecture.md), [contracts](docs/contracts.md),
 [package authority](docs/package-authority.md), and the
@@ -38,12 +38,15 @@ repository has no hosted CI or automatic merging.
 
 Follow the [verification procedure](docs/operations/verify.md). It retains
 stage logs, durations and a summary under the ignored `.work/verification/`
-directory. A passing build is not deployment or live endpoint evidence.
+directory. A passing gate is source evidence, not deployment or live endpoint
+evidence.
 
 This project does not use virtual machines. VM configurations and tests that
-create or boot VMs are prohibited; repository verification runs without them.
-Configuration and checks are defined in Nix; Python scripts and test harnesses
-are prohibited.
+create or boot VMs are prohibited. Tests on real machines, application parser
+execution and service-starting tests are also excluded. Verification forces
+pure Nix configuration and contract assertions and runs static source hygiene,
+with builders and build jobs disabled. Configuration and checks are defined in
+Nix; Python scripts and test harnesses are prohibited.
 
 ## License
 

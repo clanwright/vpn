@@ -59,11 +59,15 @@ machine acceptance.
 ## Verification
 
 `unbound-contracts` проверяет schema defaults/invalid values, IPv4-only policy,
-effective override assertions и парсит generated native configuration через
-закреплённый `unbound-checkconf`. Native-process checks отдельно проверяют
-`READY=1` и DNS behavior без VM. Это не доказывает systemd activation, Internet
-trust-anchor refresh или фактический AdGuard fallback на production machine.
+effective override assertions и generated native configuration средствами Nix.
+Application parser/CLI, runtime tests, VM и тесты на реальных машинах запрещены.
+Реальный `READY=1`, DNS responses, trust-anchor refresh и фактический AdGuard
+fallback не проверяются и не объявляются доказанными.
 
 Freeform `include`, `include-toplevel` и server-level `include` отклоняются:
 они могли бы добавить listeners или ослабить DNSSEC после проверки typed attrs,
 а native NixOS checkconf отключается при top-level `include`.
+Набор effective directives закрыт штатными полями закреплённого NixOS-модуля
+и полями роли. Forward/stub/auth zones, local-data, RPZ и другие freeform
+расширения отклоняются; remote control выключен. Это исключает замену
+согласованной рекурсии синтезированными ответами или другим источником.

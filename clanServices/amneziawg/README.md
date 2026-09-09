@@ -2,61 +2,72 @@
 
 ## Purpose and role
 
-Граница домена описана в [архитектуре](../../docs/architecture.md), публичный API — в [контрактах](../../docs/contracts.md).
+Граница домена описана в [архитектуре](../../docs/architecture.md), публичный
+API — в [контрактах](../../docs/contracts.md). Gateway-роль создает userspace
+AmneziaWG 3.1 interface и публикует typed metadata для клиентских renderer-ов.
 
-Это gateway-роль для нативного интерфейса AmneziaWG. Она компилирует
-параметры сервера в NixOS WireGuard interface с `type = "amneziawg"` и
-публикует typed metadata для клиентов и проверок.
+## Settings and fixed profile
 
-## Settings
+Обязательны `listenIPv4`, `endpointDomain`, `address`,
+`privateKeySecretName`, `headerProtectionKeySecretName`, `serverPublicKey` и
+непустой список `peers`. При `enableNat = true` обязательны `egressIPv4` и
+`clientSubnetIPv4`. Модуль проверяет IPv4/CIDR, безопасные имена, canonical
+32-byte WireGuard public keys и глобальную уникальность peer names, public keys
+и allowed IPs.
 
-Входы включают `lifecycle`, `enable`, `interfaceName`, обязательные
-`listenIPv4`, `address`, `privateKeySecretName`, `serverPublicKey` и
-`peers`, а также `endpointDomain`, `listenPort`, `mtu` и
-`extraOptions`. При `enableNat = true` обязательны `egressIPv4` и
-`clientSubnetIPv4`. Пиры задают только несекретную адресную метаинформацию и
-имена secret inputs.
+Профиль фиксирован: MTU 1280, S1–S4 `12`, H1–H4 `1/2/3/4`,
+ContentPaddingAddition `2-10`, RandomTrailers включен, DisableCookies выключен.
+Jc/I1–I5 и пользовательские timer ranges сервер не задает. Поле
+`clientPersistentKeepalive` экспортируется клиенту, но серверному peer не
+назначается.
 
-## Defaults
+## Exports and packages
 
-Жизненный цикл и `enable` по умолчанию включены, порт — `443`, имя
-интерфейса — `awg0`, `endpointDomain` пуст, `mtu` не переопределён,
-NAT включён, `extraOptions` — пустой набор. Активная роль требует
-непустых адреса, server public key, private-key name и списка пиров.
+`vpnProvider` содержит UDP endpoint, `transportMetadata.generation = 3`, typed
+public `profile`, интерфейс, адрес, MTU и несекретную peer metadata. Имя
+HeaderProtectionKey находится отдельно в
+`secretNames.headerProtectionKey`; значение секрета в export отсутствует.
 
-## Exports and dependencies
+Роль использует stock packages из application package set и требует семейство
+3.1 для `amneziawg-go` и `amneziawg-tools`. Foreground
+`amneziawg-go -f <interface>` является главным процессом systemd service;
+kernel `amneziawg` interface backend не используется.
+Каждый active userspace process требует уникальные `interfaceName` и
+`listenPort` на машине: daemon слушает UDP wildcard, а `listenIPv4` ограничивает
+ingress через nftables, но не задает bind address процесса.
+Systemd capability set всегда содержит `CAP_NET_ADMIN` и добавляет
+`CAP_NET_BIND_SERVICE` только для порта ниже 1024.
 
-Экспорт `vpnProvider` содержит протокол `amneziawg`, UDP endpoint,
-адрес и несекретную информацию о пирах. Роль использует пакеты
-`apps-nixpkgs` и проверяет согласованные семейства `amneziawg-go 3.1.*` и
-`amneziawg-tools 3.1.*`; ingress и forwarding добавляются в штатные allow-chains
-NixOS nftables firewall, а SNAT принадлежит отдельной таблице роли. Текущий contract сохраняет прежний
-AWG2-совместимый набор `extraOptions`; AWG3-only keys и timing fields не
-добавлены.
+## Runtime secrets and failure behavior
 
-## State and secrets
-
-Серверный ключ читается из SOPS runtime path
-`config.sops.secrets.<privateKeySecretName>.path`, обычно
-`/run/secrets/<name>`, с владельцем `root:root` и режимом `0400`.
-Ротация перезапускает только соответствующий
-`wireguard-<interface>.service`. Значения ключей и preshared keys в Git
-не попадают; отдельные probe keys принадлежат probe-роли.
+Private key и отдельный 32-byte HeaderProtectionKey читаются из SOPS runtime
+paths с `root:root`, mode `0400`; изменение любого секрета перезапускает только
+`wireguard-<interface>.service`. Bounded `ExecStartPost` ожидает UAPI socket,
+передает весь профиль одним `awg set`, а затем назначает адрес/MTU, поднимает
+interface и добавляет peer routes. В tools 3.1.20260812 command parser принимает
+`private-key` и `header-protection-key` как пути к key files. Их значения не
+входят в Nix store, unit text или argv; вывод `awg set` подавлен, потому что при
+ошибке upstream parser может вывести значение неверного ключа. Ошибка setup
+останавливает supervised daemon, а idempotent `ExecStopPost` удаляет interface
+и UAPI socket. `Restart=on-failure` перезапускает весь lifecycle.
 
 ## Network exposure
 
-Активный интерфейс принимает только UDP на `listenIPv4:listenPort`;
-правило nftables firewall ограничено destination IP. При NAT штатный
-forward allow-chain разрешает исходящий клиентский трафик и established return
-на интерфейсе роли, а отдельная IPv4 NAT table выполняет SNAT только для
-`clientSubnetIPv4`; публичного TCP-входа роль не создаёт.
-`disabled-retained` сохраняет идентичность и secret metadata, но убирает
-интерфейс, пакеты, firewall, forwarding, NAT и sysctl-эффекты.
+Активная роль принимает UDP только на `listenIPv4:listenPort`; nftables rule
+ограничен destination IP. При NAT штатный forward chain разрешает client egress
+и established return, а отдельная IPv4 table выполняет SNAT только для
+`clientSubnetIPv4` и исключает назначения внутри этой подсети.
+Несколько active NAT instances объединяют одно общее требование
+`net.ipv4.ip_forward = 1`; instance без NAT его не запрашивает.
+`disabled-retained` сохраняет secret declarations и
+metadata, но убирает interface, packages, firewall, forwarding, NAT и sysctl.
 
 ## Verification
 
-Read-only проверка интерфейса выполняется через
-`nix eval --no-write-lock-file .#nixosConfigurations.<machine>.config.networkCore`.
-Перед активацией следует проверить непустые обязательные поля, допустимые
-AWG extra options и версии пакетов; после активации — состояние
-`wireguard-<interface>.service` и адресный UDP rule без вывода секретов.
+`checks/awg-contracts.nix` чистой Nix evaluation проверяет typed export,
+валидацию, точные AWG3 options, supervised userspace command, отсутствие kernel
+backend и server keepalive/J/I/timers, destination-scoped ingress, загрузку
+ключей до link-up и failure cleanup. Реальный handshake, transfer,
+MTU/fragmentation и cookie behavior source-only проверкой не установлены; такие
+наблюдения относятся к отдельным consumer-owned operations и не являются
+release gate этого модуля.

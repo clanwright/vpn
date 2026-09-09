@@ -23,7 +23,17 @@ let
   ];
 
   profileNamesFor =
-    ref: provider: if ref.profileNames == [ ] then provider.profileNames else ref.profileNames;
+    ref: provider:
+    let
+      selected = if ref.profileNames == [ ] then provider.profileNames else ref.profileNames;
+      unknown = lib.subtractLists provider.profileNames selected;
+    in
+    if selected != lib.unique selected then
+      throw "vpn-client-profiles: duplicate profileNames in ${ref.machine}/${ref.instanceId}"
+    else if unknown != [ ] then
+      throw "vpn-client-profiles: provider ref selects unknown profiles: ${lib.concatStringsSep ", " unknown}"
+    else
+      selected;
 
   rendererMachineName =
     machine:
@@ -31,9 +41,12 @@ let
     # vpnProvider schema v2 carries an explicit renderer namespace.
     lib.removeSuffix "-grosbeak" machine;
 
-  secretMapValue =
-    map: name: fallback:
-    if builtins.isAttrs map && builtins.hasAttr name map then builtins.getAttr name map else fallback;
+  requireMapValue =
+    context: map: name:
+    if builtins.isAttrs map && builtins.hasAttr name map then
+      builtins.getAttr name map
+    else
+      throw "vpn-client-profiles: ${context} is missing profile ${name}";
 
   publisherProfileOptions = {
     lifecycle = lib.mkOption {
@@ -45,7 +58,7 @@ let
       default = false;
     };
     localMachineName = lib.mkOption {
-      type = lib.types.str;
+      type = types.optionalSafeIdentityType;
       default = "";
     };
     configGatewayDomain = lib.mkOption {
@@ -74,16 +87,21 @@ let
       default = null;
     };
     secretPrefix = lib.mkOption {
-      type = lib.types.str;
+      type = types.optionalSafeIdentityType;
       default = "";
     };
     excludedProfileNames = lib.mkOption {
-      type = lib.types.listOf lib.types.str;
+      type = lib.types.listOf types.safeIdentityType;
       default = [ "probe" ];
     };
     tailnetAdminDomains = lib.mkOption {
       type = lib.types.listOf lib.types.str;
       default = [ ];
+    };
+    personalProxyDomains = lib.mkOption {
+      type = lib.types.listOf lib.types.str;
+      default = [ ];
+      description = "Consumer-owned domain suffixes routed by the selective profile.";
     };
     profiles = lib.mkOption {
       type = lib.types.listOf types.profileType;
@@ -140,6 +158,7 @@ in
           secretPrefix = "";
           excludedProfileNames = [ "probe" ];
           tailnetAdminDomains = [ ];
+          personalProxyDomains = [ ];
           profiles = [ ];
           providerRefs = [ ];
           profileLinks = [ ];
@@ -180,8 +199,9 @@ in
             }) providerRefs;
         mkProfile = provider: profileName: {
           name = profileName;
-          vlessUuidSecretName = secretMapValue ((provider.secretNames or { }).vlessUuid or { }
-          ) profileName "mihomo-${publisher.secretPrefix}-vless-uuid-${profileName}";
+          vlessUuidSecretName = requireMapValue "VLESS UUID secret map" ((provider.secretNames or { })
+            .vlessUuid or { }
+          ) profileName;
         };
         mkVlessUpstream =
           provider: ref:
@@ -193,6 +213,7 @@ in
             machineName = rendererMachineName provider.machine;
             edgeDomain = provider.endpoint.domain;
             edgeIPv4 = provider.endpoint.ipv4;
+            port = provider.endpoint.port;
             dohDomain = metadata.doh.domain;
             dohIPv4 = metadata.doh.ipv4;
             inherit profileNames;
@@ -212,9 +233,7 @@ in
             userSecrets = (provider.secretNames or { }).users or { };
             users = map (name: {
               inherit name;
-              passwordSecretName =
-                secretMapValue userSecrets name
-                  "hysteria2-${provider.machine}-${name}-password";
+              passwordSecretName = requireMapValue "Hysteria2 user secret map" userSecrets name;
             }) profileNames;
           in
           {
@@ -226,6 +245,13 @@ in
             port = provider.endpoint.port;
             inherit (metadata) sni;
             inherit (metadata) alpn;
+            inherit (metadata)
+              obfsName
+              obfsMinPacketSize
+              obfsMaxPacketSize
+              tlsVerify
+              credentialEncoding
+              ;
             enable = provider.enabled;
             obfsPasswordSecretName = (provider.secretNames or { }).obfsPassword or null;
           };
@@ -236,7 +262,6 @@ in
             profileNames = profileNamesFor ref provider;
             peers = metadata.peers or [ ];
             selectedPeers = builtins.filter (peer: builtins.elem peer.name profileNames) peers;
-            peerMap = metadata.peerPublicKeys or { };
           in
           {
             machineName = rendererMachineName provider.machine;
@@ -245,26 +270,19 @@ in
             inherit (metadata) serverPublicKey;
             inherit profileNames;
             clientPrivateKeySecretNames = (provider.secretNames or { }).clientPrivateKey or { };
+            headerProtectionKeySecretName = (provider.secretNames or { }).headerProtectionKey or null;
             settings = {
               enable = provider.enabled;
               listenPort = provider.endpoint.port;
               inherit (metadata) mtu;
-              extraOptions = metadata.extraOptions or { };
+              inherit (metadata) generation profile;
               peers = map (
                 name:
                 let
                   matches = builtins.filter (peer: peer.name == name) selectedPeers;
                   peer = if matches == [ ] then null else builtins.head matches;
                 in
-                if peer == null then
-                  {
-                    inherit name;
-                    publicKey = secretMapValue peerMap name "";
-                    allowedIPs = [ "10.77.0.2/32" ];
-                    clientPersistentKeepalive = 25;
-                  }
-                else
-                  peer
+                if peer == null then throw "vpn-client-profiles: AmneziaWG export is missing peer ${name}" else peer
               ) profileNames;
             };
           };
@@ -284,7 +302,7 @@ in
             inherit profileNames;
             usernames = lib.genAttrs profileNames (name: name);
             passwordSecretNames = lib.genAttrs profileNames (
-              name: secretMapValue passwords name "naiveproxy-${provider.machine}-${name}-password"
+              name: requireMapValue "NaiveProxy password secret map" passwords name
             );
             enable = provider.enabled;
           };
@@ -317,6 +335,10 @@ in
           };
         runtimeMachineName = rendererMachineName gatewayProfiles.localMachineName;
         inherit (gatewayProfiles) profiles;
+        publisherProfileNames = map (profile: profile.name) profiles;
+        providerRefKeys = map (ref: "${ref.machine}/${ref.instanceId}/${ref.protocol}") providerRefs;
+        profileLinkNames = map (link: link.name) publisher.profileLinks;
+        profileLinkSecretNames = map (link: link.pathTokenSecretName) publisher.profileLinks;
         publisherMetadata = {
           schemaVersion = 1;
           instanceId = instanceName;
@@ -383,24 +405,21 @@ in
               link:
               let
                 declared = config.sops.secrets.${link.pathTokenSecretName}.path;
-                matchingProfiles = builtins.filter (profile: profile.name == link.name) profiles;
+                matchingProfiles = builtins.filter (
+                  profile: profile.name == link.name
+                ) clientProfilesModule.renderedProfiles;
                 declaredProfile = if matchingProfiles == [ ] then null else builtins.head matchingProfiles;
                 jsonLine =
-                  if
-                    declaredProfile == null
-                    || (
-                      (declaredProfile.publishProfileJson or null) != false
-                      && (declaredProfile.kind or "mobile") != "router"
-                    )
-                  then
+                  if declaredProfile != null && declaredProfile.publishProfileJson then
                     ''printf '<li><a href="https://%s/%s/profile.json">%s (profile.json)</a></li>\n' ${lib.escapeShellArg link.accountDomain} "$token" ${lib.escapeShellArg link.label}''
                   else
                     "";
               in
               ''
-                token="$(read_secret ${lib.escapeShellArg declared})"
+                token="$(read_path_token ${lib.escapeShellArg declared})"
                 token="$(printf '%s' "$token" | jq -sRr @uri)"
                 printf '<li><a href="https://%s/%s/mihomo.yaml">%s (mihomo.yaml)</a></li>\n' ${lib.escapeShellArg link.accountDomain} "$token" ${lib.escapeShellArg link.label}
+                printf '<li><a href="https://%s/%s/mihomo-full.yaml">%s (mihomo-full.yaml)</a></li>\n' ${lib.escapeShellArg link.accountDomain} "$token" ${lib.escapeShellArg link.label}
                 ${jsonLine}
               '';
             linksPageFragment =
@@ -451,6 +470,21 @@ in
               script = ''
                 set -euo pipefail
                 read_secret() { tr -d '\r\n' < "$1"; }
+                read_path_token() {
+                  local value byte_count
+                  value="$(cat "$1")"
+                  byte_count="$(LC_ALL=C wc -c < "$1")"
+                  byte_count="''${byte_count//[[:space:]]/}"
+                  if [ "''${#value}" -ne "$byte_count" ]; then
+                    printf 'Profile path token must not contain a trailing newline or NUL byte\n' >&2
+                    exit 1
+                  fi
+                  if [[ ! "$value" =~ ^[A-Za-z0-9_-]{32,128}$ ]]; then
+                    printf 'Profile path token must be 32-128 unpadded base64url characters\n' >&2
+                    exit 1
+                  fi
+                  printf '%s' "$value"
+                }
                 install -d -m 0750 -o root -g caddy ${lib.escapeShellArg linksRoot}
                 tmp="$(mktemp ${lib.escapeShellArg linksRoot}/.index.XXXXXX.html)"
                 trap 'rm -f "$tmp"' EXIT
@@ -470,6 +504,7 @@ in
             };
           in
           {
+            _module.args.vpnClientProfileRender = clientProfilesModule.renderedProfiles;
             assertions = [
               {
                 assertion = !gatewayProfiles.enable || gatewayProfiles.localMachineName != "";
@@ -506,6 +541,33 @@ in
               {
                 assertion = !active || profiles != [ ];
                 message = "vpn-client-profiles: enabled publisher requires explicit profiles.";
+              }
+              {
+                assertion = publisherProfileNames == lib.unique publisherProfileNames;
+                message = "vpn-client-profiles: profile names must be unique.";
+              }
+              {
+                assertion = providerRefKeys == lib.unique providerRefKeys;
+                message = "vpn-client-profiles: providerRefs must be unique by machine, instance and protocol.";
+              }
+              {
+                assertion = profileLinkNames == lib.unique profileLinkNames;
+                message = "vpn-client-profiles: profile link names must be unique.";
+              }
+              {
+                assertion = profileLinkSecretNames == lib.unique profileLinkSecretNames;
+                message = "vpn-client-profiles: each profile link requires a distinct path-token secret.";
+              }
+              {
+                assertion = builtins.all (
+                  link:
+                  link.pathTokenSecretName == "mihomo-client-${gatewayProfiles.secretPrefix}-${link.name}-path-token"
+                ) publisher.profileLinks;
+                message = "vpn-client-profiles: each profile link must use the profile renderer's path-token secret.";
+              }
+              {
+                assertion = lib.subtractLists publisherProfileNames profileLinkNames == [ ];
+                message = "vpn-client-profiles: profile links may reference only declared profiles.";
               }
             ];
             sops.secrets = lib.mkIf gatewayProfiles.enable (

@@ -1,34 +1,48 @@
-# AmneziaWG 3.1: серверный аудит на 7 сентября 2026
+# AmneziaWG 3.1: серверный аудит на 8 сентября 2026
+
+Независимое source review и полный репозиторный gate прошли, включая
+композицию двух NAT instances и capabilities низкого/высокого порта;
+доказательства — в [основном аудите](audit-2026-09.md).
 
 ## Область и решение
 
 Пользователь выбрал переход на AWG3 и серверную архитектуру без ограничений
-старых клиентов. Клиенты позднее должны соответствовать серверу. Сейчас разрешены
-исследование и документы; реализация, смена секретов и deployment не выполняются.
+старых клиентов. Код серверного модуля, typed contract и клиентский renderer
+обновлены; смена секретов и deployment не выполнялись.
 
 Проверены код проекта, точные upstream tags, актуальные документы Amnezia,
 практические рекомендации оператора и исходный отчет о несовместимости реализаций.
 Доступность конкретных серверов из Дом.ру/Т-Мобайл/Yota не измерялась.
 
-## Текущее состояние проекта
+## Реализованное состояние проекта
 
-- Go pin — 3.1.20260814, tools — 3.1.20260812. Номер пакета не включает новый
-  wire format автоматически: контракт и проверка остаются ориентированными на AWG2.
-- `extraOptions` требует полный набор H1–H4, I1–I5, Jc/Jmin/Jmax, S1–S4,
-  включая непустой I1. Это не соответствует чистому серверному профилю AWG3.
-- Нет отдельного runtime-secret пути для HeaderProtectionKey. Передавать ключ
-  через обычные Nix attrs/extraOptions нельзя: он может попасть в Nix store.
-- MTU сейчас null; допустимый диапазон задан 1280–1420. Это границы реализации
-  проекта, а не доказанные границы каждого сетевого пути.
-- Есть destination-scoped ingress, отдельные peer public keys и проверка
-  соответствия server private/public key. Их сохраняем.
-- Проверку адресов, allowedIPs, дубликатов peers и имен нужно усилить до рендера
-  интерфейсов и nftables. Машинные маршруты и exposure policy остаются у consumer.
+- Package authority использует stock `amneziawg-go` 3.1.20260828 и
+  `amneziawg-tools` 3.1.20260812; userspace backend задан явно.
+- Серверный профиль фиксирует S/H/padding/cookies и MTU1280. Jc/I1–I5,
+  пользовательские timer ranges и server PersistentKeepalive отсутствуют.
+- Отдельный `headerProtectionKeySecretName` объявляет runtime SOPS secret.
+  Supervised `amneziawg-go -f` создает userspace TUN/UAPI, затем bounded
+  ExecStartPost передает private key и HeaderProtectionKey в `awg set` как file
+  paths до link-up. Значения не попадают в Nix store, argv, unit text или
+  публичный export; вывод parser подавлен. Ошибка останавливает daemon, а
+  ExecStopPost удаляет interface и socket.
+- Каждый active userspace instance имеет уникальные interface name и UDP port
+  на машине. Go daemon слушает wildcard UDP; `listenIPv4` задает
+  destination-scoped nftables ingress, а не bind address процесса.
+- Service capability set ограничен `CAP_NET_ADMIN`; для выбранного порта443
+  добавляется `CAP_NET_BIND_SERVICE`. High-port instance его не получает.
+- Active NAT instances агрегируют одно shared требование
+  `net.ipv4.ip_forward = 1`; NAT-disabled и retained instances его не задают.
+- Валидация до рендера проверяет адреса, allowedIPs, canonical public keys,
+  безопасные secret/peer names и дубликаты. Каждый peer получает ровно один
+  уникальный `/32` внутри interface/client subnet, отличный от server address.
+  Ingress остается ограничен destination IPv4; машинные маршруты и exposure
+  policy принадлежат consumer.
 
 ## Выбранный целевой профиль
 
-Ниже инженерная рекомендация для будущего внедрения. Это один профиль,
-не набор альтернатив. Старые client cores не являются причиной его упрощать.
+Ниже реализованный инженерный профиль. Это один профиль, не набор альтернатив.
+Старые client cores не являются причиной его упрощать.
 
 | Параметр | Выбор | Обоснование |
 |---|---|---|
@@ -90,14 +104,23 @@ AWG3.1 сразу на Дом.ру, Т-Мобайл и Yota. Поэтому пр
 протокола, актуальным исправлениям и эксплуатационным компромиссам; он не
 обещает обход запрета всего UDP, блокировки адреса или мобильных allowlists.
 
-## Приемка будущего внедрения
+## Проверенное и пределы source-only приёмки
 
-Проверить безопасную загрузку HeaderProtectionKey, фактическую userspace
-реализацию, правильные active options, отказ при неверном ключе, handshake,
-TCP/UDP transfer в обе стороны, пакетные размеры/фрагментацию, sustained load,
-rekey/idle и cookie-защиту под нагрузкой. Проверка только parser или наличия
-интерфейса этого не доказывает. Реальные проверки выполняются после отдельного
-разрешения на внедрение; A/B с AWG2 не является условием выбранной архитектуры.
+Pure Nix contract проверяет package family/authority, supervised foreground
+userspace command, отсутствие kernel backend, точные active options, загрузку
+ключей из SOPS files до link-up, failure cleanup, отсутствие секрета в
+unit/export и destination-scoped ingress. Negative fixtures принудительно
+проверяют неверные адреса, ключи, имена, дубликаты и нарушение peer `/32`
+isolation/subnet contract.
+
+В рамках repository verification намеренно не запускались userspace process,
+сервисы или application CLI. Поэтому source-only результат не заявляет
+фактический handshake, TCP/UDP transfer, пакетные размеры/фрагментацию,
+sustained load, rekey/idle, cookie-защиту под нагрузкой или поведение с неверным
+содержимым runtime secret. Возможные наблюдения на уже deployed машине являются
+отдельной consumer-owned operation, а не отложенным release gate или
+обязательством этого аудита. A/B с AWG2 не является условием выбранной
+архитектуры.
 
 ## Источники и код
 

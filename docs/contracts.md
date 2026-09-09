@@ -13,8 +13,9 @@ The stable service surface is `clan.modules`, with exactly seven module IDs:
 | `@clanwright/dns-unbound` | recursive DNS backend |
 
 Consumers select these IDs through their catalog and pass only documented Clan
-role settings. Module identities and existing settings/defaults are compatibility
-surface for `v0.1.0`.
+role settings. Module identities remain stable; the September candidate changes
+settings and exports together where the new protocol contract requires it.
+Consumer migration must use this candidate's documented schema.
 
 The flake also exposes these helper libraries:
 
@@ -22,7 +23,6 @@ The flake also exposes these helper libraries:
 | --- | --- |
 | `lib.vpnExports { lib }` | Closed provider and publisher export types and projections. |
 | `lib.awgValidation { lib }` | AmneziaWG option and package-family validation. |
-| `lib.awgPublicKeyCheck { pkgs }` | Build-time public/private key consistency check helper. |
 | `lib.clientProfiles { config, lib, pkgs, settings, gatewayProfiles }` | Profile-rendering implementation used by the publisher and checks; domain package authority is applied internally. |
 
 Unknown provider fields are rejected at the typed boundary. A consumer must not
@@ -33,6 +33,28 @@ change and a new release.
 Secret values are outside this contract. Modules accept declared runtime paths
 and metadata from the consumer; they do not own, generate or publish consumer
 credentials.
+
+The publisher exposes a selective Mihomo configuration at `/<token>/mihomo.yaml`
+and a full configuration at `/<token>/mihomo-full.yaml`. Both use Rule mode so
+private DIRECT exceptions precede the final routing decision. The sing-box
+`/<token>/profile.json` uses native Rule/Global mode matching with separate
+SELECTIVE/FULL selectors. These are path templates, not live profile URLs.
+The sing-box profile is published only when the device has an eligible Naive
+provider. Otherwise its file, handler and link are absent; the publisher does
+not offer a direct-only configuration as a VPN profile.
+
+Consumer `personalProxyDomains` supplies persistent domain suffix additions
+without a `+.` prefix. No personal domain list is compiled into the library.
+
+The owner accepted primary AdGuard-only DNS for Mihomo on 9 September 2026.
+Mihomo has no client DNS fallback or additional local resolver; an AdGuard
+outage leaves new queries without a usable cached answer unresolved. The
+sing-box client retains its strict DNS cascade, and the server-side dnsproxy
+reserve remains separate.
+
+Xray, Hysteria and AWG scoped ingress requires the consumer's enabled nftables
+firewall. These roles assert the selected backend; they do not silently change
+the consumer's firewall implementation.
 
 The Naive add-on accepts an identity-to-secret-name map; the former
 `ibelyasov`, `bsv`, `probe` keys remain valid. `probeUserName` identifies the
@@ -52,6 +74,28 @@ IPv4 loopback plus IPv6 loopback when the host enables IPv6. An explicit list
 must be nonempty and contain supported loopback IP literals; an explicit IPv6
 listener conflicts with a host that disables IPv6. Ports must be in 1-65535.
 The effective backend configuration retains loopback ACLs, DNSSEC validation and
-bounded stale policy. The optional AdGuard integration requests backend startup
+bounded stale policy. The effective directive set is closed: forwarding, local
+answer synthesis, RPZ and other freeform extensions are rejected, and remote
+control remains disabled. The optional AdGuard integration requests backend startup
 with `Wants=` and adds no backend readiness wait or hard service dependency.
 The consumer still supplies the AdGuard upstream binding explicitly.
+
+The AdGuard role's admin secret now contains a single bcrypt hash rather than
+a plaintext password. The consumer owns hash generation and the SOPS binding;
+the value must be a valid bcrypt token without whitespace or a terminal newline.
+SOPS templates perform literal substitution, so arbitrary strings are outside
+this contract. The hash is inserted only at runtime, passed through a systemd
+credential and copied into AdGuard's private working configuration. Restart
+restores the declarative input; UI edits are temporary.
+
+Personal DNS rules belong to the consumer's `filtering.userRules` list, empty by
+default. The role does not expose a freeform AdGuard settings escape hatch:
+listener, auth, filtering and cascade policy remain explicit typed contracts.
+
+The same role manages the native dnsproxy reserve service. Its package belongs
+to VPN's exact package set; the consumer does not supply a replacement binary.
+The agreed plaintext reserve is Cloudflare, non-blocking Quad9 and Google and
+must follow failure of all encrypted exchanges. Received NXDOMAIN or SERVFAIL
+does not trigger that less protected tier. Public exposure and end-to-end
+activation remain consumer responsibilities. Repository acceptance is pure Nix
+evaluation and static hygiene; it does not include machine or runtime tests.

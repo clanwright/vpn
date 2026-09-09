@@ -19,13 +19,12 @@ cross-domain checks.
 
 ## Runtime shape
 
-VLESS/REALITY with XHTTP and Hysteria2 are independent Clan selections that
-contribute fragments to one `mihomo-gateway.service`. The runtime accepts at
-most one active fragment of each protocol per machine, so both transports share
-one process and configuration failure domain.
+VLESS/REALITY with XHTTP runs in Xray. Hysteria2 runs in its own Mihomo service
+with Gecko obfuscation. Their stable Clan module IDs retain the historical
+Mihomo names; the services have independent configurations and lifecycles.
 
-AmneziaWG remains a separate UDP gateway. Its first release retains the
-existing AWG2-compatible parameter set and package-family validation. NaiveProxy
+AmneziaWG is a separate userspace generation-3 UDP gateway with a runtime-only
+header-protection key in addition to the individual WireGuard peer keys. NaiveProxy
 remains one typed Caddy `forward_proxy` contribution attached to a consumer
 selected public site claim.
 
@@ -34,12 +33,21 @@ Mihomo and Sing-box formats. AdGuard Home remains the local/tailnet DNS and DoH
 front end, with loopback Unbound as its recursive backend. Exact domains,
 listeners, rewrites and secret bindings come from the consumer composition.
 
-TCP performance tuning remains consumer owned and is tracked as future work.
-The first release changes no HTTP/3 setting or transport behavior.
+The AdGuard role also owns a permanent loopback dnsproxy service through the
+native NixOS module. It supplies the two reserve DNS tiers: parallel encrypted
+providers, then plaintext only after encrypted exchange failures. AdGuard's
+only fallback points to this service; Unbound remains its normal primary.
+This adds no Clan module ID and no custom failover coordinator. It does not
+switch VPN transports or provide a client bypass when AdGuard itself is down.
+
+TCP performance tuning remains consumer owned. The audit does not introduce
+incidental HTTP/3 changes to shared Caddy sites.
 
 ## Platforms
 
 Runtime support is `x86_64-linux`. Darwin outputs exist only where current
-developer and evaluation checks require them. Verification uses native Nix
-evaluation and Linux builds; the repository does not add QEMU or synthetic
-NixOS VM tests.
+developer and evaluation checks require them. Verification forces pure Nix
+schema, contract and generated-configuration assertions, plus static source
+hygiene. No application binaries, listeners, runtime tests, Linux builds,
+external builders or tests on real machines are run. VM configurations and
+VM-backed execution are prohibited throughout the project.

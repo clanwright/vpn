@@ -193,7 +193,27 @@ let
     && !(schemaAccepts (baseSettings // { additionalDeny = [ "admin.example.invalid" ]; }))
     && !(schemaAccepts (baseSettings // { additionalDeny = [ "01.2.3.4" ]; }))
     && !(schemaAccepts (baseSettings // { additionalDeny = [ "999999999999999999999.2.3.4" ]; }))
+    && !(schemaAccepts (
+      lib.recursiveUpdate baseSettings {
+        selectedPublicSiteEndpoint.publicIPv4 = "192.0.2.999";
+      }
+    ))
+    && !(schemaAccepts (
+      lib.recursiveUpdate baseSettings {
+        selectedPublicSiteEndpoint.caddyBindIPv4 = "not-an-ip";
+      }
+    ))
     && !(schemaAccepts (baseSettings // { additionalDeny = [ "2001:db8:::1/128" ]; }))
+    && !(schemaAccepts (
+      lib.recursiveUpdate baseSettings {
+        selectedPublicSiteEndpoint.publicIPv4 = "192.0.2.999";
+      }
+    ))
+    && !(schemaAccepts (
+      lib.recursiveUpdate baseSettings {
+        selectedPublicSiteEndpoint.caddyBindIPv4 = "listener.example.invalid";
+      }
+    ))
     && schemaAccepts (
       baseSettings
       // {
@@ -239,7 +259,10 @@ let
       builtins.attrValues legacy.module.sops.secrets
     );
 in
-if contract then
-  pkgs.runCommand "vpn-naiveproxy-contracts" { passthru = { inherit contract; }; } ''touch "$out"''
-else
+if !contract then
   throw "NaiveProxy contract, ACL, native-template, or listener-isolation check failed"
+else
+  {
+    all = true;
+    inherit contract;
+  }

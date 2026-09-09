@@ -16,6 +16,22 @@
         "type": "github"
       }
     },
+    "modern-apps-nixpkgs": {
+      "locked": {
+        "lastModified": 1788898493,
+        "narHash": "sha256-Ad8Eo+K1909Eco1MDsyNWGVuSVI0TDFOIaoTv8nrTD8=",
+        "owner": "NixOS",
+        "repo": "nixpkgs",
+        "rev": "f3afd85cd82edf71f2dea9b96dcda2d6a64f26f4",
+        "type": "github"
+      },
+      "original": {
+        "owner": "NixOS",
+        "repo": "nixpkgs",
+        "rev": "f3afd85cd82edf71f2dea9b96dcda2d6a64f26f4",
+        "type": "github"
+      }
+    },
     "clan-core": {
       "inputs": {
         "data-mesher": [
@@ -312,6 +328,7 @@
         "apps-nixpkgs": "apps-nixpkgs",
         "clan-core": "clan-core",
         "data-mesher": "data-mesher",
+        "modern-apps-nixpkgs": "modern-apps-nixpkgs",
         "network": "network",
         "nixpkgs": "nixpkgs_2"
       }

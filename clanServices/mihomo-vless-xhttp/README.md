@@ -2,50 +2,48 @@
 
 ## Purpose and role
 
-Граница домена описана в [архитектуре](../../docs/architecture.md), публичный API — в [контрактах](../../docs/contracts.md).
-
-Это самостоятельный VLESS/REALITY + XHTTP gateway-фрагмент для общего
-`mihomo-runtime`. Он владеет своим TCP listener и не включает Hysteria2,
-AmneziaWG, NaiveProxy или publisher профилей.
+The stable historical module ID provides one independent stock Xray
+VLESS/REALITY/XHTTP gateway. It does not share process, configuration, package,
+or restart state with Hysteria2.
 
 ## Settings
 
-Входы: `lifecycle`, `enable`, обязательные `bindIPv4`, `domain`,
-`reality.serverName`, `reality.dest`, `reality.shortIds`,
-`reality.publicKey`, `reality.privateKeySecretName`, `xhttp.path`
-и `profiles` с `name`, `vlessUuidSecretName`, `kind`. Также
-задаются `port`, `clientFingerprint`, `doh.domain`,
-`doh.ipv4`, `xhttp.mode` и optional `publishProfileJson`.
+The consumer supplies an exact `bindIPv4`, endpoint `domain`, per-device
+`profiles`, and client publication metadata. Each profile has its own SOPS UUID
+secret name and REALITY short ID. The REALITY target is explicit: a hostname on
+port 443, declared TLS 1.3 and HTTP/2 support, and a matching `serverNames`
+entry. The XHTTP path must start with `/`; server mode is fixed to `auto`.
 
-## Defaults
+The target declarations are configuration preconditions. Pure evaluation cannot
+prove the target's live protocol negotiation or certificate SANs; verify those
+from each deployment location before activation.
 
-Lifecycle и `enable` включены, fingerprint — `edge`, XHTTP mode —
-`packet-up`; порт и DoH values задаются composition. Profile kind по
-умолчанию `mobile`; активная роль требует reality и XHTTP inputs.
+## Runtime and secrets
 
-## Exports and dependencies
+The module uses the native NixOS Xray service with the injected stock Xray
+26.3.27 package. SOPS renders one root-only runtime JSON template. UUIDs and the
+REALITY private key remain placeholders during Nix evaluation and never enter
+the store. Xray runs under systemd's dynamic non-root identity and receives only
+`CAP_NET_BIND_SERVICE` for the default low port.
 
-Экспорт `vpnProvider` описывает protocol `vless-xhttp`, TCP endpoint,
-REALITY/XHTTP/fingerprint/DoH metadata и только имена UUID/key secrets.
-Runtime и secret materialization выполняет общий
-`modules/edge/mihomo-runtime.nix`.
+The generated inbound uses VLESS `decryption: none`, REALITY `show: false` and
+`xver: 0`, XHTTP over TCP in server mode `auto`, and no Vision flow or fallback.
+Padding, buffering, and XMUX overrides are omitted so the pinned Xray defaults
+apply.
 
-## State and secrets
+## Export and exposure
 
-Persistent state роль не создаёт. UUID values и REALITY private key
-читаются через SOPS runtime paths; в репозитории остаются только input
-names. Generated profile bodies не являются state этого gateway и
-публикуются отдельной publisher-ролью.
+Each device short ID is exactly 16 lowercase hex characters (8 bytes).
+Short forms and uppercase spellings are rejected, avoiding equivalent
+zero-padded/case-varied identities in Xray's decoder.
 
-## Network exposure
+`vpnProvider` retains protocol `vless-xhttp` and publishes the endpoint,
+REALITY target/server names/public key, per-profile short IDs, XHTTP path/mode,
+fingerprint, DoH metadata, and secret names. The module opens only the exact
+`bindIPv4:port` destination through nftables; it does not add a global allowed
+TCP port.
+The consumer must explicitly enable the nftables firewall backend; an active
+role rejects disabled firewalls or the iptables backend.
 
-Создаётся один TCP listener на `bindIPv4:port` с адресным firewall
-правилом. Hysteria2/UDP и другие протоколы не слушаются этим фрагментом;
-DoH metadata используется клиентскими профилями и не добавляет listener.
-
-## Verification
-
-Read-only evaluation:
-`nix eval --no-write-lock-file .#nixosConfigurations.<machine>.config.networkCore`.
-Проверить typed provider protocol, REALITY/XHTTP consistency, TCP
-destination rule и runtime secret paths без вывода их содержимого.
+Operator checks and activation guidance are in
+[`docs/operations/vless.md`](../../docs/operations/vless.md).

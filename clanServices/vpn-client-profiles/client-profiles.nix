@@ -9,7 +9,6 @@
 }:
 let
   inherit (settings) localMachineName;
-  publicKeyCheck = import ../amneziawg/public-key-check.nix { pkgs = appsPkgs; };
   localPublicNetwork = {
     inherit (settings) publicIPv4;
     caddyBindIPv4 =
@@ -37,24 +36,14 @@ let
 
   profileRoot = "/run/mihomo-client-config/${localMachineName}";
   secureDnsRuleSetPath = "${profileRoot}/rules/hagezi-doh.srs";
-  # The renderer and its source rules are owned by this service.
-  personalProxyDomainsSourcePath = ./rules/personal-proxy-domains.txt;
   personalProxyDomainsTxtPath = "${profileRoot}/rules/personal-proxy-domains.txt";
-  personalProxyDomainsSrsPath = "${profileRoot}/rules/personal-proxy-domains.srs";
   secureDnsRuleSetPublicPath = "/assets/v1/catalog/filters.srs";
   personalProxyDomainsTxtPublicPath = "/assets/v1/catalog/segments.txt";
-  personalProxyDomainsSrsPublicPath = "/assets/v1/catalog/segments.srs";
   ruleSetMirrorPublicPath = tag: "/assets/v1/catalog/${tag}.srs";
   ruleSetMirrorMrsPublicPath = tag: "/assets/v1/catalog/${tag}.mrs";
   secureDnsDomainsTxtPath = "${profileRoot}/rules/secure-dns.txt";
   secureDnsDomainsTxtPublicPath = "/assets/v1/catalog/secure-dns.txt";
-  personalProxyDomainsRaw = builtins.readFile personalProxyDomainsSourcePath;
-  personalProxyDomainLines =
-    let
-      inherit (lib.strings) trim;
-      lines = map trim (lib.splitString "\n" personalProxyDomainsRaw);
-    in
-    builtins.filter (line: line != "" && !(lib.hasPrefix "#" line)) lines;
+  personalProxyDomainLines = settings.personalProxyDomains or [ ];
   personalProxyDomainRegex = "^[A-Za-z0-9]([A-Za-z0-9-]*[A-Za-z0-9])?(\\.[A-Za-z0-9]([A-Za-z0-9-]*[A-Za-z0-9])?)+$";
   invalidPersonalProxyDomains = builtins.filter (
     domain: builtins.match personalProxyDomainRegex domain == null
@@ -68,27 +57,6 @@ let
   personalProxyDomainsTxt = pkgs.writeText "personal-proxy-domains.txt" (
     lib.concatStringsSep "\n" personalProxyMihomoDomains + "\n"
   );
-  personalProxyDomainsSourceJson = pkgs.writeText "personal-proxy-domains.source.json" (
-    builtins.toJSON {
-      version = 4;
-      rules = [
-        {
-          domain_suffix = personalProxyDomains;
-        }
-      ];
-    }
-  );
-  personalProxyDomainsSrs =
-    pkgs.runCommand "personal-proxy-domains.srs"
-      {
-        nativeBuildInputs = [ appsPkgs.sing-box ];
-      }
-      ''
-        set -euo pipefail
-        sing-box rule-set compile --output "$out" ${lib.escapeShellArg personalProxyDomainsSourceJson}
-        test -s "$out"
-        sing-box rule-set decompile "$out" >/dev/null
-      '';
   caddyFragment = "/run/caddy-auth/mihomo-client-${localMachineName}.caddy";
   generatorService = "mihomo-client-caddy-${localMachineName}";
   secureDnsRuleSetService = "mihomo-client-hagezi-doh-${localMachineName}";
@@ -138,6 +106,8 @@ let
         inherit proxy;
         url = "https://${configGatewayDomain}${secureDnsDomainsTxtPublicPath}";
       };
+    }
+    // lib.optionalAttrs (personalProxyDomains != [ ]) {
       personal_proxy_domains = mkRuleProvider {
         name = "personal_proxy_domains";
         behavior = "domain";
@@ -164,14 +134,6 @@ let
 
   upstreamRuleSets = [
     {
-      tag = "ai_non_cn_domains";
-      url = "https://raw.githubusercontent.com/MetaCubeX/meta-rules-dat/sing/geo/geosite/category-ai-!cn.srs";
-    }
-    {
-      tag = "ai_cn_domains";
-      url = "https://raw.githubusercontent.com/MetaCubeX/meta-rules-dat/sing/geo/geosite/category-ai-cn.srs";
-    }
-    {
       tag = "ru_blocked_and_geoblocked_domains";
       url = "https://github.com/legiz-ru/sb-rule-sets/raw/main/ru-bundle.srs";
     }
@@ -187,30 +149,6 @@ let
       tag = "refilter_blocked_ips";
       url = "https://github.com/1andrevich/Re-filter-lists/releases/latest/download/ruleset-ip-refilter_ipsum.srs";
     }
-    {
-      tag = "youtube_domains";
-      url = "https://raw.githubusercontent.com/MetaCubeX/meta-rules-dat/sing/geo/geosite/youtube.srs";
-    }
-    {
-      tag = "google_domains";
-      url = "https://raw.githubusercontent.com/MetaCubeX/meta-rules-dat/sing/geo/geosite/google.srs";
-    }
-    {
-      tag = "google_ips";
-      url = "https://raw.githubusercontent.com/MetaCubeX/meta-rules-dat/sing/geo/geoip/google.srs";
-    }
-    {
-      tag = "category_dev_domains";
-      url = "https://raw.githubusercontent.com/MetaCubeX/meta-rules-dat/sing/geo/geosite/category-dev.srs";
-    }
-    {
-      tag = "telegram_domains";
-      url = "https://raw.githubusercontent.com/MetaCubeX/meta-rules-dat/sing/geo/geosite/telegram.srs";
-    }
-    {
-      tag = "telegram_ips";
-      url = "https://raw.githubusercontent.com/MetaCubeX/meta-rules-dat/sing/geo/geoip/telegram.srs";
-    }
   ];
 
   # Native mihomo .mrs sources, mirrored alongside the sing-box .srs so the
@@ -218,16 +156,6 @@ let
   # behavior is required by mihomo rule-providers; sing-box .srs carries it
   # inside the binary so upstreamRuleSets above does not need it.
   mihomoMrsUpstream = [
-    {
-      tag = "ai_non_cn_domains";
-      behavior = "domain";
-      url = "https://raw.githubusercontent.com/MetaCubeX/meta-rules-dat/meta/geo/geosite/category-ai-!cn.mrs";
-    }
-    {
-      tag = "ai_cn_domains";
-      behavior = "domain";
-      url = "https://raw.githubusercontent.com/MetaCubeX/meta-rules-dat/meta/geo/geosite/category-ai-cn.mrs";
-    }
     {
       tag = "ru_blocked_and_geoblocked_domains";
       behavior = "domain";
@@ -248,36 +176,6 @@ let
       behavior = "ipcidr";
       url = "https://github.com/legiz-ru/mihomo-rule-sets/raw/main/re-filter/ip-rule.mrs";
     }
-    {
-      tag = "youtube_domains";
-      behavior = "domain";
-      url = "https://raw.githubusercontent.com/MetaCubeX/meta-rules-dat/meta/geo/geosite/youtube.mrs";
-    }
-    {
-      tag = "google_domains";
-      behavior = "domain";
-      url = "https://raw.githubusercontent.com/MetaCubeX/meta-rules-dat/meta/geo/geosite/google.mrs";
-    }
-    {
-      tag = "google_ips";
-      behavior = "ipcidr";
-      url = "https://raw.githubusercontent.com/MetaCubeX/meta-rules-dat/meta/geo/geoip/google.mrs";
-    }
-    {
-      tag = "category_dev_domains";
-      behavior = "domain";
-      url = "https://raw.githubusercontent.com/MetaCubeX/meta-rules-dat/meta/geo/geosite/category-dev.mrs";
-    }
-    {
-      tag = "telegram_domains";
-      behavior = "domain";
-      url = "https://raw.githubusercontent.com/MetaCubeX/meta-rules-dat/meta/geo/geosite/telegram.mrs";
-    }
-    {
-      tag = "telegram_ips";
-      behavior = "ipcidr";
-      url = "https://raw.githubusercontent.com/MetaCubeX/meta-rules-dat/meta/geo/geoip/telegram.mrs";
-    }
   ];
 
   # Harbor fetches the upstream .srs on a timer (ruleSetMirrorService). Profiles
@@ -295,16 +193,16 @@ let
       }
     ) upstreamRuleSets;
   singBoxFakeIpDomainRuleSets = [
-    "personal_proxy_domains"
-    "ai_non_cn_domains"
-    "ai_cn_domains"
-    "category_dev_domains"
     "secure_dns_domains"
-    "youtube_domains"
-    "google_domains"
-    "telegram_domains"
     "ru_blocked_and_geoblocked_domains"
     "refilter_blocked_domains"
+  ];
+  protectedRuleSets = [
+    "secure_dns_domains"
+    "ru_blocked_and_geoblocked_domains"
+    "ru_blocked_asn_ips"
+    "refilter_blocked_domains"
+    "refilter_blocked_ips"
   ];
 
   baseRules = [
@@ -317,22 +215,13 @@ let
     "IP-CIDR,224.0.0.0/4,DIRECT,no-resolve"
     "IP-CIDR6,fc00::/7,DIRECT,no-resolve"
     "IP-CIDR6,fe80::/10,DIRECT,no-resolve"
-    "RULE-SET,personal_proxy_domains,PROXY"
-    "RULE-SET,ai_non_cn_domains,PROXY"
-    "RULE-SET,ai_cn_domains,PROXY"
-    "RULE-SET,category_dev_domains,PROXY"
     "RULE-SET,secure_dns_domains,PROXY"
-    "RULE-SET,youtube_domains,PROXY"
-    "RULE-SET,google_domains,PROXY"
-    "RULE-SET,google_ips,PROXY,no-resolve"
-    "RULE-SET,telegram_domains,PROXY"
-    "RULE-SET,telegram_ips,PROXY,no-resolve"
     "RULE-SET,ru_blocked_and_geoblocked_domains,PROXY"
     "RULE-SET,refilter_blocked_domains,PROXY"
     "RULE-SET,ru_blocked_asn_ips,PROXY,no-resolve"
     "RULE-SET,refilter_blocked_ips,PROXY,no-resolve"
-    "MATCH,DIRECT"
-  ];
+  ]
+  ++ lib.optional (personalProxyDomains != [ ]) "RULE-SET,personal_proxy_domains,PROXY";
 
   findUpstreamProfile =
     profileName: upstream:
@@ -366,32 +255,6 @@ let
 
   firstAddress = cidr: builtins.head (lib.splitString "/" cidr);
 
-  requireAmneziawgOption =
-    options: key:
-    if builtins.hasAttr key options then
-      builtins.getAttr key options
-    else
-      throw "AmneziaWG 2.0 option ${key} is required for Mihomo client profile generation";
-
-  mkMihomoAmneziawgOptions = options: {
-    jc = requireAmneziawgOption options "Jc";
-    jmin = requireAmneziawgOption options "Jmin";
-    jmax = requireAmneziawgOption options "Jmax";
-    s1 = requireAmneziawgOption options "S1";
-    s2 = requireAmneziawgOption options "S2";
-    s3 = requireAmneziawgOption options "S3";
-    s4 = requireAmneziawgOption options "S4";
-    h1 = toString (requireAmneziawgOption options "H1");
-    h2 = toString (requireAmneziawgOption options "H2");
-    h3 = toString (requireAmneziawgOption options "H3");
-    h4 = toString (requireAmneziawgOption options "H4");
-    i1 = requireAmneziawgOption options "I1";
-    i2 = requireAmneziawgOption options "I2";
-    i3 = requireAmneziawgOption options "I3";
-    i4 = requireAmneziawgOption options "I4";
-    i5 = requireAmneziawgOption options "I5";
-  };
-
   mkUpstreamCredential =
     profileName: upstream:
     let
@@ -401,7 +264,7 @@ let
       inherit (upstream) machineName;
       inherit (profile) vlessUuidSecretName;
       vlessTag = "${upstream.machineName}-${profileName}-vless";
-      inherit (upstream) edgeDomain;
+      inherit (upstream) edgeDomain port;
       edgeIPv4 = upstream.edgeIPv4 or null;
       inherit (upstream.settings) reality;
       vless = upstream.settings.vless or { };
@@ -414,27 +277,13 @@ let
   enabledHysteria2Upstreams = builtins.filter (upstream: upstream.enable or true) hysteria2Upstreams;
   enabledNaiveUpstreams = builtins.filter (upstream: upstream.enable or true) naiveUpstreams;
 
-  shortIdIndexByProfile = {
-    ibelyasov = 0;
-    bsv = 1;
-    probe = 2;
-  };
-  shortIdForProfile =
-    profileName: shortIds:
-    if profileName == "friendly-router" then
-      builtins.head shortIds
-    else if builtins.hasAttr profileName shortIdIndexByProfile then
-      builtins.elemAt shortIds shortIdIndexByProfile.${profileName}
-    else
-      throw "No REALITY short ID allocation for profile ${profileName}";
-
   mkAmneziawgCredential =
     profileName: upstream:
     let
       peer = findAmneziawgPeer profileName upstream;
     in
     {
-      inherit (upstream) machineName serverPublicKey;
+      inherit (upstream) machineName serverPublicKey headerProtectionKeySecretName;
       clientPublicKey = peer.publicKey;
       inherit (upstream) endpointDomain;
       inherit (upstream.settings) listenPort;
@@ -445,8 +294,8 @@ let
       clientAddress = firstAddress (builtins.head peer.allowedIPs);
       clientPrivateKeySecretName =
         upstream.clientPrivateKeySecretNames.${profileName}
-          or "amneziawg-${upstream.machineName}-client-${profileName}-private-key";
-      amneziawgOptions = mkMihomoAmneziawgOptions upstream.settings.extraOptions;
+          or (throw "AmneziaWG private-key secret name is required for ${upstream.machineName}/${profileName}");
+      inherit (upstream.settings) generation profile;
     };
 
   mkHysteria2Credential =
@@ -462,6 +311,11 @@ let
         sni
         alpn
         obfsPasswordSecretName
+        obfsName
+        obfsMinPacketSize
+        obfsMaxPacketSize
+        tlsVerify
+        credentialEncoding
         ;
       inherit profileName;
       tag = "${upstream.machineName}-${profileName}-hysteria2";
@@ -479,7 +333,9 @@ let
     {
       inherit (upstream) machineName domain endpointIPv4;
       port = upstream.port or 443;
-      username = upstream.usernames.${profileName} or profileName;
+      username =
+        upstream.usernames.${profileName}
+          or (throw "NaiveProxy username is required for ${upstream.machineName}/${profileName}");
       tlsServerName = upstream.tlsServerName or upstream.domain;
       tag = "${upstream.machineName}-${profileName}-edge";
       inherit passwordSecretName;
@@ -498,14 +354,17 @@ let
       basename = "${localMachineName}-${profile.name}";
       profileKind = profile.kind or "mobile";
       isRouterProfile = profileKind == "router";
-      publishProfileJson =
+      profileJsonRequested =
         if (profile.publishProfileJson or null) != null then
           profile.publishProfileJson
         else
           !isRouterProfile;
       pathTokenSecret = "mihomo-client-${secretPrefix}-${profile.name}-path-token";
       profileUpstreams = builtins.filter (upstream: profilePolicy profile.name upstream) enabledUpstreams;
-      dohNameservers = lib.unique (map (u: "https://${u.dohDomain}/dns-query") profileUpstreams);
+      # Mihomo cannot encode the strict transport-error-only reserve cascade.
+      # Keep its resolver on the primary AdGuardHome endpoint until the owner
+      # chooses an explicit compatibility tradeoff.
+      dohNameservers = [ "https://${localPublicNetwork.domains.edge}/dns-query" ];
       profileAmneziawgUpstreams = builtins.filter (
         upstream: profilePolicy profile.name upstream
       ) enabledAmneziawgUpstreams;
@@ -524,6 +383,7 @@ let
         upstream: mkHysteria2Credential profile.name upstream
       ) profileHysteria2Upstreams;
       naiveCredentials = map (upstream: mkNaiveCredential profile.name upstream) profileNaiveUpstreams;
+      publishProfileJson = profileJsonRequested && naiveCredentials != [ ];
 
       mkVlessProxy =
         cred:
@@ -534,7 +394,7 @@ let
           name = cred.vlessTag;
           type = "vless";
           server = cred.edgeDomain;
-          port = 443;
+          inherit (cred) port;
           uuid = "__MIHOMO_VLESS_UUID_${cred.machineName}__";
           network = if xhttpEnabled then "xhttp" else "tcp";
           udp = true;
@@ -543,7 +403,7 @@ let
           "client-fingerprint" = cred.vless.clientFingerprint or "edge";
           "reality-opts" = {
             "public-key" = cred.reality.publicKey;
-            "short-id" = shortIdForProfile profile.name cred.reality.shortIds;
+            "short-id" = cred.reality.shortIdsByProfile.${profile.name};
           };
         }
         // lib.optionalAttrs (!xhttpEnabled) {
@@ -553,7 +413,7 @@ let
           alpn = [ "h2" ];
           "xhttp-opts" = {
             inherit (cred.xhttp) path;
-            mode = cred.xhttp.mode or "packet-up";
+            mode = "auto";
           }
           // lib.optionalAttrs (!isRouterProfile) {
             host = cred.edgeDomain;
@@ -574,7 +434,25 @@ let
           "allowed-ips" = [ "0.0.0.0/0" ];
           udp = true;
           "persistent-keepalive" = cred.clientPersistentKeepalive or 25;
-          "amnezia-wg-option" = cred.amneziawgOptions;
+          "amnezia-wg-option" = {
+            version = cred.generation;
+            inherit (cred.profile)
+              s1
+              s2
+              s3
+              s4
+              ;
+            h1 = toString cred.profile.h1;
+            h2 = toString cred.profile.h2;
+            h3 = toString cred.profile.h3;
+            h4 = toString cred.profile.h4;
+            "content-padding-addition" =
+              "${toString cred.profile.contentPaddingAddition.min}-${toString cred.profile.contentPaddingAddition.max}";
+            "random-trailers" = cred.profile.randomTrailers;
+            "disable-cookies" = cred.profile.disableCookies;
+            "header-protection-key" =
+              "__MIHOMO_AMNEZIAWG_HEADER_PROTECTION_KEY_${cred.machineName}_${profile.name}__";
+          };
         }
         // lib.optionalAttrs (cred.mtu != null) {
           inherit (cred) mtu;
@@ -586,8 +464,11 @@ let
         server = cred.endpointDomain;
         inherit (cred) port sni alpn;
         password = "__MIHOMO_HY2_PASSWORD_${cred.machineName}_${cred.profileName}__";
-        obfs = "salamander";
+        obfs = cred.obfsName;
         "obfs-password" = "__MIHOMO_HY2_OBFS_PASSWORD_${cred.machineName}__";
+        "obfs-min-packet-size" = cred.obfsMinPacketSize;
+        "obfs-max-packet-size" = cred.obfsMaxPacketSize;
+        "skip-cert-verify" = !cred.tlsVerify;
       };
 
       unorderedProxies =
@@ -611,10 +492,10 @@ let
       );
       proxies = map (name: proxyByName.${name}) orderedProxyNames;
       ruleProviderProxy =
-        if vlessProxyNames == [ ] then
-          throw "Mihomo rule-provider requires a VLESS bootstrap proxy for ${basename}"
+        if orderedProxyNames == [ ] then
+          throw "Mihomo rule-provider requires at least one proxy for ${basename}"
         else
-          builtins.head vlessProxyNames;
+          builtins.head orderedProxyNames;
       pinnedHosts = builtins.listToAttrs (
         [
           {
@@ -661,8 +542,8 @@ let
         lib.unique (builtins.filter isIPv4Literal (builtins.attrValues pinnedHosts))
       );
 
-      template = {
-        profile."store-selected" = !isRouterProfile;
+      mkMihomoTemplate = modeGroup: finalTarget: {
+        profile."store-selected" = true;
         mode = "rule";
         "allow-lan" = false;
         "bind-address" = "*";
@@ -720,20 +601,14 @@ let
         inherit proxies;
 
         "proxy-groups" = [
-          # GLOBAL shadows Mihomo's built-in Global selector so client Global mode still enters PROXY.
           {
-            name = "GLOBAL";
+            name = modeGroup;
             type = "select";
-            proxies = [ "PROXY" ];
+            proxies = [ "${modeGroup}-AUTO" ] ++ orderedProxyNames;
           }
           {
-            name = "PROXY";
-            type = "select";
-            proxies = [ "PROXY-AUTO" ] ++ orderedProxyNames;
-          }
-          {
-            name = "PROXY-AUTO";
-            type = "fallback";
+            name = "${modeGroup}-AUTO";
+            type = "url-test";
             url = probeUrl64k;
             interval = 300;
             proxies = orderedProxyNames;
@@ -741,8 +616,10 @@ let
         ];
 
         "rule-providers" = mkRuleProviders ruleProviderProxy;
-        rules = baseRules;
+        rules = map (lib.replaceStrings [ "PROXY" ] [ modeGroup ]) baseRules ++ [ "MATCH,${finalTarget}" ];
       };
+      mihomoSelectiveTemplate = mkMihomoTemplate "SELECTIVE" "DIRECT";
+      mihomoFullTemplate = mkMihomoTemplate "FULL" "FULL";
 
       mkSingBoxNaiveOutbound = cred: {
         type = "naive";
@@ -775,6 +652,7 @@ let
           timestamp = true;
         };
         experimental.cache_file.enabled = true;
+        experimental.clash_api.default_mode = "Rule";
         dns = {
           servers = [
             {
@@ -792,6 +670,54 @@ let
               };
             }
             {
+              tag = "reserve-cloudflare";
+              type = "https";
+              server = "1.1.1.1";
+              path = "/dns-query";
+              tls = {
+                enabled = true;
+                server_name = "cloudflare-dns.com";
+              };
+            }
+            {
+              tag = "reserve-quad9";
+              type = "https";
+              server = "9.9.9.10";
+              path = "/dns-query";
+              tls = {
+                enabled = true;
+                server_name = "dns10.quad9.net";
+              };
+            }
+            {
+              tag = "reserve-google";
+              type = "https";
+              server = "8.8.8.8";
+              path = "/dns-query";
+              tls = {
+                enabled = true;
+                server_name = "dns.google";
+              };
+            }
+            {
+              tag = "plain-cloudflare";
+              type = "udp";
+              server = "1.1.1.1";
+              server_port = 53;
+            }
+            {
+              tag = "plain-quad9";
+              type = "udp";
+              server = "9.9.9.10";
+              server_port = 53;
+            }
+            {
+              tag = "plain-google";
+              type = "udp";
+              server = "8.8.8.8";
+              server_port = 53;
+            }
+            {
               tag = "fakeip";
               type = "fakeip";
               inet4_range = "198.18.0.0/15";
@@ -803,12 +729,87 @@ let
               action = "route";
               server = "edge-doh";
             }
+            ++ lib.optional (singBoxFakeIpDomainRuleSets != [ ]) {
+              rule_set = singBoxFakeIpDomainRuleSets;
+              action = "route";
+              server = "fakeip";
+            }
             ++ [
               {
-                rule_set = singBoxFakeIpDomainRuleSets;
-                action = "route";
-                server = "fakeip";
+                action = "evaluate";
+                server = "edge-doh";
               }
+              {
+                match_response = true;
+                action = "respond";
+              }
+              {
+                action = "evaluate";
+                server = "reserve-cloudflare";
+                tag = "reserve-cloudflare-response";
+              }
+              {
+                match_response = "reserve-cloudflare-response";
+                action = "respond";
+                race = true;
+              }
+              {
+                action = "evaluate";
+                server = "reserve-quad9";
+                tag = "reserve-quad9-response";
+                speculative = true;
+                remove_client_subnet = true;
+              }
+              {
+                match_response = "reserve-quad9-response";
+                action = "respond";
+                race = true;
+              }
+              {
+                action = "evaluate";
+                server = "reserve-google";
+                tag = "reserve-google-response";
+                speculative = true;
+              }
+              {
+                match_response = "reserve-google-response";
+                action = "respond";
+                race = true;
+              }
+              {
+                action = "evaluate";
+                server = "plain-cloudflare";
+                tag = "plain-cloudflare-response";
+              }
+              {
+                match_response = "plain-cloudflare-response";
+                action = "respond";
+                race = true;
+              }
+              {
+                action = "evaluate";
+                server = "plain-quad9";
+                tag = "plain-quad9-response";
+                speculative = true;
+                remove_client_subnet = true;
+              }
+              {
+                match_response = "plain-quad9-response";
+                action = "respond";
+                race = true;
+              }
+              {
+                action = "evaluate";
+                server = "plain-google";
+                tag = "plain-google-response";
+                speculative = true;
+              }
+              {
+                match_response = "plain-google-response";
+                action = "respond";
+                race = true;
+              }
+              { action = "reject"; }
             ];
           final = "edge-doh";
           strategy = "ipv4_only";
@@ -835,21 +836,37 @@ let
         outbounds = [
           {
             type = "selector";
-            tag = "PROXY";
+            tag = "SELECTIVE";
             # Profiles with Naive stay fail-closed. A profile with no eligible
-            # Naive provider retains the previous DIRECT-only behavior.
+            # This placeholder is never exposed when no Naive outbound exists;
+            # publishProfileJson keeps profile.json and its link suppressed.
             outbounds =
-              if naiveOutboundTags == [ ] then [ "DIRECT" ] else [ "PROXY-AUTO" ] ++ naiveOutboundTags;
-            default = if naiveOutboundTags == [ ] then "DIRECT" else "PROXY-AUTO";
+              if naiveOutboundTags == [ ] then [ "DIRECT" ] else [ "SELECTIVE-AUTO" ] ++ naiveOutboundTags;
+            default = if naiveOutboundTags == [ ] then "DIRECT" else "SELECTIVE-AUTO";
+          }
+          {
+            type = "selector";
+            tag = "FULL";
+            outbounds = if naiveOutboundTags == [ ] then [ "DIRECT" ] else [ "FULL-AUTO" ] ++ naiveOutboundTags;
+            default = if naiveOutboundTags == [ ] then "DIRECT" else "FULL-AUTO";
           }
         ]
-        ++ lib.optional (naiveOutboundTags != [ ]) {
-          type = "urltest";
-          tag = "PROXY-AUTO";
-          outbounds = naiveOutboundTags;
-          url = probeUrl64k;
-          interval = "5m";
-        }
+        ++ lib.optionals (naiveOutboundTags != [ ]) [
+          {
+            type = "urltest";
+            tag = "SELECTIVE-AUTO";
+            outbounds = naiveOutboundTags;
+            url = probeUrl64k;
+            interval = "5m";
+          }
+          {
+            type = "urltest";
+            tag = "FULL-AUTO";
+            outbounds = naiveOutboundTags;
+            url = probeUrl64k;
+            interval = "5m";
+          }
+        ]
         ++ [
           {
             type = "direct";
@@ -862,11 +879,6 @@ let
           default_domain_resolver.server = "edge-doh";
           final = "DIRECT";
           rule_set = (mkSingBoxRuleSets ruleSetDownloadNaiveTag) ++ [
-            (mkSingBoxRemoteRuleSet {
-              tag = "personal_proxy_domains";
-              url = "https://${configGatewayDomain}${personalProxyDomainsSrsPublicPath}";
-              downloadDetour = ruleSetDownloadNaiveTag;
-            })
             (mkSingBoxRemoteRuleSet {
               tag = "secure_dns_domains";
               url = "https://${configGatewayDomain}${secureDnsRuleSetPublicPath}";
@@ -883,7 +895,14 @@ let
               action = "hijack-dns";
             }
             {
-              ip_is_private = true;
+              ip_cidr = [
+                "10.0.0.0/8"
+                "100.64.0.0/10"
+                "127.0.0.0/8"
+                "169.254.0.0/16"
+                "172.16.0.0/12"
+                "192.168.0.0/16"
+              ];
               outbound = "DIRECT";
             }
             {
@@ -896,63 +915,38 @@ let
             outbound = "DIRECT";
           }
           ++ lib.optional (naiveOutboundTags != [ ]) {
+            clash_mode = "Global";
+            network = "udp";
+            action = "reject";
+          }
+          ++ [
+            {
+              clash_mode = "Global";
+              outbound = "FULL";
+            }
+          ]
+          ++ lib.optional (naiveOutboundTags != [ ]) {
             # Naive is TCP-only here (UoT and QUIC are disabled). Reject every
             # UDP flow selected by the protected rule sets instead of allowing
             # it to fall through to route.final = DIRECT. Private, multicast,
             # tailnet-admin and DNS rules stay ahead of this policy gate.
             network = "udp";
-            rule_set = [
-              "personal_proxy_domains"
-              "ai_non_cn_domains"
-              "ai_cn_domains"
-              "category_dev_domains"
-              "secure_dns_domains"
-              "youtube_domains"
-              "google_domains"
-              "google_ips"
-              "telegram_domains"
-              "telegram_ips"
-              "ru_blocked_and_geoblocked_domains"
-              "ru_blocked_asn_ips"
-              "refilter_blocked_domains"
-              "refilter_blocked_ips"
-            ];
+            rule_set = protectedRuleSets;
             action = "reject";
+          }
+          ++ lib.optional (naiveOutboundTags != [ ] && personalProxyDomains != [ ]) {
+            network = "udp";
+            domain_suffix = personalProxyDomains;
+            action = "reject";
+          }
+          ++ lib.optional (personalProxyDomains != [ ]) {
+            domain_suffix = personalProxyDomains;
+            outbound = "SELECTIVE";
           }
           ++ [
             {
-              rule_set = "personal_proxy_domains";
-              outbound = "PROXY";
-            }
-            {
-              rule_set = "ai_non_cn_domains";
-              outbound = "PROXY";
-            }
-            {
-              rule_set = "ai_cn_domains";
-              outbound = "PROXY";
-            }
-            {
-              rule_set = "category_dev_domains";
-              outbound = "PROXY";
-            }
-            {
-              rule_set = "secure_dns_domains";
-              outbound = "PROXY";
-            }
-            {
-              rule_set = [
-                "youtube_domains"
-                "google_domains"
-                "google_ips"
-                "telegram_domains"
-                "telegram_ips"
-                "ru_blocked_and_geoblocked_domains"
-                "ru_blocked_asn_ips"
-                "refilter_blocked_domains"
-                "refilter_blocked_ips"
-              ];
-              outbound = "PROXY";
+              rule_set = protectedRuleSets;
+              outbound = "SELECTIVE";
             }
           ];
         };
@@ -970,9 +964,17 @@ let
       inherit (profile) name;
       inherit publishProfileJson;
       yamlPath = "${profileRoot}/${profile.name}/mihomo.yaml";
+      fullYamlPath = "${profileRoot}/${profile.name}/mihomo-full.yaml";
       profileJsonPath =
         if publishProfileJson then "${profileRoot}/${profile.name}/profile.json" else null;
-      templatePath = pkgs.writeText "mihomo-client-${basename}.template.json" (builtins.toJSON template);
+      templatePath = pkgs.writeText "mihomo-client-${basename}.template.json" (
+        builtins.toJSON mihomoSelectiveTemplate
+      );
+      fullTemplatePath = pkgs.writeText "mihomo-client-${basename}-full.template.json" (
+        builtins.toJSON mihomoFullTemplate
+      );
+      inherit mihomoSelectiveTemplate mihomoFullTemplate;
+      profileJsonTemplate = if publishProfileJson then profileJsonTemplate else null;
       profileJsonTemplatePath =
         if publishProfileJson then
           pkgs.writeText "client-profile-${basename}.template.json" (builtins.toJSON profileJsonTemplate)
@@ -991,6 +993,7 @@ let
         ]
         ++ map (cred: cred.vlessUuidSecretName) profile.upstreamCredentials
         ++ map (cred: cred.clientPrivateKeySecretName) profile.amneziawgCredentials
+        ++ map (cred: cred.headerProtectionKeySecretName) profile.amneziawgCredentials
         ++ map (cred: cred.passwordSecretName) profile.hysteria2Credentials
         ++ map (cred: cred.obfsPasswordSecretName) (
           builtins.filter (cred: cred.obfsPasswordSecretName != null) profile.hysteria2Credentials
@@ -1010,7 +1013,9 @@ let
         ];
       });
 
-  toIdent = value: lib.replaceStrings [ "-" ] [ "_" ] value;
+  # Escape every punctuation character distinctly so valid publisher identities
+  # remain safe and collision-free as shell/JQ variable suffixes.
+  toIdent = value: lib.replaceStrings [ "_" "-" "." ] [ "_u" "_h" "_d" ] value;
 
   mkUpstreamCred =
     cred:
@@ -1032,16 +1037,21 @@ let
     cred:
     let
       machineId = toIdent cred.machineName;
+      profileId = toIdent cred.amneziawgTag;
     in
     {
       decl = ''
         make_secret_file amneziawg_private_key_${machineId}_file
         read_wireguard_private_key ${lib.escapeShellArg cred.clientPrivateKeySecretName} ${
           lib.escapeShellArg config.sops.secrets.${cred.clientPrivateKeySecretName}.path
-        } ${lib.escapeShellArg cred.clientPublicKey} > "$amneziawg_private_key_${machineId}_file"
+        } > "$amneziawg_private_key_${machineId}_file"
+        make_secret_file amneziawg_header_protection_key_${profileId}_file
+        read_secret ${
+          lib.escapeShellArg config.sops.secrets.${cred.headerProtectionKeySecretName}.path
+        } > "$amneziawg_header_protection_key_${profileId}_file"
       '';
-      arg = ''--rawfile amneziawg_private_key_${machineId} "$amneziawg_private_key_${machineId}_file"'';
-      filter = ''(.proxies[] | select(.name == "${cred.amneziawgTag}")."private-key") = $amneziawg_private_key_${machineId}'';
+      arg = ''--rawfile amneziawg_private_key_${machineId} "$amneziawg_private_key_${machineId}_file" --rawfile amneziawg_header_protection_key_${profileId} "$amneziawg_header_protection_key_${profileId}_file"'';
+      filter = ''(.proxies[] | select(.name == "${cred.amneziawgTag}")."private-key") = $amneziawg_private_key_${machineId} | (.proxies[] | select(.name == "${cred.amneziawgTag}")."amnezia-wg-option"."header-protection-key") = $amneziawg_header_protection_key_${profileId}'';
     };
 
   mkHysteria2Cred =
@@ -1132,10 +1142,12 @@ let
     ''
       json_tmp="$(mktemp /run/caddy-auth/${localMachineName}-mihomo.XXXXXX.json)"
       yaml_tmp="$(mktemp /run/caddy-auth/${localMachineName}-mihomo.XXXXXX.yaml)"
+      full_json_tmp="$(mktemp /run/caddy-auth/${localMachineName}-mihomo-full.XXXXXX.json)"
+      full_yaml_tmp="$(mktemp /run/caddy-auth/${localMachineName}-mihomo-full.XXXXXX.yaml)"
       profile_json_tmp="$(mktemp /run/caddy-auth/${localMachineName}-profile.XXXXXX.json)"
       secret_tmp_files=()
       cleanup_tmp() {
-        rm -f "$json_tmp" "$yaml_tmp" "$profile_json_tmp" "''${secret_tmp_files[@]}"
+        rm -f "$json_tmp" "$yaml_tmp" "$full_json_tmp" "$full_yaml_tmp" "$profile_json_tmp" "''${secret_tmp_files[@]}"
       }
       trap cleanup_tmp EXIT
 
@@ -1151,6 +1163,15 @@ let
       mihomo -t -f "$yaml_tmp"
       install -o caddy -g caddy -m 0440 "$yaml_tmp" ${lib.escapeShellArg profile.yamlPath}
 
+      jq \
+        ${jqArgs} \
+        '
+          ${jqFilter}
+        ' ${lib.escapeShellArg profile.fullTemplatePath} > "$full_json_tmp"
+      yq -P -o=yaml '.' "$full_json_tmp" > "$full_yaml_tmp"
+      mihomo -t -f "$full_yaml_tmp"
+      install -o caddy -g caddy -m 0440 "$full_yaml_tmp" ${lib.escapeShellArg profile.fullYamlPath}
+
       ${profileJsonCase}
       trap - EXIT
       cleanup_tmp
@@ -1158,10 +1179,20 @@ let
       emit_profile \
         ${lib.escapeShellArg config.sops.secrets.${profile.pathTokenSecret}.path} \
         ${lib.escapeShellArg profile.yamlPath} \
+        ${lib.escapeShellArg profile.fullYamlPath} \
         ${lib.escapeShellArg profileJsonPathArg}
     '';
 in
 {
+  renderedProfiles = map (profile: {
+    inherit (profile)
+      name
+      publishProfileJson
+      mihomoSelectiveTemplate
+      mihomoFullTemplate
+      profileJsonTemplate
+      ;
+  }) generatedProfiles;
   sops.secrets = lib.mkMerge (map mkSecretDecls generatedProfiles);
 
   systemd = {
@@ -1368,7 +1399,6 @@ in
           pkgs.jq
           mihomoPackage
           pkgs.yq-go
-          appsPkgs.amneziawg-tools
         ];
         script = ''
           set -euo pipefail
@@ -1377,6 +1407,22 @@ in
 
           read_secret() {
             tr -d '\r\n' < "$1"
+          }
+
+          read_path_token() {
+            local value byte_count
+            value="$(cat "$1")"
+            byte_count="$(LC_ALL=C wc -c < "$1")"
+            byte_count="''${byte_count//[[:space:]]/}"
+            if [ "''${#value}" -ne "$byte_count" ]; then
+              printf 'Profile path token must not contain a trailing newline or NUL byte\n' >&2
+              exit 1
+            fi
+            if [[ ! "$value" =~ ^[A-Za-z0-9_-]{32,128}$ ]]; then
+              printf 'Profile path token must be 32-128 unpadded base64url characters\n' >&2
+              exit 1
+            fi
+            printf '%s' "$value"
           }
 
           make_secret_file() {
@@ -1392,7 +1438,6 @@ in
           read_wireguard_private_key() {
             local secret_name="$1"
             local secret_path="$2"
-            local expected_public_key="$3"
             local value decoded_len
 
             value="$(read_secret "$secret_path")"
@@ -1406,18 +1451,17 @@ in
               exit 1
             fi
 
-            ${lib.getExe publicKeyCheck} "$secret_name" "$secret_path" "$expected_public_key"
-
             printf '%s' "$value"
           }
 
           emit_profile() {
             local path_token_secret_path="$1"
             local config_path="$2"
-            local profile_json_path="$3"
+            local full_config_path="$3"
+            local profile_json_path="$4"
             local path_token root_dir
 
-            path_token="$(read_secret "$path_token_secret_path")"
+            path_token="$(read_path_token "$path_token_secret_path")"
             root_dir="$(dirname "$config_path")"
 
             {
@@ -1426,6 +1470,21 @@ in
               printf '  rewrite * /mihomo.yaml\n'
               printf '  header Content-Type "text/yaml; charset=utf-8"\n'
               printf '  header Content-Disposition "attachment; filename=mihomo.yaml"\n'
+              printf '  header Cache-Control "no-store"\n'
+              printf '  header Referrer-Policy "no-referrer"\n'
+              printf '  header X-Robots-Tag "noindex, nofollow, noarchive"\n'
+              printf '  header X-Content-Type-Options "nosniff"\n'
+              printf '  file_server\n'
+              printf '}\n\n'
+            } >> "$fragment_tmp"
+
+            root_dir="$(dirname "$full_config_path")"
+            {
+              printf 'handle /%s/mihomo-full.yaml {\n' "$path_token"
+              printf '  root * %s\n' "$root_dir"
+              printf '  rewrite * /mihomo-full.yaml\n'
+              printf '  header Content-Type "text/yaml; charset=utf-8"\n'
+              printf '  header Content-Disposition "attachment; filename=mihomo-full.yaml"\n'
               printf '  header Cache-Control "no-store"\n'
               printf '  header Referrer-Policy "no-referrer"\n'
               printf '  header X-Robots-Tag "noindex, nofollow, noarchive"\n'
@@ -1480,19 +1539,6 @@ in
             printf '}\n\n'
           } >> "$fragment_tmp"
 
-          {
-            printf 'handle ${personalProxyDomainsSrsPublicPath} {\n'
-            printf '  root * %s\n' ${lib.escapeShellArg profileRoot}
-            printf '  rewrite * /rules/personal-proxy-domains.srs\n'
-            printf '  header Content-Type "application/octet-stream"\n'
-            printf '  header Cache-Control "public, max-age=3600"\n'
-            printf '  header Referrer-Policy "no-referrer"\n'
-            printf '  header X-Robots-Tag "noindex, nofollow, noarchive"\n'
-            printf '  header X-Content-Type-Options "nosniff"\n'
-            printf '  file_server\n'
-            printf '}\n\n'
-          } >> "$fragment_tmp"
-
           ${lib.concatMapStringsSep "\n" (ruleSet: ''
             {
               printf 'handle ${ruleSetMirrorPublicPath ruleSet.tag} {\n'
@@ -1538,7 +1584,6 @@ in
 
           install -d -o caddy -g caddy -m 0750 ${lib.escapeShellArg "${profileRoot}/rules"}
           install -o caddy -g caddy -m 0444 ${lib.escapeShellArg personalProxyDomainsTxt} ${lib.escapeShellArg personalProxyDomainsTxtPath}
-          install -o caddy -g caddy -m 0444 ${lib.escapeShellArg personalProxyDomainsSrs} ${lib.escapeShellArg personalProxyDomainsSrsPath}
 
           ${lib.concatStringsSep "\n" (map profileCase generatedProfiles)}
 

@@ -16,35 +16,18 @@ let
   };
   profiles = [
     {
-      name = "probe";
+      name = "cHJvYmU";
       kind = "probe";
       publishProfileJson = false;
       vlessUuidSecretName = "fixture-vless-uuid";
     }
   ];
-  awgOptions = {
-    H1 = 101;
-    H2 = 202;
-    H3 = 303;
-    H4 = 404;
-    I1 = "<b 0x1234567890><t><r 16>";
-    I2 = "<b 0x2234567890><r 96>";
-    I3 = "";
-    I4 = "";
-    I5 = "";
-    Jc = 5;
-    Jmin = 128;
-    Jmax = 768;
-    S1 = 60;
-    S2 = 42;
-    S3 = 33;
-    S4 = 16;
-  };
 in
 rec {
   machine = {
     nixpkgs.hostPlatform = "x86_64-linux";
     boot.isContainer = true;
+    networking.nftables.enable = true;
     sops.defaultSopsFile = ./empty-sops.yaml;
     sops.age.keyFile = "/run/vpn-fixture/age-key";
     system.stateVersion = "26.11";
@@ -83,26 +66,21 @@ rec {
         ipv4 = "192.0.2.53";
       };
       reality = {
-        serverName = "donor.example.invalid";
-        dest = "donor.example.invalid:443";
-        shortIds = [
-          "0123456789abcdef"
-          "1123456789abcdef"
-          "2123456789abcdef"
-          "3123456789abcdef"
-          "4123456789abcdef"
-          "5123456789abcdef"
-          "6123456789abcdef"
-          "7123456789abcdef"
-        ];
+        target = {
+          host = "donor.example.invalid";
+          port = 443;
+          tlsVersion = "1.3";
+          alpn = [ "h2" ];
+        };
+        serverNames = [ "donor.example.invalid" ];
         publicKey = "BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB";
         privateKeySecretName = "fixture-reality-private-key";
       };
       xhttp = {
         path = "/fixture";
-        mode = "packet-up";
+        mode = "auto";
       };
-      inherit profiles;
+      profiles = map (profile: profile // { realityShortId = "0123456789abcdef"; }) profiles;
     };
 
     vpn-mihomo-hysteria2 = vpnInstance "vpn-mihomo-hysteria2" "gateway" {
@@ -112,12 +90,11 @@ rec {
       serverName = "hysteria.example.invalid";
       users = [
         {
-          name = "probe";
+          name = "cHJvYmU";
           passwordSecretName = "fixture-hysteria-password";
         }
       ];
       masqueradeUrl = "https://cover.example.invalid";
-      ignoreClientBandwidth = true;
       acmeCertName = "fixture";
       obfsPasswordSecretName = "fixture-hysteria-obfs-password";
     };
@@ -132,16 +109,16 @@ rec {
       mtu = 1280;
       address = "10.77.0.1/24";
       privateKeySecretName = "fixture-awg-server-private-key";
+      headerProtectionKeySecretName = "fixture-awg-header-protection-key";
       serverPublicKey = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=";
       peers = [
         {
-          name = "probe";
-          publicKey = "CCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC=";
+          name = "cHJvYmU";
+          publicKey = "CCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCA=";
           allowedIPs = [ "10.77.0.2/32" ];
           clientPersistentKeepalive = 25;
         }
       ];
-      extraOptions = awgOptions;
       egressIPv4 = "192.0.2.12";
       clientSubnetIPv4 = "10.77.0.0/24";
       enableNat = true;
@@ -160,6 +137,7 @@ rec {
         ibelyasov = "fixture-naive-first-password";
         bsv = "fixture-naive-second-password";
         probe = "fixture-naive-probe-password";
+        cHJvYmU = "fixture-naive-published-password";
       };
     };
 
@@ -176,10 +154,18 @@ rec {
       excludedProfileNames = [ ];
       profiles = [
         {
-          name = "probe";
+          name = "cHJvYmU";
           kind = "probe";
           publishProfileJson = true;
           vlessUuidSecretName = "fixture-vless-uuid";
+        }
+      ];
+      profileLinks = [
+        {
+          name = "cHJvYmU";
+          label = "Fixture profile";
+          accountDomain = "profiles.example.invalid";
+          pathTokenSecretName = "mihomo-client-fixture-cHJvYmU-path-token";
         }
       ];
       providerRefs = [
@@ -187,25 +173,25 @@ rec {
           instanceId = "vpn-mihomo-vless-xhttp";
           machine = machineName;
           protocol = "vless-xhttp";
-          profileNames = [ "probe" ];
+          profileNames = [ "cHJvYmU" ];
         }
         {
           instanceId = "vpn-mihomo-hysteria2";
           machine = machineName;
           protocol = "hysteria2";
-          profileNames = [ "probe" ];
+          profileNames = [ "cHJvYmU" ];
         }
         {
           instanceId = "vpn-amneziawg";
           machine = machineName;
           protocol = "amneziawg";
-          profileNames = [ "probe" ];
+          profileNames = [ "cHJvYmU" ];
         }
         {
           instanceId = "vpn-naiveproxy";
           machine = machineName;
           protocol = "naiveproxy";
-          profileNames = [ "probe" ];
+          profileNames = [ "cHJvYmU" ];
         }
       ];
     };
@@ -232,7 +218,8 @@ rec {
         bindHosts = [ "127.0.0.1" ];
         port = 53;
         upstream = [ "127.0.0.1:5335" ];
-        bootstrap = [ ];
+        fallbackPort = 5336;
+        fallbackTimeoutSeconds = 3;
       };
       tls = {
         serverName = "dns.example.invalid";
@@ -240,7 +227,14 @@ rec {
         dotPort = 0;
       };
       acme.certName = "fixture";
-      auth.enable = false;
+      auth = {
+        enable = true;
+        passwordSecretName = "fixture-adguard-admin-bcrypt-hash";
+      };
+      filtering.userRules = [
+        "@@||consumer-allow.example.invalid^"
+        "||consumer-deny.example.invalid^"
+      ];
       systemResolver = {
         enableLocalStub = true;
         nameservers = [ "127.0.0.1" ];

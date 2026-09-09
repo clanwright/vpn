@@ -4,26 +4,39 @@
 
 Граница домена описана в [архитектуре](../../docs/architecture.md), публичный API — в [контрактах](../../docs/contracts.md).
 
-Это роль DNS-резолвера на базе AdGuard Home. Она предоставляет локальный
-DNS-стаб и DoH через Caddy; веб-интерфейс доступен только в административной
-сети. Публичный DoT не является частью текущей поверхности.
+Это роль DNS-фронтенда на базе AdGuard Home. Она предоставляет локальный
+DNS-стаб и DoH через Caddy, применяет фильтры и передаёт обычные запросы
+локальному рекурсивному Unbound. При ошибке обмена с Unbound единственный
+fallback AdGuard — отдельный loopback `dnsproxy`: он параллельно опрашивает
+Cloudflare Standard, Quad9 без threat blocking и Google Public DNS по DoH,
+а plaintext `1.1.1.1`, `9.9.9.10` и `8.8.8.8` использует только после ошибок
+всех encrypted upstream. Корректные NXDOMAIN и SERVFAIL не переключают каскад.
 
 ## Settings
 
 Основные входы роли: `ui.host`, `ui.port`, `ui.domain`, `ingress.publicIPv4`,
 `ingress.caddyBindIPv4`, `ingress.tailnetIPv4`, `dns.bindHosts`,
-`dns.port`, `dns.upstream`, `dns.bootstrap`, `tls.serverName`,
+`dns.port`, `dns.upstream`, `dns.fallbackPort`,
+`dns.fallbackTimeoutSeconds`, `tls.serverName`,
 `tls.httpsPort`, `tls.dotPort`, `acme.certName`, `auth.enable`,
 `auth.username`, `auth.passwordSecretName`, `systemResolver.enableLocalStub`
-и `adguard.extraSettings`. Активная роль требует адреса, имени сертификата и
-непустого TLS server name.
+и `filtering.userRules`. `dns.upstream` содержит ровно
+один числовой loopback endpoint Unbound в формате `127.0.0.1:<port>`.
 
 ## Defaults
 
-Жизненный цикл по умолчанию — `enabled`; HTTPS использует порт `8444`,
-DoT выключен значением `0`, логин администратора — `admin`, локальный
-стаб включён, а системные имена резолверов — `127.0.0.1` и `::1`.
-Публичный интерфейс и tailnet-интерфейс задаются отдельно.
+Жизненный цикл по умолчанию — `enabled`; primary указывает на consumer-owned
+Unbound `127.0.0.1:5335`. Fallback `dnsproxy` слушает `127.0.0.1:5336`, его
+таймаут каждой из двух стадий — 3 секунды при внешнем бюджете AdGuard 10 секунд.
+HTTPS использует порт `8444`,
+DoT выключен значением `0`, логин администратора — `admin`, локальный стаб и
+auth включены, системный resolver использует `127.0.0.1`.
+
+AdGuard кеширует без искусственного min TTL и optimistic stale. DDR и hosts
+file выключены. Родительский контроль, Safe Search, HaGeZi Multi NORMAL,
+URLHaus включены; удалённый Safe Browsing выключен. Библиотечный default
+`filtering.userRules` пуст, а постоянные личные правила задаёт consumer.
+Query log хранится 7 дней, statistics — 90 дней, IP не анонимизируются.
 
 ## Exports and dependencies
 
@@ -34,26 +47,32 @@ metadata для потребителей. Caddy-конфигурация зав�
 
 ## State and secrets
 
-Состояние AdGuard Home хранится в `/var/lib/private/AdGuardHome`. Пароль
-администратора передаётся только через имя SOPS-секрета
-`auth.passwordSecretName`; runtime-файл имеет вид
-`/run/secrets/<name>`, владелец `acme:acme`, режим `0440`. Значения
-паролей в Git и документации не хранятся.
+Состояние AdGuard Home хранится в `/var/lib/private/AdGuardHome`. SOPS-секрет
+`auth.passwordSecretName` должен содержать один полный 60-символьный bcrypt
+token без пробелов и завершающего перевода строки: `$2a$`, `$2b$` или `$2y$`,
+cost `04`–`31` и 53 символа bcrypt alphabet. Секрет и полный отрендеренный
+template имеют `root:root 0400`.
+Template передаётся сервису как systemd credential; перед каждым стартом
+`install -m 600` восстанавливает `/var/lib/AdGuardHome/AdGuardHome.yaml`, после
+чего точный бинарник запускает `--check-config`. Ротация template перезапускает
+`adguardhome.service`. Изменения через UI пригодны для диагностики, но следующий
+restart восстанавливает декларативную конфигурацию.
 
 ## Network exposure
 
-DNS TCP/UDP `53` привязан к `tailscale0`. DoH публикуется Caddy на
-пути `/dns-query`; UI использует явно заданные `ingress.caddyBindIPv4` и
-tailnet bind, а UI route обслуживается только на declared tailnet destination;
-interface ingress к этому адресу ограничивает Network firewall. На VPN gateway
-`caddyBindIPv4` может быть loopback, когда public TCP listener принадлежит
-gateway и передаёт fallback локальному Caddy. Входящий DoT выключен. В режиме
-`disabled-retained` сохраняются только state и metadata секрета, без
-runtime, ACME claim, firewall и resolver edges.
+Plain DNS допускает только loopback, RFC1918 и Tailscale IPv4 listener; он
+обязан включать `127.0.0.1`, а firewall открывает `53` только на `tailscale0`.
+DoH публикуется Caddy только на точном пути `/dns-query` и явном
+`caddyBindIPv4`. Caddy обращается к `https://127.0.0.1:8444` с проверкой
+сертификата и заданным SNI. UI route имеет отдельный tailnet listener и
+проверяет local destination и порт 443. Native backend-порты firewall не
+открывает. В режиме `disabled-retained` сохраняются только state и metadata
+секрета, без runtime, template, ACME claim, firewall и resolver edges.
 
 ## Verification
 
-Проверить интерфейс и значения роли можно через read-only evaluation:
-`nix eval --no-write-lock-file .#nixosConfigurations.<machine>.config.networkCore`.
-После активации проверяются локальный DNS на `53`, DoH на
-`/dns-query` и отсутствие WAN DoT; расшифрованные секреты не выводятся.
+Репозиторные source-проверки описаны в
+[runbook AdGuard Home](../../docs/operations/adguardhome.md). Они проверяют
+typed contract, сгенерированную конфигурацию и отрицательные ограничения
+чистым Nix evaluation, не запуская AdGuard Home, dnsproxy или VM. Реальное
+поведение systemd и сетевых путей этим результатом не доказано.

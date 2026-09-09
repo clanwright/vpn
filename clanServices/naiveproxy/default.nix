@@ -91,12 +91,12 @@ in
                   description = "Primary hostname of the selected public-site claim, for client exports only.";
                 };
                 publicIPv4 = lib.mkOption {
-                  type = lib.types.str;
+                  type = lib.types.addCheck lib.types.str (value: value == "" || validIPv4 value);
                   default = "";
                   description = "Public endpoint IPv4 used by clients, for client exports only.";
                 };
                 caddyBindIPv4 = lib.mkOption {
-                  type = lib.types.str;
+                  type = lib.types.addCheck lib.types.str (value: value == "" || validIPv4 value);
                   default = "";
                   description = "Caddy listener IPv4 of the selected public-site claim, for ownership validation only.";
                 };
