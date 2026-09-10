@@ -7,6 +7,16 @@
 let
   lib = inputs.nixpkgs.lib;
   profileTypes = import ../clanServices/vpn-client-profiles/types.nix { inherit lib; };
+  clientDnsResults = import ./client-dns-contracts.nix { inherit lib profileTypes; };
+  allBooleansTrue =
+    value:
+    if builtins.isBool value then
+      value
+    else if builtins.isAttrs value then
+      builtins.all allBooleansTrue (builtins.attrValues value)
+    else
+      false;
+  clientDnsContract = allBooleansTrue clientDnsResults;
   fixture = import ./fixtures/example-clan.nix;
   fixtureMachineName = fixture.machineName or "vpn-fixture";
   supportNames = [
@@ -103,7 +113,10 @@ let
               _:
               fixture.machine
               // {
-                imports = (fixture.machine.imports or [ ]) ++ [ fixture.networkIntegrationModule ];
+                imports = (fixture.machine.imports or [ ]) ++ [
+                  fixture.networkIntegrationModule
+                  renderCaptureModule
+                ];
               };
             inventory = {
               meta.name = "vpn-consumer-${name}-fixture";
@@ -115,6 +128,30 @@ let
       };
     in
     candidate;
+  publisherWithExactSettings =
+    settings:
+    let
+      instance = fixture.instances.vpn-client-profiles;
+      role = instance.roles.publisher;
+      machine = role.machines.${fixtureMachineName};
+    in
+    fixture.instances
+    // {
+      vpn-client-profiles = instance // {
+        roles.publisher = role // {
+          machines.${fixtureMachineName} = machine // {
+            inherit settings;
+          };
+        };
+      };
+    };
+  renderedWithSettings =
+    name: settings:
+    let
+      candidate = evaluateInstances name (publisherWithExactSettings settings);
+    in
+    builtins.head
+      candidate.config.nixosConfigurations.${fixtureMachineName}.config.clanwright.checks.vpnClientProfileRender;
   rejectsInstances =
     name: instances:
     let
@@ -270,8 +307,36 @@ let
         };
       }
     );
+  conflictingDnsPinCaseRejected = rejectsInstances "conflicting-dns-pin-case" (
+    publisherWith (
+      publisherSettings
+      // {
+        edgeDomain = lib.toUpper publisherSettings.edgeDomain;
+        clientDnsEndpoints = [
+          {
+            domain = publisherSettings.edgeDomain;
+            ipv4 = "198.51.100.53";
+          }
+        ];
+      }
+    )
+  );
   consumerMachine = consumer.config.nixosConfigurations.${fixtureMachineName}.config;
   rendered = builtins.head consumerMachine.clanwright.checks.vpnClientProfileRender;
+  oneDnsRendered = renderedWithSettings "one-client-dns" (
+    publisherSettings
+    // {
+      clientDnsEndpoints = [
+        {
+          domain = "dns-one.example.invalid";
+          ipv4 = "192.0.2.53";
+        }
+      ];
+    }
+  );
+  legacyDnsRendered = renderedWithSettings "legacy-client-dns" (
+    builtins.removeAttrs publisherSettings [ "clientDnsEndpoints" ]
+  );
   zeroNaiveMachine = zeroNaiveConsumer.config.nixosConfigurations.${fixtureMachineName}.config;
   zeroNaiveRendered = builtins.head zeroNaiveMachine.clanwright.checks.vpnClientProfileRender;
   zeroNaivePublicationScript = zeroNaiveMachine.systemd.services.${publicationUnitName}.script;
@@ -294,6 +359,7 @@ let
     builtins.filter (group: group.name == "FULL-AUTO") rendered.mihomoFullTemplate."proxy-groups"
   );
   profile = rendered.profileJsonTemplate;
+  clientDnsEndpoints = profileTypes.normalizeClientDnsEndpoints publisherSettings;
   naiveOutbounds = builtins.filter (outbound: outbound.type == "naive") profile.outbounds;
   naive = builtins.head naiveOutbounds;
   vless = builtins.head (
@@ -337,6 +403,18 @@ let
       "192.168.0.0/16"
     ]
   ) profile.route.rules;
+  tailnetResolveIndex = indexOf (
+    rule:
+    (rule.action or null) == "resolve" && (rule.domain or [ ]) == publisherSettings.tailnetAdminDomains
+  ) profile.route.rules;
+  tailnetDirectIndex = indexOf (
+    rule:
+    (rule.outbound or null) == "DIRECT" && (rule.domain or [ ]) == publisherSettings.tailnetAdminDomains
+  ) profile.route.rules;
+  fallbackResolveIndex = indexOf (
+    rule: (rule.action or null) == "resolve" && !(rule ? domain)
+  ) profile.route.rules;
+  resolveRules = builtins.filter (rule: (rule.action or null) == "resolve") profile.route.rules;
   multicastIndex = indexOf (rule: (rule.ip_cidr or [ ]) == [ "224.0.0.0/4" ]) profile.route.rules;
   protectedUdpIndex = indexOf (
     rule:
@@ -362,8 +440,114 @@ let
   mihomoProtectedIndex = indexOf (
     rule: lib.hasPrefix "RULE-SET,secure_dns_domains," rule
   ) rendered.mihomoSelectiveTemplate.rules;
-  evaluatedDnsServers = map (rule: rule.server) (
-    builtins.filter (rule: (rule.action or null) == "evaluate") profile.dns.rules
+  mihomoDohNameserversFor =
+    endpoints:
+    map (
+      endpoint: "https://${endpoint.domain}:${toString endpoint.port}${endpoint.path}#DIRECT"
+    ) endpoints;
+  mihomoBootstrapNameserversFor =
+    endpoints:
+    map (
+      endpoint: "https://${endpoint.ipv4}:${toString endpoint.port}${endpoint.path}#DIRECT"
+    ) endpoints;
+  singBoxDohServersFor =
+    endpoints:
+    lib.imap0 (index: endpoint: {
+      tag = "own-doh-${toString index}";
+      type = "https";
+      server = endpoint.ipv4;
+      server_port = endpoint.port;
+      inherit (endpoint) path;
+      headers.Host =
+        if endpoint.port == 443 then endpoint.domain else "${endpoint.domain}:${toString endpoint.port}";
+      tls = {
+        enabled = true;
+        server_name = endpoint.domain;
+      };
+    }) endpoints;
+  singBoxDohRulesFor =
+    endpoints:
+    lib.concatLists (
+      lib.imap0 (
+        index: _endpoint:
+        let
+          serverTag = "own-doh-${toString index}";
+          responseTag = "${serverTag}-response";
+        in
+        [
+          (
+            {
+              action = "evaluate";
+              server = serverTag;
+              tag = responseTag;
+            }
+            // lib.optionalAttrs (index > 0) { speculative = true; }
+          )
+          {
+            match_response = responseTag;
+            action = "respond";
+            race = true;
+          }
+        ]
+      ) endpoints
+    );
+  expectedMihomoDohNameservers = mihomoDohNameserversFor clientDnsEndpoints;
+  expectedMihomoBootstrapNameservers = mihomoBootstrapNameserversFor clientDnsEndpoints;
+  expectedSingBoxDohServers = singBoxDohServersFor clientDnsEndpoints;
+  expectedSingBoxDohRules = singBoxDohRulesFor clientDnsEndpoints;
+  actualSingBoxDohServers = builtins.filter (server: server.type == "https") profile.dns.servers;
+  fakeIpDnsRule = builtins.head profile.dns.rules;
+  dnsRulesAfterFakeIp = builtins.tail profile.dns.rules;
+  renderedDnsShapeFor =
+    candidate: endpoints:
+    let
+      candidateProfile = candidate.profileJsonTemplate;
+      httpsServers = builtins.filter (server: server.type == "https") candidateProfile.dns.servers;
+      bootstrapHosts = lib.last candidateProfile.dns.servers;
+      candidateFakeIpRule = builtins.head candidateProfile.dns.rules;
+      candidateResolveRules = builtins.filter (
+        rule: (rule.action or null) == "resolve"
+      ) candidateProfile.route.rules;
+    in
+    candidate.mihomoSelectiveTemplate.dns.nameserver == mihomoDohNameserversFor endpoints
+    &&
+      candidate.mihomoSelectiveTemplate.dns."proxy-server-nameserver" == mihomoDohNameserversFor endpoints
+    &&
+      candidate.mihomoSelectiveTemplate.dns."default-nameserver"
+      == mihomoBootstrapNameserversFor endpoints
+    && httpsServers == singBoxDohServersFor endpoints
+    && builtins.length candidateProfile.dns.servers == builtins.length endpoints + 2
+    && (builtins.elemAt candidateProfile.dns.servers (builtins.length endpoints)).type == "fakeip"
+    && bootstrapHosts.tag == "bootstrap-hosts"
+    && bootstrapHosts.type == "hosts"
+    && bootstrapHosts.path == [ "/dev/null" ]
+    && builtins.all (endpoint: bootstrapHosts.predefined.${endpoint.domain} == endpoint.ipv4) endpoints
+    && builtins.any (
+      rule: (rule.domain or [ ]) == publisherSettings.tailnetAdminDomains
+    ) (lib.last candidateFakeIpRule.rules).rules
+    &&
+      builtins.tail candidateProfile.dns.rules
+      == singBoxDohRulesFor endpoints ++ [ { action = "reject"; } ]
+    && builtins.length candidateResolveRules == 2
+    && builtins.all (rule: !(rule ? server)) candidateResolveRules
+    && !(candidateProfile.dns ? final);
+  oneDnsEndpoints = profileTypes.normalizeClientDnsEndpoints {
+    clientDnsEndpoints = [
+      {
+        domain = "dns-one.example.invalid";
+        ipv4 = "192.0.2.53";
+      }
+    ];
+  };
+  legacyDnsEndpoints = profileTypes.normalizeClientDnsEndpoints (
+    builtins.removeAttrs publisherSettings [ "clientDnsEndpoints" ]
+  );
+  clientDnsRenderVariantResults = {
+    oneEndpoint = renderedDnsShapeFor oneDnsRendered oneDnsEndpoints;
+    omittedSettingUsesLegacyEndpoint = renderedDnsShapeFor legacyDnsRendered legacyDnsEndpoints;
+  };
+  clientDnsRenderVariantsContract = builtins.all (value: value) (
+    builtins.attrValues clientDnsRenderVariantResults
   );
   namespaceResults = {
     ambiguousTuplesDistinct =
@@ -415,6 +599,17 @@ let
     &&
       awg."amnezia-wg-option"."header-protection-key"
       == "__MIHOMO_AMNEZIAWG_HEADER_PROTECTION_KEY_11-vpn-fixture-13-vpn-amneziawg_cHJvYmU__"
+    && rendered.mihomoSelectiveTemplate.dns.nameserver == expectedMihomoDohNameservers
+    && rendered.mihomoSelectiveTemplate.dns."proxy-server-nameserver" == expectedMihomoDohNameservers
+    && rendered.mihomoSelectiveTemplate.dns."default-nameserver" == expectedMihomoBootstrapNameservers
+    && rendered.mihomoFullTemplate.dns.nameserver == expectedMihomoDohNameservers
+    && rendered.mihomoFullTemplate.dns."proxy-server-nameserver" == expectedMihomoDohNameservers
+    && rendered.mihomoFullTemplate.dns."default-nameserver" == expectedMihomoBootstrapNameservers
+    && builtins.all (
+      endpoint:
+      rendered.mihomoSelectiveTemplate.hosts.${endpoint.domain} == endpoint.ipv4
+      && rendered.mihomoFullTemplate.hosts.${endpoint.domain} == endpoint.ipv4
+    ) clientDnsEndpoints
     && mihomoDirectIndex < mihomoProtectedIndex;
   singBoxContract =
     rendered.publishProfileJson
@@ -447,6 +642,19 @@ let
     && builtins.all (ruleSet: ruleSet.download_detour == naive.tag) (remoteRuleSets profile);
   routeContract =
     builtins.length (udpRejects profile) >= 2
+    && builtins.length resolveRules == 2
+    && privateIndex < tailnetResolveIndex
+    && multicastIndex < tailnetResolveIndex
+    && tailnetResolveIndex < globalUdpIndex
+    && tailnetDirectIndex == tailnetResolveIndex + 1
+    && protectedProxyIndex < fallbackResolveIndex
+    && builtins.all (rule: !(rule ? server) && rule.strategy == "ipv4_only") resolveRules
+    &&
+      profile.route.default_domain_resolver == {
+        server = "bootstrap-hosts";
+        strategy = "ipv4_only";
+      }
+    && builtins.elemAt profile.route.rules (fallbackResolveIndex + 1) == { outbound = "DIRECT"; }
     && dnsIndex < protectedUdpIndex
     && privateIndex < protectedUdpIndex
     && multicastIndex < protectedUdpIndex
@@ -455,17 +663,35 @@ let
     && protectedUdpIndex < protectedProxyIndex
     && builtins.all (rule: !(rule ? port)) (udpRejects profile);
   dnsContract =
-    evaluatedDnsServers == [
-      "edge-doh"
-      "reserve-cloudflare"
-      "reserve-quad9"
-      "reserve-google"
-      "plain-cloudflare"
-      "plain-quad9"
-      "plain-google"
-    ]
+    actualSingBoxDohServers == expectedSingBoxDohServers
+    && builtins.length profile.dns.servers == builtins.length expectedSingBoxDohServers + 2
+    &&
+      builtins.elemAt profile.dns.servers (builtins.length expectedSingBoxDohServers) == {
+        tag = "fakeip";
+        type = "fakeip";
+        inet4_range = "198.18.0.0/15";
+      }
+    && (lib.last profile.dns.servers).tag == "bootstrap-hosts"
+    && (lib.last profile.dns.servers).type == "hosts"
+    && (lib.last profile.dns.servers).path == [ "/dev/null" ]
+    && builtins.all (
+      endpoint: (lib.last profile.dns.servers).predefined.${endpoint.domain} == endpoint.ipv4
+    ) clientDnsEndpoints
+    && fakeIpDnsRule.type == "logical"
+    && fakeIpDnsRule.mode == "and"
+    && fakeIpDnsRule.action == "route"
+    && fakeIpDnsRule.server == "fakeip"
+    && (builtins.head fakeIpDnsRule.rules).rule_set != [ ]
+    && (lib.last fakeIpDnsRule.rules).invert
+    && builtins.any (
+      rule: (rule.domain or [ ]) == publisherSettings.tailnetAdminDomains
+    ) (lib.last fakeIpDnsRule.rules).rules
+    &&
+      builtins.any (rule: (rule.domain_suffix or [ ]) == [ "ts.net" ])
+        (lib.last fakeIpDnsRule.rules).rules
+    && dnsRulesAfterFakeIp == expectedSingBoxDohRules ++ [ { action = "reject"; } ]
     && (builtins.elemAt profile.dns.rules ((builtins.length profile.dns.rules) - 1)).action == "reject"
-    && profile.dns.final == "edge-doh";
+    && !(profile.dns ? final);
   zeroNaiveResults = {
     publicationUnitPresent = builtins.hasAttr publicationUnitName zeroNaiveMachine.systemd.services;
     mihomoLinksRetained =
@@ -478,6 +704,7 @@ let
   zeroNaiveContract = builtins.all (value: value) (builtins.attrValues zeroNaiveResults);
   negativeResults = {
     inherit
+      conflictingDnsPinCaseRejected
       deadPublisherCredentialRejected
       duplicatePublisherDomainCaseRejected
       duplicatePublisherDomainRejected
@@ -498,7 +725,9 @@ let
   };
   negativeContract = builtins.all (value: value) (builtins.attrValues negativeResults);
   contract =
-    mihomoContract
+    clientDnsContract
+    && clientDnsRenderVariantsContract
+    && mihomoContract
     && singBoxContract
     && routeContract
     && dnsContract
@@ -511,6 +740,10 @@ if !contract then
   throw "Pure client renderer contract failed: ${
     builtins.toJSON {
       inherit
+        clientDnsContract
+        clientDnsRenderVariantResults
+        clientDnsRenderVariantsContract
+        clientDnsResults
         dnsContract
         disjointPublisherContract
         disjointPublisherResults
@@ -530,6 +763,10 @@ else
   {
     all = true;
     inherit
+      clientDnsContract
+      clientDnsRenderVariantResults
+      clientDnsRenderVariantsContract
+      clientDnsResults
       dnsContract
       disjointPublisherContract
       disjointPublisherResults

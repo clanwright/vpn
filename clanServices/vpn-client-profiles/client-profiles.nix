@@ -7,6 +7,7 @@
 let
   profileTypes = import ./types.nix { inherit lib; };
   inherit (settings) localMachineName;
+  clientDnsEndpoints = profileTypes.normalizeClientDnsEndpoints settings;
   localPublicNetwork = {
     inherit (settings) publicIPv4;
     domains.edge = settings.edgeDomain;
@@ -45,6 +46,11 @@ let
   );
   configGatewayDomain = localPublicNetwork.serviceDomains.configGateway;
   probeUrl64k = "https://speed.cloudflare.com/__down?bytes=65536";
+
+  mkMihomoDohUrl =
+    endpoint: "https://${endpoint.domain}:${toString endpoint.port}${endpoint.path}#DIRECT";
+  mkMihomoBootstrapDohUrl =
+    endpoint: "https://${endpoint.ipv4}:${toString endpoint.port}${endpoint.path}#DIRECT";
 
   mkRuleProvider =
     {
@@ -322,10 +328,8 @@ let
           !isRouterProfile;
       pathTokenSecret = "mihomo-client-${secretPrefix}-${profile.name}-path-token";
       profileVlessProviders = builtins.filter (profilePolicy profile.name) vlessProviders;
-      # Mihomo cannot encode the strict transport-error-only reserve cascade.
-      # Keep its resolver on the primary AdGuardHome endpoint until the owner
-      # chooses an explicit compatibility tradeoff.
-      dohNameservers = [ "https://${localPublicNetwork.domains.edge}/dns-query" ];
+      dohNameservers = map mkMihomoDohUrl clientDnsEndpoints;
+      dohBootstrapNameservers = map mkMihomoBootstrapDohUrl clientDnsEndpoints;
       profileAmneziawgProviders = builtins.filter (profilePolicy profile.name) amneziawgProviders;
       profileHysteria2Providers = builtins.filter (profilePolicy profile.name) hysteria2Providers;
       profileNaiveProviders = builtins.filter (profilePolicy profile.name) naiveProviders;
@@ -436,46 +440,59 @@ let
           throw "Mihomo rule-provider requires at least one proxy for ${basename}"
         else
           builtins.head orderedProxyNames;
-      pinnedHosts = builtins.listToAttrs (
-        [
-          {
-            name = localPublicNetwork.domains.edge;
-            value = localPublicNetwork.publicIPv4;
-          }
-          {
-            name = configGatewayDomain;
-            value = localPublicNetwork.publicIPv4;
-          }
-        ]
-        ++ lib.concatMap (
-          cred:
-          lib.optional (cred.endpointIPv4 != null) {
-            name = cred.domain;
-            value = cred.endpointIPv4;
-          }
-        ) naiveCredentials
-        ++ lib.concatMap (
-          cred:
-          lib.optional (cred.edgeIPv4 != null) {
-            name = cred.edgeDomain;
-            value = cred.edgeIPv4;
-          }
-        ) upstreamCredentials
-        ++ lib.concatMap (
-          cred:
-          lib.optional (cred.dohIPv4 != null) {
-            name = cred.dohDomain;
-            value = cred.dohIPv4;
-          }
-        ) upstreamCredentials
-        ++ lib.concatMap (
-          cred:
-          lib.optional (cred.endpointIPv4 != null) {
-            name = cred.endpointDomain;
-            value = cred.endpointIPv4;
-          }
-        ) (hysteria2Credentials ++ amneziawgCredentials)
-      );
+      rawPinnedHostEntries = [
+        {
+          name = localPublicNetwork.domains.edge;
+          value = localPublicNetwork.publicIPv4;
+        }
+        {
+          name = configGatewayDomain;
+          value = localPublicNetwork.publicIPv4;
+        }
+      ]
+      ++ map (endpoint: {
+        name = endpoint.domain;
+        value = endpoint.ipv4;
+      }) clientDnsEndpoints
+      ++ lib.concatMap (
+        cred:
+        lib.optional (cred.endpointIPv4 != null) {
+          name = cred.domain;
+          value = cred.endpointIPv4;
+        }
+      ) naiveCredentials
+      ++ lib.concatMap (
+        cred:
+        lib.optional (cred.edgeIPv4 != null) {
+          name = cred.edgeDomain;
+          value = cred.edgeIPv4;
+        }
+      ) upstreamCredentials
+      ++ lib.concatMap (
+        cred:
+        lib.optional (cred.dohIPv4 != null) {
+          name = cred.dohDomain;
+          value = cred.dohIPv4;
+        }
+      ) upstreamCredentials
+      ++ lib.concatMap (
+        cred:
+        lib.optional (cred.endpointIPv4 != null) {
+          name = cred.endpointDomain;
+          value = cred.endpointIPv4;
+        }
+      ) (hysteria2Credentials ++ amneziawgCredentials);
+      pinnedHostEntries = map (entry: entry // { name = lib.toLower entry.name; }) rawPinnedHostEntries;
+      pinnedHostEntriesByDomain = lib.groupBy (entry: entry.name) pinnedHostEntries;
+      conflictingPinnedHostDomains = builtins.filter (
+        domain:
+        builtins.length (lib.unique (map (entry: entry.value) pinnedHostEntriesByDomain.${domain})) > 1
+      ) (builtins.attrNames pinnedHostEntriesByDomain);
+      pinnedHosts =
+        if conflictingPinnedHostDomains != [ ] then
+          throw "vpn-client-profiles: conflicting pinned IPv4 addresses for domains: ${lib.concatStringsSep ", " conflictingPinnedHostDomains}"
+        else
+          builtins.listToAttrs pinnedHostEntries;
       isIPv4Literal =
         value: builtins.isString value && builtins.match "[0-9]+\\.[0-9]+\\.[0-9]+\\.[0-9]+" value != null;
       pinnedEdgeRouteExcludes = map (ip: "${ip}/32") (
@@ -533,6 +550,12 @@ let
           # Without this, a client running this profile (e.g. Clash Verge on the dev
           # mac) hijacks *.ts.net → 198.18.x and can't reach tailnet hosts by FQDN.
           "fake-ip-filter" = settings.tailnetAdminDomains ++ [ "+.ts.net" ];
+          # Every configured DoH hostname is pinned in root hosts. Mihomo 1.19.30
+          # checks those pins before its bootstrap resolver, preserving the URL
+          # hostname for HTTP Host and TLS SNI while dialing the declared IPv4.
+          # Literal-IP HTTPS defaults are a fail-closed guard for an unexpected
+          # unpinned resolver hostname; no public or plaintext resolver is used.
+          "default-nameserver" = dohBootstrapNameservers;
           nameserver = dohNameservers;
           "proxy-server-nameserver" = dohNameservers;
         };
@@ -586,6 +609,64 @@ let
           (builtins.head alternateNaiveCredentials).tag
         else
           firstNaiveOutboundTag;
+      singBoxDohServers = lib.imap0 (index: endpoint: {
+        tag = "own-doh-${toString index}";
+        type = "https";
+        server = endpoint.ipv4;
+        server_port = endpoint.port;
+        inherit (endpoint) path;
+        headers.Host =
+          endpoint.domain + lib.optionalString (endpoint.port != 443) ":${toString endpoint.port}";
+        tls = {
+          enabled = true;
+          server_name = endpoint.domain;
+        };
+      }) clientDnsEndpoints;
+      singBoxDohRules = lib.concatLists (
+        lib.imap0 (
+          index: _endpoint:
+          let
+            serverTag = "own-doh-${toString index}";
+            responseTag = "${serverTag}-response";
+          in
+          [
+            (
+              {
+                action = "evaluate";
+                server = serverTag;
+                tag = responseTag;
+              }
+              // lib.optionalAttrs (index > 0) {
+                speculative = true;
+              }
+            )
+            {
+              match_response = responseTag;
+              action = "respond";
+              race = true;
+            }
+          ]
+        ) clientDnsEndpoints
+      );
+      singBoxFakeIpRule = {
+        type = "logical";
+        mode = "and";
+        rules = [
+          { rule_set = singBoxFakeIpDomainRuleSets; }
+          {
+            type = "logical";
+            mode = "or";
+            rules =
+              lib.optional (settings.tailnetAdminDomains != [ ]) {
+                domain = settings.tailnetAdminDomains;
+              }
+              ++ [ { domain_suffix = [ "ts.net" ]; } ];
+            invert = true;
+          }
+        ];
+        action = "route";
+        server = "fakeip";
+      };
       profileJsonTemplate = {
         log = {
           level = "info";
@@ -594,164 +675,23 @@ let
         experimental.cache_file.enabled = true;
         experimental.clash_api.default_mode = "Rule";
         dns = {
-          servers = [
-            {
-              tag = "edge-doh";
-              type = "https";
-              server = localPublicNetwork.publicIPv4;
-              path = "/dns-query";
-              headers.Host = localPublicNetwork.domains.edge;
-              # No detour: sing-box >=1.12 rejects a detour to the empty DIRECT
-              # outbound. Server is a literal IP, route.final = DIRECT, so the
-              # DoH connection goes direct anyway with the same effect.
-              tls = {
-                enabled = true;
-                server_name = localPublicNetwork.domains.edge;
-              };
-            }
-            {
-              tag = "reserve-cloudflare";
-              type = "https";
-              server = "1.1.1.1";
-              path = "/dns-query";
-              tls = {
-                enabled = true;
-                server_name = "cloudflare-dns.com";
-              };
-            }
-            {
-              tag = "reserve-quad9";
-              type = "https";
-              server = "9.9.9.10";
-              path = "/dns-query";
-              tls = {
-                enabled = true;
-                server_name = "dns10.quad9.net";
-              };
-            }
-            {
-              tag = "reserve-google";
-              type = "https";
-              server = "8.8.8.8";
-              path = "/dns-query";
-              tls = {
-                enabled = true;
-                server_name = "dns.google";
-              };
-            }
-            {
-              tag = "plain-cloudflare";
-              type = "udp";
-              server = "1.1.1.1";
-              server_port = 53;
-            }
-            {
-              tag = "plain-quad9";
-              type = "udp";
-              server = "9.9.9.10";
-              server_port = 53;
-            }
-            {
-              tag = "plain-google";
-              type = "udp";
-              server = "8.8.8.8";
-              server_port = 53;
-            }
+          servers = singBoxDohServers ++ [
             {
               tag = "fakeip";
               type = "fakeip";
               inet4_range = "198.18.0.0/15";
             }
+            {
+              # A closed bootstrap resolver for dialers that require a named
+              # resolver. /dev/null suppresses the hosts transport's implicit
+              # platform hosts file while retaining only predefined pins.
+              tag = "bootstrap-hosts";
+              type = "hosts";
+              path = [ "/dev/null" ];
+              predefined = pinnedHosts;
+            }
           ];
-          rules =
-            lib.optional (settings.tailnetAdminDomains != [ ]) {
-              domain = settings.tailnetAdminDomains;
-              action = "route";
-              server = "edge-doh";
-            }
-            ++ lib.optional (singBoxFakeIpDomainRuleSets != [ ]) {
-              rule_set = singBoxFakeIpDomainRuleSets;
-              action = "route";
-              server = "fakeip";
-            }
-            ++ [
-              {
-                action = "evaluate";
-                server = "edge-doh";
-              }
-              {
-                match_response = true;
-                action = "respond";
-              }
-              {
-                action = "evaluate";
-                server = "reserve-cloudflare";
-                tag = "reserve-cloudflare-response";
-              }
-              {
-                match_response = "reserve-cloudflare-response";
-                action = "respond";
-                race = true;
-              }
-              {
-                action = "evaluate";
-                server = "reserve-quad9";
-                tag = "reserve-quad9-response";
-                speculative = true;
-                remove_client_subnet = true;
-              }
-              {
-                match_response = "reserve-quad9-response";
-                action = "respond";
-                race = true;
-              }
-              {
-                action = "evaluate";
-                server = "reserve-google";
-                tag = "reserve-google-response";
-                speculative = true;
-              }
-              {
-                match_response = "reserve-google-response";
-                action = "respond";
-                race = true;
-              }
-              {
-                action = "evaluate";
-                server = "plain-cloudflare";
-                tag = "plain-cloudflare-response";
-              }
-              {
-                match_response = "plain-cloudflare-response";
-                action = "respond";
-                race = true;
-              }
-              {
-                action = "evaluate";
-                server = "plain-quad9";
-                tag = "plain-quad9-response";
-                speculative = true;
-                remove_client_subnet = true;
-              }
-              {
-                match_response = "plain-quad9-response";
-                action = "respond";
-                race = true;
-              }
-              {
-                action = "evaluate";
-                server = "plain-google";
-                tag = "plain-google-response";
-                speculative = true;
-              }
-              {
-                match_response = "plain-google-response";
-                action = "respond";
-                race = true;
-              }
-              { action = "reject"; }
-            ];
-          final = "edge-doh";
+          rules = [ singBoxFakeIpRule ] ++ singBoxDohRules ++ [ { action = "reject"; } ];
           strategy = "ipv4_only";
         };
         inbounds = [
@@ -816,7 +756,10 @@ let
         ++ map mkSingBoxNaiveOutbound naiveCredentials;
         route = {
           auto_detect_interface = true;
-          default_domain_resolver.server = "edge-doh";
+          default_domain_resolver = {
+            server = "bootstrap-hosts";
+            strategy = "ipv4_only";
+          };
           final = "DIRECT";
           rule_set = (mkSingBoxRuleSets ruleSetDownloadNaiveTag) ++ [
             (mkSingBoxRemoteRuleSet {
@@ -850,10 +793,17 @@ let
               outbound = "DIRECT";
             }
           ]
-          ++ lib.optional (settings.tailnetAdminDomains != [ ]) {
-            domain = settings.tailnetAdminDomains;
-            outbound = "DIRECT";
-          }
+          ++ lib.optionals (settings.tailnetAdminDomains != [ ]) [
+            {
+              domain = settings.tailnetAdminDomains;
+              action = "resolve";
+              strategy = "ipv4_only";
+            }
+            {
+              domain = settings.tailnetAdminDomains;
+              outbound = "DIRECT";
+            }
+          ]
           ++ lib.optional (naiveOutboundTags != [ ]) {
             clash_mode = "Global";
             network = "udp";
@@ -888,6 +838,14 @@ let
               rule_set = protectedRuleSets;
               outbound = "SELECTIVE";
             }
+            # Resolve only the ordinary Rule-mode DIRECT fallback here. Global
+            # and protected traffic has already selected its proxy policy.
+            # Omitting server keeps this lookup inside dns.rules.
+            {
+              action = "resolve";
+              strategy = "ipv4_only";
+            }
+            { outbound = "DIRECT"; }
           ];
         };
       };

@@ -121,3 +121,11 @@ These are templates, not live profile URLs. Per-device eligibility, DNS and
 routing policy are documented in [client profiles](../clanServices/vpn-client-profiles/README.md).
 Generated provider names use canonical machine identities without shortening
 machine-name suffixes.
+
+Publisher `clientDnsEndpoints` accepts a nonempty typed list of consumer-owned
+DoH endpoints (`domain`, `ipv4`, optional `port` and `path`). It replaces the
+implicit single endpoint; the default `null` retains the publisher's own edge
+domain/public IPv4. Both formats use only the selected own DoH for upstream DNS,
+without a public reserve. Endpoint bootstrap and TLS identity remain distinct.
+The consumer owns equivalent filtering and private DNS on every server; checks
+prove generated configuration contracts, not runtime failover or filter parity.

@@ -71,6 +71,18 @@ failure routing.
 
 ## Profile publication
 
+Set publisher `clientDnsEndpoints` to the complete list of own DoH endpoints;
+see the [publisher example](../../clanServices/vpn-client-profiles/README.md).
+Each entry needs a distinct domain and a numeric IPv4 address, with optional
+port and path. An explicit list replaces the old edge-domain endpoint; `null`
+or an omitted setting retains that single own endpoint. Empty lists are rejected.
+The generated sing-box profile no longer includes its former public encrypted
+or plaintext DNS reserve, including when retaining the single-endpoint default.
+Both formats require the consumer's own DNS to remain reachable.
+Keep filtering, private names and filter-list state equivalent on all endpoints.
+Address changes require regenerated profiles to reach clients. Consumer rollout
+and runtime failure checks remain separate from this repository's evaluation.
+
 Remove publisher `caddyBindIPv4`, `tailnetIPv4`, `acmeCertName` and links-page
 `tailnetOnly` settings. These are consumer exposure decisions. Client-facing
 `configGatewayDomain`, `publicIPv4` and `edgeDomain` remain renderer inputs.

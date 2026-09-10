@@ -17,6 +17,7 @@ let
     configGatewayDomain = null;
     publicIPv4 = null;
     edgeDomain = null;
+    clientDnsEndpoints = null;
     secretPrefix = "";
     excludedProfileNames = [ "probe" ];
     tailnetAdminDomains = [ ];
@@ -61,6 +62,11 @@ let
       type = lib.types.nullOr lib.types.str;
       default = publisherDefaults.edgeDomain;
       description = "Consumer edge domain embedded into generated client templates.";
+    };
+    clientDnsEndpoints = lib.mkOption {
+      type = lib.types.nullOr types.clientDnsEndpointsType;
+      default = publisherDefaults.clientDnsEndpoints;
+      description = "Consumer-owned DNS-over-HTTPS endpoints; null preserves the edgeDomain/publicIPv4 endpoint.";
     };
     secretPrefix = lib.mkOption {
       type = types.optionalSafeIdentityType;
@@ -117,8 +123,15 @@ in
         ...
       }:
       let
-        publisher =
+        publisherRaw =
           publisherDefaults // settings // { linksPage = linksPageDefaults // (settings.linksPage or { }); };
+        publisher = publisherRaw // {
+          clientDnsEndpoints =
+            if publisherRaw.enable then
+              types.normalizeClientDnsEndpoints publisherRaw
+            else
+              publisherRaw.clientDnsEndpoints;
+        };
         providerRefs = publisher.providerRefs or [ ];
         active = publisher.enable;
         providerFor =
@@ -319,6 +332,11 @@ in
                 {
                   assertion = !active || publisher.edgeDomain != null;
                   message = "vpn-client-profiles: edgeDomain is required when publishing is enabled.";
+                }
+                {
+                  assertion =
+                    !active || builtins.deepSeq publisher.clientDnsEndpoints (publisher.clientDnsEndpoints != [ ]);
+                  message = "vpn-client-profiles: enabled publisher requires at least one valid client DNS endpoint.";
                 }
                 {
                   assertion = !active || publisher.secretPrefix != "";

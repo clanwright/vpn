@@ -265,8 +265,25 @@ rec {
       configGatewayDomain = "profiles.example.invalid";
       publicIPv4 = "192.0.2.10";
       edgeDomain = "edge.example.invalid";
+      clientDnsEndpoints = [
+        {
+          domain = "dns-a.example.invalid";
+          ipv4 = "192.0.2.53";
+        }
+        {
+          domain = "dns-b.example.invalid";
+          ipv4 = "198.51.100.53";
+        }
+        {
+          domain = "dns-c.example.invalid";
+          ipv4 = "203.0.113.53";
+          port = 8443;
+          path = "/fixture-dns-query";
+        }
+      ];
       secretPrefix = "fixture";
       excludedProfileNames = [ ];
+      tailnetAdminDomains = [ "admin.example.invalid" ];
       profiles = [
         {
           name = "cHJvYmU";

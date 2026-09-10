@@ -72,9 +72,16 @@ The consumer also owns private-resolver behavior, listeners, client routing and
 name/certificate authorization. Source configuration and query logs still reveal
 names to their readers; private routing is not an access-control boundary.
 
-Mihomo profiles use primary AdGuard DNS only. If AdGuard is unavailable, new
-queries without a usable cached answer fail. The sing-box profile has its own
-DNS cascade. The server reserve does not provide client failover around AdGuard.
+The publisher accepts a consumer-owned list of DoH endpoints with numeric
+bootstrap addresses. Mihomo uses all endpoints for ordinary and proxy-server
+DNS; sing-box races the own DoH responses. Neither client profile includes a
+public DNS reserve. Endpoint connection does not depend on resolving its own
+hostname through another server or on the selected VPN. If every endpoint is
+unavailable, queries needing upstream resolution fail; existing cache, static
+records and fake-IP policy remain separate. The consumer owns equivalent
+filtering, private DNS records and reachability on every endpoint. Omitting the
+list preserves a single own DoH from the publisher's edge domain and public IP.
+The server-side AdGuard reserve remains independent of client endpoint failover.
 
 ## Verification boundary
 

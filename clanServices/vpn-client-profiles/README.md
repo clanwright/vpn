@@ -13,7 +13,7 @@ typed non-secret metadata VPN providers, генерирует профили и 
 Точная схема и defaults определены в [`default.nix`](default.nix), а типы
 профилей, provider refs и links page — в [`types.nix`](types.nix).
 Входы: `enable`, `localMachineName`,
-`configGatewayDomain`, `publicIPv4`, `edgeDomain`, `secretPrefix`,
+`configGatewayDomain`, `publicIPv4`, `edgeDomain`, `clientDnsEndpoints`, `secretPrefix`,
 `excludedProfileNames`, `tailnetAdminDomains`, `personalProxyDomains`, `profiles`,
 `providerRefs`, `profileLinks` и `linksPage`. Provider refs
 содержат machine, instance и canonical protocol. Publisher profiles содержат
@@ -84,15 +84,49 @@ Selective policy использует только blocked/geoblocked и depende
 содержит пользовательский список. Значения задаются как доменные суффиксы без
 `+.`.
 
-Sing-box DNS сначала принимает любой ответ основного AdGuardHome, затем при
-transport error гоняет encrypted reserve (Cloudflare Standard, Quad9 `.10`
-без ECS, Google), и только после transport errors — plaintext адреса в том же
-порядке. DNS response, включая NXDOMAIN или SERVFAIL, завершает tier. Mihomo
-использует только основной AdGuardHome, без клиентского DNS
-fallback и дополнительного локального resolver. Его DNS fallback filters не
-выражают этот transport-only каскад без изменения семантики. Если
-AdGuardHome недоступен и нет кэшированного ответа, новые DNS-запросы
-Mihomo завершаются ошибкой.
+`clientDnsEndpoints` задаёт непустой список собственных DoH consumer. Каждый
+элемент содержит `domain`, `ipv4`, `port` (по умолчанию `443`) и `path`
+(по умолчанию `/dns-query`). Домены — уникальные канонические lowercase ASCII
+FQDN, адреса — числовые IPv4; путь не содержит query, fragment или credentials.
+Текущие профили остаются IPv4-only. Число endpoint не фиксировано.
+
+```nix
+clientDnsEndpoints = [
+  { domain = "dns-a.example.invalid"; ipv4 = "192.0.2.10"; }
+  { domain = "dns-b.example.invalid"; ipv4 = "198.51.100.20"; }
+  { domain = "dns-c.example.invalid"; ipv4 = "203.0.113.30"; }
+];
+```
+
+Пример использует вымышленные домены и адреса. `null` (default, включая
+отсутствующую настройку) сохраняет один собственный DoH из `edgeDomain` и
+`publicIPv4`, порт `443`, путь `/dns-query`. Явный список заменяет этот endpoint,
+а пустой список отклоняется. IP служит адресом подключения, домен — HTTPS/TLS
+именем с обязательной проверкой сертификата.
+
+Mihomo использует весь список в `nameserver` и `proxy-server-nameserver`:
+endpoint равноправны, запросы выполняются параллельно. DoH подключаются напрямую
+с закреплёнными адресами, независимо от доступности DNS и выбранного VPN.
+Sing-box 1.14 использует собственные DoH через `evaluate`/`race`/`respond`,
+принимая DNS-ответ, включая блокирующий, без перехода к публичным резолверам.
+Публичного encrypted или plaintext резерва в обоих форматах нет.
+
+Для обязательного dialer resolver Sing-box использует статические bootstrap
+записи; обычные DIRECT-запросы проходят через общий набор DoH до подключения.
+Bootstrap hosts transport читает `/dev/null` вместо системного hosts-файла;
+эта конфигурация рассчитана на Linux, Android и Apple clients.
+
+При транспортном отказе отдельных DoH остаются остальные собственные endpoint.
+Если все недоступны, запросы, которым нужен upstream DNS, завершаются ошибкой.
+Кэш, статические записи и существующая fake-IP policy сохраняются; это не
+обещание ошибки для каждого обращения к клиентскому DNS. Приватные имена,
+которым нужен реальный DNS-ответ, также используют собственный набор серверов.
+Consumer отвечает за доступность каждого DoH с клиентских сетей, одинаковую
+эффективную фильтрацию, состояние списков и приватные записи на всех серверах.
+При смене адресов он обновляет настройки и доставляет новые профили клиентам.
+
+Семантика upstream: [Mihomo DNS](https://wiki.metacubex.one/en/config/dns/),
+[Sing-box DNS actions](https://sing-box.sagernet.org/configuration/dns/rule_action/).
 
 Naive credentials выбираются по именам профилей из provider export. Карта не
 ограничена встроенными device names, а probe публикуется только если consumer
@@ -150,7 +184,9 @@ logging. Caddy не импортирует runtime fragments, не зависи�
 
 `checks/domain-contracts.nix` и `checks/client-render-smoke.nix` проверяют
 protocol-role mapping, единственность export для provider ref, generated runtime
-paths, Caddy tailnet policy и исключённые profiles. Проверки не подтверждают
+paths, Caddy tailnet policy и исключённые profiles. DNS checks проверяют
+типизированный список, bootstrap-привязки, включение собственных endpoint,
+отсутствие публичного резерва и DIRECT/DNS routing. Проверки не подтверждают
 работу клиентов, сетевую доступность или содержимое runtime credentials.
 Полная репозиторная процедура описана в
 [verification runbook](../../docs/operations/verify.md).
