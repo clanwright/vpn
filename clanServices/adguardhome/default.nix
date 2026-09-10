@@ -86,23 +86,16 @@
               type = lib.types.port;
               default = 8444;
             };
-            dotPort = lib.mkOption {
-              type = lib.types.port;
-              default = 0;
-            };
           };
 
           acme.certName = lib.mkOption {
             type = lib.types.str;
           };
 
-          lifecycle = lib.mkOption {
-            type = lib.types.enum [
-              "enabled"
-              "disabled-retained"
-            ];
-            default = "enabled";
-            description = "Whether AdGuard runtime owners are active or retained for recovery.";
+          enable = lib.mkOption {
+            type = lib.types.bool;
+            default = true;
+            description = "Whether to declare the AdGuard runtime, state, and secrets.";
           };
 
           filtering.userRules = lib.mkOption {
@@ -112,14 +105,6 @@
           };
 
           auth = {
-            enable = lib.mkOption {
-              type = lib.types.bool;
-              default = true;
-              description = ''
-                Whether the active Web UI uses the consumer-supplied bcrypt
-                credential. Active instances require this to remain enabled.
-              '';
-            };
             username = lib.mkOption {
               type = lib.types.str;
               default = "admin";
@@ -157,7 +142,7 @@
             ...
           }:
           let
-            active = settings.lifecycle == "enabled";
+            active = settings.enable;
             adguardPackage = adguardPackageFor pkgs.system;
             adguardSchemaVersion = 34;
             dnsproxyPackage = dnsproxyPackageFor pkgs.system;
@@ -470,7 +455,7 @@
                 server_name = settings.tls.serverName;
                 force_https = false;
                 port_https = settings.tls.httpsPort;
-                port_dns_over_tls = settings.tls.dotPort;
+                port_dns_over_tls = 0;
                 certificate_path = "${certBase}/fullchain.pem";
                 private_key_path = "${certBase}/key.pem";
               };
@@ -548,17 +533,14 @@
               }
               {
                 assertion =
-                  validName settings.auth.passwordSecretName
-                  && (
-                    !active
-                    ||
-                      settings.auth.enable
-                      && validName settings.auth.username
-                      && validName settings.acme.certName
-                      && validName settings.tls.serverName
-                      && validName settings.ui.domain
-                  );
-                message = "adguardhome: the retained secret name must be safe; active instances also require auth and safe username, certificate and TLS names.";
+                  !active
+                  ||
+                    validName settings.auth.passwordSecretName
+                    && validName settings.auth.username
+                    && validName settings.acme.certName
+                    && validName settings.tls.serverName
+                    && validName settings.ui.domain;
+                message = "adguardhome: active instances require safe auth, certificate and TLS names.";
               }
               {
                 assertion =
@@ -567,7 +549,6 @@
                     settings.dns.port > 0
                     && settings.ui.port > 0
                     && settings.tls.httpsPort > 0
-                    && settings.tls.dotPort == 0
                     && settings.dns.fallbackPort > 0
                     && (2 * settings.dns.fallbackTimeoutSeconds + 1) < 10
                     &&
@@ -605,89 +586,14 @@
               }
               {
                 assertion =
-                  !active
-                  ||
-                    effectiveSettings.http.address == "${settings.ui.host}:${toString settings.ui.port}"
-                    && !effectiveSettings.http.pprof.enabled
-                    && effectiveSettings.dns.bind_hosts == settings.dns.bindHosts
-                    && effectiveSettings.dns.port == settings.dns.port
-                    && effectiveSettings.dns.upstream_dns == settings.dns.upstream
-                    && effectiveSettings.dns.upstream_dns_file == ""
-                    && effectiveSettings.dns.fallback_dns == [ "127.0.0.1:${toString settings.dns.fallbackPort}" ]
-                    && effectiveSettings.dns.bootstrap_dns == [ ]
-                    && effectiveSettings.dns.upstream_mode == "load_balance"
-                    && effectiveSettings.dns.upstream_timeout == "10s"
-                    && effectiveSettings.dns.enable_dnssec
-                    && effectiveSettings.dns.refuse_any
-                    && effectiveSettings.dns.pending_requests.enabled
-                    && effectiveSettings.dns.cache_enabled
-                    && effectiveSettings.dns.cache_ttl_min == 0
-                    && effectiveSettings.dns.cache_ttl_max == 0
-                    && !effectiveSettings.dns.cache_optimistic
-                    && !effectiveSettings.dns.handle_ddr
-                    && !effectiveSettings.dns.hostsfile_enabled
-                    && effectiveSettings.dns.ratelimit == 0
-                    && effectiveSettings.dns.serve_plain_dns
-                    && effectiveSettings.dns.allowed_clients == [ ]
-                    && effectiveSettings.dns.disallowed_clients == [ ]
-                    && effectiveSettings.dns.trusted_proxies == stableSettings.dns.trusted_proxies
-                    && effectiveSettings.dns.edns_client_subnet == stableSettings.dns.edns_client_subnet
-                    && !effectiveSettings.dns.aaaa_disabled
-                    && effectiveSettings.dns.private_networks == [ ]
-                    && !effectiveSettings.dns.use_private_ptr_resolvers
-                    && effectiveSettings.dns.local_ptr_upstreams == [ ]
-                    && !effectiveSettings.dns.use_dns64
-                    && !effectiveSettings.dhcp.enabled
-                    && !effectiveSettings.dns.serve_http3
-                    && !effectiveSettings.dns.use_http3_upstreams
-                    && effectiveSettings.tls.enabled
-                    && effectiveSettings.tls.server_name == settings.tls.serverName
-                    && effectiveSettings.tls.port_https == settings.tls.httpsPort
-                    && effectiveSettings.tls.port_dns_over_tls == 0
-                    && effectiveSettings.tls.port_dns_over_quic == 0
-                    && effectiveSettings.tls.port_dnscrypt == 0
-                    && !effectiveSettings.tls.allow_unencrypted_doh
-                    && !effectiveSettings.tls.force_https
-                    && !effectiveSettings.tls.strict_sni_check
-                    && effectiveSettings.tls.certificate_path == "${certBase}/fullchain.pem"
-                    && effectiveSettings.tls.private_key_path == "${certBase}/key.pem"
-                    && effectiveSettings.http.session_ttl == "24h"
-                    && effectiveSettings.auth_attempts == 5
-                    && effectiveSettings.block_auth_min == 15
-                    && effectiveSettings.filters == stableSettings.filters
-                    && effectiveSettings.whitelist_filters == [ ]
-                    && effectiveSettings.user_rules == settings.filtering.userRules
-                    && effectiveSettings.filtering.filtering_enabled
-                    && effectiveSettings.filtering.protection_enabled
-                    && effectiveSettings.filtering.parental_enabled
-                    && effectiveSettings.filtering.rewrites_enabled
-                    && effectiveSettings.filtering.safe_search == stableSettings.filtering.safe_search
-                    && !effectiveSettings.filtering.safebrowsing_enabled
-                    && effectiveSettings.filtering.blocked_response_ttl == 10
-                    && effectiveSettings.clients.persistent == [ ]
-                    && effectiveSettings.querylog.enabled
-                    && effectiveSettings.querylog.file_enabled
-                    && effectiveSettings.querylog.interval == "168h"
-                    && effectiveSettings.statistics.enabled
-                    && effectiveSettings.statistics.interval == "2160h"
-                    && !effectiveSettings.dns.anonymize_client_ip
-                    &&
-                      effectiveSettings.users == [
-                        {
-                          name = settings.auth.username;
-                          password = config.sops.placeholder.${settings.auth.passwordSecretName};
-                        }
-                      ];
-                message = "adguardhome: the generated configuration must preserve cascade, listener, TLS, cache, filtering and retention policy.";
+                  !active || config.sops.templates.${templateName}.content == builtins.toJSON effectiveSettings;
+                message = "adguardhome: the final template must exactly preserve the generated policy.";
               }
             ];
 
-            clan.core.state.adguardhome.folders = [ "/var/lib/private/AdGuardHome" ];
-
-            sops.secrets."${settings.auth.passwordSecretName}" = secretSettings;
-
           }
           // lib.optionalAttrs active {
+            clan.core.state.adguardhome.folders = [ "/var/lib/private/AdGuardHome" ];
             sops = {
               secrets."${settings.auth.passwordSecretName}" = secretSettings;
               templates.${templateName} = {

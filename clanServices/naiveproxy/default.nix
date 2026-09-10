@@ -72,11 +72,6 @@ in
             description = "Whether to generate and attach the NaiveProxy Caddy fragment.";
           };
 
-          machineName = lib.mkOption {
-            type = lib.types.addCheck lib.types.str validIdentity;
-            description = "Short machine token used in the fragment and systemd unit names.";
-          };
-
           selectedPublicSiteClaim = lib.mkOption {
             type = lib.types.str;
             description = "Existing Caddy claim that is explicitly marked publicSite.";
@@ -185,7 +180,7 @@ in
             ...
           }:
           let
-            templateName = "naiveproxy-${settings.machineName}.caddy";
+            templateName = "naiveproxy-${providerMachine}.caddy";
             fragmentPath = config.sops.templates.${templateName}.path;
             caddyConfig = config.services.caddy;
             secretNames = builtins.attrValues settings.passwordSecretNames;
@@ -261,10 +256,6 @@ in
                   !settings.enable
                   || (caddyConfig.enableReload && caddyConfig.adapter == "caddyfile" && !caddyConfig.resume);
                 message = "naiveproxy: runtime credentials require native Caddyfile reload and resume disabled.";
-              }
-              {
-                assertion = !settings.enable || settings.machineName != "";
-                message = "naiveproxy: machineName must not be empty when enabled.";
               }
               {
                 assertion = !settings.enable || settings.selectedPublicSiteClaim != "";

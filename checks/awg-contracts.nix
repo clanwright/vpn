@@ -15,12 +15,10 @@ let
   interface = service.roles.gateway.interface { inherit lib; };
   baseSettings = {
     enable = true;
-    lifecycle = "enabled";
     interfaceName = "awg-fixture";
     listenIPv4 = "192.0.2.12";
     endpointDomain = "awg.example.invalid";
     listenPort = 443;
-    mtu = 1280;
     address = "10.77.0.1/24";
     privateKeySecretName = "fixture/awg-private-key";
     headerProtectionKeySecretName = "fixture/awg-header-protection-key";
@@ -113,9 +111,6 @@ let
   disabledMachine = isolatedMachine (
     baseSettings // { enable = false; }
   ) "fixture--amneziawg-disabled";
-  retainedMachine = isolatedMachine (
-    baseSettings // { lifecycle = "disabled-retained"; }
-  ) "fixture--amneziawg-retained";
   forwardingNotRequested =
     evaluatedMachine:
     !evaluatedMachine.clanwright.vpn.amneziawg.forwardingRequired
@@ -236,7 +231,7 @@ let
         ];
       }
     ))
-    && !(schemaAccepts (baseSettings // { mtu = 1420; }))
+    && !(schemaAccepts (baseSettings // { mtu = 1280; }))
     && !(schemaAccepts (
       baseSettings
       // {
@@ -374,15 +369,24 @@ let
     && secondUnit.serviceConfig.CapabilityBoundingSet == [ "CAP_NET_ADMIN" ]
     && secondMachine.boot.kernel.sysctl."net.ipv4.ip_forward" == 1
     && forwardingNotRequested noNatMachine
-    && forwardingNotRequested disabledMachine
-    && forwardingNotRequested retainedMachine;
+    && forwardingNotRequested disabledMachine;
+
+  disabledContract =
+    !(disabledMachine.systemd.services ? "wireguard-awg-fixture")
+    && !(disabledMachine.sops.secrets ? "fixture/awg-private-key")
+    && !(disabledMachine.sops.secrets ? "fixture/awg-header-protection-key")
+    && !(
+      disabledMachine.networking.nftables.tables
+      ? ${"vpn_amneziawg_${builtins.hashString "sha256" "awg-fixture"}"}
+    );
 
   contract =
     invalidContracts
     && exportContract
     && runtimeConfigContract
     && firewallContract
-    && interfaceClaimContract;
+    && interfaceClaimContract
+    && disabledContract;
 in
 if !contract then
   throw "AWG3 validation, export, pre-up secret loading, cleanup, or firewall contract failed"

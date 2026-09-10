@@ -9,6 +9,7 @@ in
 {
   instanceNames,
   extraModule ? { },
+  includeNetwork ? false,
 }:
 let
   supportInstances = [
@@ -16,8 +17,9 @@ let
     "network-caddy"
     "network-certificates"
   ];
+  selectedSupportInstances = if includeNetwork then supportInstances else [ ];
   rawSelectedInstances = builtins.intersectAttrs (inputs.nixpkgs.lib.genAttrs (
-    supportInstances ++ instanceNames
+    selectedSupportInstances ++ instanceNames
   ) (_: null)) fixture.instances;
   selectedInstances =
     if instanceNames == [ "vpn-client-profiles" ] then
@@ -47,7 +49,10 @@ let
           _:
           fixture.machine
           // {
-            imports = (fixture.machine.imports or [ ]) ++ [ extraModule ];
+            imports =
+              (fixture.machine.imports or [ ])
+              ++ inputs.nixpkgs.lib.optional includeNetwork fixture.networkIntegrationModule
+              ++ [ extraModule ];
           };
         inventory = {
           meta.name = "vpn-consumer-fixture";

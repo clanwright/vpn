@@ -25,7 +25,8 @@ The flake does not import a consumer checkout. TCP tuning belongs to the consume
   public site. The consumer supplies Network's Caddy package with the required
   plugins.
 
-The profile publisher consumes typed provider exports and per-device bindings.
+The profile publisher passes selected typed provider exports and per-device
+bindings directly to its renderer.
 It renders Mihomo selective/full profiles and publishes a sing-box profile only
 for devices with an eligible Naive provider. Personal proxy domain additions
 come from the consumer.
@@ -33,7 +34,8 @@ come from the consumer.
 ## DNS
 
 AdGuard Home provides the DNS/DoH front end. Its normal upstream is loopback
-Unbound, bound explicitly by the consumer. The AdGuard role also configures a
+Unbound, bound explicitly by the consumer. The consumer also owns any systemd
+startup relationship between AdGuard and Unbound. The AdGuard role configures a
 loopback dnsproxy reserve: parallel encrypted providers, followed by plaintext
 providers only after encrypted exchange failures. Received NXDOMAIN or SERVFAIL
 does not activate the plaintext tier.

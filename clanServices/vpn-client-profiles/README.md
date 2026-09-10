@@ -12,17 +12,20 @@ typed non-secret metadata VPN providers, генерирует профили и 
 
 Точная схема и defaults определены в [`default.nix`](default.nix), а типы
 профилей, provider refs и links page — в [`types.nix`](types.nix).
-Входы: `lifecycle`, `enable`, `localMachineName`,
+Входы: `enable`, `localMachineName`,
 `configGatewayDomain`, `publicIPv4`, `caddyBindIPv4`, `tailnetIPv4`,
 `edgeDomain`, `acmeCertName`, `secretPrefix`,
 `excludedProfileNames`, `tailnetAdminDomains`, `personalProxyDomains`, `profiles`,
 `providerRefs`, `profileLinks` и `linksPage`. Provider refs
-содержат machine, instance и canonical protocol.
+содержат machine, instance и canonical protocol. Publisher profiles содержат
+только `name`, `kind` и optional `publishProfileJson`; имена credential secrets
+приходят исключительно из typed providers.
 
 ## Defaults
 
-Lifecycle включён, publisher `enable = false`, `secretPrefix` и
-gateway address fields пусты или nullable. Из публикации исключается
+Publisher `enable = false`, `secretPrefix` и gateway address fields пусты
+или nullable. При `enable = false` роль не объявляет сервисы и секреты.
+Из публикации исключается
 профиль `probe`; links page включена, path —
 `/config-links/`, title — `VPN client profiles`, tailnet-only режим
 включён.
@@ -32,8 +35,14 @@ gateway address fields пусты или nullable. Из публикации и�
 Role экспортирует `vpnPublisher` и выбирает providers через raw Clan
 exports и `clanLib.selectExports`: `naiveproxy` требует addon, а
 `vless-xhttp`, `hysteria2`, `amneziawg` — gateway. Отсутствующий,
-disabled, неоднозначный или несоответствующий provider блокирует
-генерацию.
+выключенный, неоднозначный или несоответствующий provider блокирует
+генерацию. Renderer принимает выбранные typed `vpnProvider` exports напрямую;
+`providerRefs.profileNames` сужает их `profileNames` без промежуточных
+protocol-specific adapter shapes.
+
+Имена proxies включают полный canonical machine ID и instance ID. Компоненты
+кодируются с длиной, поэтому разные пары machine/instance не могут дать одно
+имя. Compatibility aliases для прежних имён без `-grosbeak` не создаются.
 
 Mihomo поступает из `apps-nixpkgs`, а Sing-box — из
 `modern-apps-nixpkgs`; точные revisions и package outputs описаны в

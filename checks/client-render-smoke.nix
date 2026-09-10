@@ -6,6 +6,7 @@
 }:
 let
   lib = inputs.nixpkgs.lib;
+  profileTypes = import ../clanServices/vpn-client-profiles/types.nix { inherit lib; };
   fixture = import ./fixtures/example-clan.nix;
   fixtureMachineName = fixture.machineName or "vpn-fixture";
   supportNames = [
@@ -31,6 +32,7 @@ let
     };
   consumer = (import ./lib/consumer.nix { inherit inputs root self; }) {
     instanceNames = serviceNames;
+    includeNetwork = true;
     extraModule = renderCaptureModule;
   };
   zeroNaiveInstances = fixture.instances // {
@@ -58,7 +60,10 @@ let
           _:
           fixture.machine
           // {
-            imports = (fixture.machine.imports or [ ]) ++ [ renderCaptureModule ];
+            imports = (fixture.machine.imports or [ ]) ++ [
+              fixture.networkIntegrationModule
+              renderCaptureModule
+            ];
           };
         inventory = {
           meta.name = "vpn-consumer-zero-naive-fixture";
@@ -94,7 +99,12 @@ let
         imports = [
           self.clanModule
           {
-            machines.${fixtureMachineName} = _: fixture.machine;
+            machines.${fixtureMachineName} =
+              _:
+              fixture.machine
+              // {
+                imports = (fixture.machine.imports or [ ]) ++ [ fixture.networkIntegrationModule ];
+              };
             inventory = {
               meta.name = "vpn-consumer-${name}-fixture";
               machines.${fixtureMachineName} = { };
@@ -129,6 +139,16 @@ let
       publisherSettings
       // {
         providerRefs = publisherSettings.providerRefs ++ [ (builtins.head publisherSettings.providerRefs) ];
+      }
+    )
+  );
+  deadPublisherCredentialRejected = rejectsInstances "dead-publisher-credential" (
+    publisherWith (
+      publisherSettings
+      // {
+        profiles = map (
+          profile: profile // { vlessUuidSecretName = "fixture-vless-uuid"; }
+        ) publisherSettings.profiles;
       }
     )
   );
@@ -252,6 +272,22 @@ let
   evaluatedDnsServers = map (rule: rule.server) (
     builtins.filter (rule: (rule.action or null) == "evaluate") profile.dns.rules
   );
+  namespaceResults = {
+    ambiguousTuplesDistinct =
+      profileTypes.providerNamespace {
+        machine = "a-b";
+        instanceId = "c";
+      } != profileTypes.providerNamespace {
+        machine = "a";
+        instanceId = "b-c";
+      };
+    canonicalTags =
+      vless.name == "11-vpn-fixture-22-vpn-mihomo-vless-xhttp-cHJvYmU-vless"
+      && hysteria.name == "11-vpn-fixture-20-vpn-mihomo-hysteria2-cHJvYmU-hysteria2"
+      && awg.name == "11-vpn-fixture-13-vpn-amneziawg-cHJvYmU-amneziawg"
+      && naive.tag == "11-vpn-fixture-14-vpn-naiveproxy-cHJvYmU-edge";
+  };
+  namespaceContract = builtins.all (value: value) (builtins.attrValues namespaceResults);
   mihomoContract =
     builtins.all (type: builtins.elem type mihomoTypes) [
       "vless"
@@ -276,16 +312,16 @@ let
     && !(builtins.elem "DIRECT" fullAuto.proxies)
     && lib.last rendered.mihomoSelectiveTemplate.rules == "MATCH,DIRECT"
     && lib.last rendered.mihomoFullTemplate.rules == "MATCH,FULL"
-    && vless.uuid == "__MIHOMO_VLESS_UUID_vpn-fixture__"
+    && vless.uuid == "__MIHOMO_VLESS_UUID_11-vpn-fixture-22-vpn-mihomo-vless-xhttp__"
     && vless."reality-opts"."short-id" == "0123456789abcdef"
     && hysteria."obfs-min-packet-size" == 512
     && hysteria."obfs-max-packet-size" == 1200
-    && hysteria.password == "__MIHOMO_HY2_PASSWORD_vpn-fixture_cHJvYmU__"
-    && awg."private-key" == "__MIHOMO_AMNEZIAWG_PRIVATE_KEY_vpn-fixture__"
+    && hysteria.password == "__MIHOMO_HY2_PASSWORD_11-vpn-fixture-20-vpn-mihomo-hysteria2_cHJvYmU__"
+    && awg."private-key" == "__MIHOMO_AMNEZIAWG_PRIVATE_KEY_11-vpn-fixture-13-vpn-amneziawg__"
     && awg."amnezia-wg-option".version == 3
     &&
       awg."amnezia-wg-option"."header-protection-key"
-      == "__MIHOMO_AMNEZIAWG_HEADER_PROTECTION_KEY_vpn-fixture_cHJvYmU__"
+      == "__MIHOMO_AMNEZIAWG_HEADER_PROTECTION_KEY_11-vpn-fixture-13-vpn-amneziawg_cHJvYmU__"
     && mihomoDirectIndex < mihomoProtectedIndex;
   singBoxContract =
     rendered.publishProfileJson
@@ -349,6 +385,7 @@ let
   zeroNaiveContract = builtins.all (value: value) (builtins.attrValues zeroNaiveResults);
   negativeResults = {
     inherit
+      deadPublisherCredentialRejected
       duplicateProfileRejected
       duplicateProviderRefRejected
       missingCredentialRejected
@@ -364,6 +401,7 @@ let
     && singBoxContract
     && routeContract
     && dnsContract
+    && namespaceContract
     && zeroNaiveContract
     && negativeContract;
 in
@@ -373,6 +411,8 @@ if !contract then
       inherit
         dnsContract
         mihomoContract
+        namespaceContract
+        namespaceResults
         negativeContract
         negativeResults
         routeContract
@@ -388,6 +428,8 @@ else
     inherit
       dnsContract
       mihomoContract
+      namespaceContract
+      namespaceResults
       negativeContract
       negativeResults
       routeContract

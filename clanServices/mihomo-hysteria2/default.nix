@@ -52,13 +52,6 @@ in
       { lib, ... }:
       {
         options = {
-          lifecycle = lib.mkOption {
-            type = lib.types.enum [
-              "enabled"
-              "disabled-retained"
-            ];
-            default = "enabled";
-          };
           enable = lib.mkOption {
             type = lib.types.bool;
             default = true;
@@ -114,7 +107,7 @@ in
         ...
       }:
       let
-        active = settings.enable && (settings.lifecycle or "enabled") == "enabled";
+        active = settings.enable;
         providerMachine =
           if machine ? name && machine.name != null && machine.name != "" then
             machine.name
@@ -267,71 +260,77 @@ in
                 }
               ];
 
-              users.groups.${serviceName} = lib.mkIf active { };
-              users.users.${serviceName} = lib.mkIf active {
-                isSystemUser = true;
-                group = serviceName;
+              users.groups = lib.optionalAttrs active { ${serviceName} = { }; };
+              users.users = lib.optionalAttrs active {
+                ${serviceName} = {
+                  isSystemUser = true;
+                  group = serviceName;
+                };
               };
 
-              sops.secrets = lib.mkIf active (
+              sops.secrets = lib.optionalAttrs active (
                 lib.genAttrs (userSecretNames ++ [ settings.obfsPasswordSecretName ]) (_: {
                   owner = "root";
                   group = "root";
                   mode = "0400";
                 })
               );
-              sops.templates.${templateName} = lib.mkIf active {
-                content = renderedConfig;
-                owner = serviceName;
-                group = serviceName;
-                mode = "0400";
-                restartUnits = [ serviceUnit ];
+              sops.templates = lib.optionalAttrs active {
+                ${templateName} = {
+                  content = renderedConfig;
+                  owner = serviceName;
+                  group = serviceName;
+                  mode = "0400";
+                  restartUnits = [ serviceUnit ];
+                };
               };
 
-              systemd.services.${serviceName} = lib.mkIf active {
-                description = "Independent Mihomo Hysteria2 gateway";
-                after = [ "network-online.target" ] ++ sopsUnits;
-                wants = [ "network-online.target" ] ++ sopsUnits;
-                wantedBy = [ "multi-user.target" ];
-                restartTriggers = [ mihomoPackage ];
-                serviceConfig = {
-                  Type = "exec";
-                  User = serviceName;
-                  Group = serviceName;
-                  ExecStart = "${lib.getExe mihomoPackage} -d /var/lib/${serviceName} -f ${configPath}";
-                  Restart = "on-failure";
-                  RestartSec = "2s";
-                  StateDirectory = serviceName;
-                  StateDirectoryMode = "0750";
-                  UMask = "0077";
-                  AmbientCapabilities = bindCapability;
-                  CapabilityBoundingSet = bindCapability;
-                  LoadCredential = [
-                    "certificate.pem:${certificateSource}"
-                    "private-key.pem:${privateKeySource}"
-                  ];
-                  LockPersonality = true;
-                  NoNewPrivileges = true;
-                  PrivateDevices = true;
-                  PrivateTmp = true;
-                  ProtectClock = true;
-                  ProtectControlGroups = true;
-                  ProtectHome = true;
-                  ProtectHostname = true;
-                  ProtectKernelLogs = true;
-                  ProtectKernelModules = true;
-                  ProtectKernelTunables = true;
-                  ProtectProc = "invisible";
-                  ProtectSystem = "strict";
-                  RestrictAddressFamilies = [
-                    "AF_INET"
-                    "AF_INET6"
-                    "AF_UNIX"
-                  ];
-                  RestrictNamespaces = true;
-                  RestrictRealtime = true;
-                  RestrictSUIDSGID = true;
-                  SystemCallArchitectures = "native";
+              systemd.services = lib.optionalAttrs active {
+                ${serviceName} = {
+                  description = "Independent Mihomo Hysteria2 gateway";
+                  after = [ "network-online.target" ] ++ sopsUnits;
+                  wants = [ "network-online.target" ] ++ sopsUnits;
+                  wantedBy = [ "multi-user.target" ];
+                  restartTriggers = [ mihomoPackage ];
+                  serviceConfig = {
+                    Type = "exec";
+                    User = serviceName;
+                    Group = serviceName;
+                    ExecStart = "${lib.getExe mihomoPackage} -d /var/lib/${serviceName} -f ${configPath}";
+                    Restart = "on-failure";
+                    RestartSec = "2s";
+                    StateDirectory = serviceName;
+                    StateDirectoryMode = "0750";
+                    UMask = "0077";
+                    AmbientCapabilities = bindCapability;
+                    CapabilityBoundingSet = bindCapability;
+                    LoadCredential = [
+                      "certificate.pem:${certificateSource}"
+                      "private-key.pem:${privateKeySource}"
+                    ];
+                    LockPersonality = true;
+                    NoNewPrivileges = true;
+                    PrivateDevices = true;
+                    PrivateTmp = true;
+                    ProtectClock = true;
+                    ProtectControlGroups = true;
+                    ProtectHome = true;
+                    ProtectHostname = true;
+                    ProtectKernelLogs = true;
+                    ProtectKernelModules = true;
+                    ProtectKernelTunables = true;
+                    ProtectProc = "invisible";
+                    ProtectSystem = "strict";
+                    RestrictAddressFamilies = [
+                      "AF_INET"
+                      "AF_INET6"
+                      "AF_UNIX"
+                    ];
+                    RestrictNamespaces = true;
+                    RestrictRealtime = true;
+                    RestrictSUIDSGID = true;
+                    SystemCallArchitectures = "native";
+                  };
                 };
               };
 
@@ -341,7 +340,9 @@ in
                 ''
               );
 
-              security.acme.certs.${settings.acmeCertName}.reloadServices = lib.mkIf active [ serviceUnit ];
+              security.acme.certs = lib.optionalAttrs active {
+                ${settings.acmeCertName}.reloadServices = [ serviceUnit ];
+              };
             };
           };
       };

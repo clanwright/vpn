@@ -26,11 +26,12 @@ The VLESS module ID contains `mihomo` for identity stability; its runtime is Xra
 | `lib.exportInterfaces { lib }` | Constructs the interface definitions. |
 | `lib.vpnExports { lib }` | Closed provider/publisher types and projections. |
 | `lib.awgValidation { lib }` | AmneziaWG option and package-family validation. |
-| `lib.clientProfiles { config, lib, pkgs, settings, gatewayProfiles }` | Profile renderer with repository-owned package selection. |
+| `lib.clientProfiles { config, lib, pkgs, settings, providers }` | Profile renderer consuming selected typed providers with repository-owned package selection. |
 
 Provider and publisher schemas reject unknown fields. Their definitions are in
 [the export schema](../modules/contracts/vpn-exports.nix); modules and checks
-use the same definitions.
+use the same definitions. Provider selection derives the required role from the
+protocol; callers do not supply a separate role mapping.
 
 Consumers must use public attributes, without importing internal files under
 `modules/`, `packages/`, `checks/` or `clanServices/`. Extending the interface
@@ -50,9 +51,14 @@ ingress requires an enabled nftables firewall; those roles assert that backend.
 Hysteria2 requires the NixOS option
 `clanwright.vpn.hysteria2.masqueradeRoot` to name an absolute Nix store directory
 containing public static content. NaiveProxy requires one explicit listener on
-its selected public-site claim, matching the declared bind address. Unbound's
-optional AdGuard integration requests startup with `Wants=`; the consumer must
-still supply AdGuard's upstream binding.
+its selected public-site claim, matching the declared bind address. The consumer
+supplies AdGuard's Unbound upstream binding and any systemd startup relationship
+between the two services.
+
+Roles with an `enable` setting use it alone to control their declarations.
+Disabled roles do not retain service or secret declarations; credential storage
+remains consumer-owned.
+Protocol policy with a single supported value is fixed by the implementation.
 
 ## Published profiles
 
@@ -64,3 +70,5 @@ still supply AdGuard's upstream binding.
 
 These are templates, not live profile URLs. Per-device eligibility, DNS and
 routing policy are documented in [client profiles](../clanServices/vpn-client-profiles/README.md).
+Generated provider names use canonical machine identities without shortening
+machine-name suffixes.

@@ -78,6 +78,7 @@ let
     port = 8443;
   };
   highPortModule = moduleFor highPortSettings nftablesFirewall;
+  disabledModule = moduleForWithInstances (settings // { enable = false; }) nftablesFirewall [ ];
   highPortCapabilitiesContract =
     builtins.all (entry: entry.assertion) highPortModule.assertions
     && unwrap highPortModule.systemd.services.xray.serviceConfig.AmbientCapabilities == [ ]
@@ -160,9 +161,7 @@ let
         settings
         // {
           reality = settings.reality // {
-            target = settings.reality.target // {
-              host = settings.domain;
-            };
+            targetHost = settings.domain;
             serverNames = [ settings.domain ];
           };
         }
@@ -172,21 +171,8 @@ let
         settings
         // {
           reality = settings.reality // {
-            target = settings.reality.target // {
-              host = "VLESS.EXAMPLE.INVALID";
-            };
+            targetHost = "VLESS.EXAMPLE.INVALID";
             serverNames = [ "VLESS.EXAMPLE.INVALID" ];
-          };
-        }
-      ) nftablesFirewall);
-    invalidAlpn =
-      !(assertionsPass (
-        settings
-        // {
-          reality = settings.reality // {
-            target = settings.reality.target // {
-              alpn = [ "http/1.1" ];
-            };
           };
         }
       ) nftablesFirewall);
@@ -252,8 +238,8 @@ let
       settings
       // {
         reality = settings.reality // {
-          target = settings.reality.target // {
-            port = 8443;
+          target = {
+            host = settings.reality.targetHost;
           };
         };
       }
@@ -278,9 +264,9 @@ let
       )
     &&
       providerExport.transportMetadata.reality == {
-        serverName = settings.reality.target.host;
+        serverName = settings.reality.targetHost;
         inherit (settings.reality) serverNames publicKey;
-        target = "${settings.reality.target.host}:443";
+        target = "${settings.reality.targetHost}:443";
         shortIdsByProfile = lib.listToAttrs (
           map (profile: {
             inherit (profile) name;
@@ -288,7 +274,11 @@ let
           }) settings.profiles
         );
       }
-    && providerExport.transportMetadata.xhttp == settings.xhttp;
+    &&
+      providerExport.transportMetadata.xhttp == {
+        inherit (settings.xhttp) path;
+        mode = "auto";
+      };
   templateContract =
     builtins.attrNames rendered == [
       "inbounds"
@@ -316,7 +306,7 @@ let
     && inbound.streamSettings.network == "xhttp"
     && inbound.streamSettings.security == "reality"
     && reality.show == false
-    && reality.target == "${settings.reality.target.host}:443"
+    && reality.target == "${settings.reality.targetHost}:443"
     && reality.xver == 0
     && reality.serverNames == settings.reality.serverNames
     && reality.shortIds == map (profile: profile.realityShortId) settings.profiles
@@ -333,7 +323,11 @@ let
         "target"
         "xver"
       ]
-    && xhttp == { inherit (settings.xhttp) mode path; }
+    &&
+      xhttp == {
+        inherit (settings.xhttp) path;
+        mode = "auto";
+      }
     && builtins.length rendered.outbounds == 1
     &&
       builtins.head rendered.outbounds == {
@@ -344,7 +338,6 @@ let
     builtins.all (entry: entry.assertion) machine.assertions
     && machine.services.xray.enable
     && machine.services.xray.package == self.packages.${system}.xray
-    && self.packages.${system}.xray.version == "26.3.27"
     && machine.services.xray.settings == null
     && machine.services.xray.settingsFile == template.path
     && template.owner == "root"
@@ -371,6 +364,11 @@ let
     machine.systemd.services ? xray
     && !(machine.systemd.services ? mihomo-gateway)
     && !((machine.networkCore or { }) ? mihomo);
+  disabledContract =
+    (disabledModule.services or { }) == { }
+    && (disabledModule.systemd or { }) == { }
+    && ((disabledModule.sops or { }).secrets or { }) == { }
+    && ((disabledModule.sops or { }).templates or { }) == { };
   contract =
     malformedSchemasRejected
     && negativeAssertionsContract
@@ -379,7 +377,8 @@ let
     && runtimeContract
     && highPortCapabilitiesContract
     && exposureContract
-    && independentRuntime;
+    && independentRuntime
+    && disabledContract;
 in
 if !contract then
   throw "Xray VLESS contract failed: ${

@@ -57,8 +57,9 @@ let
     message: rawSettings: !(assertionFor message rawSettings placeholderConfig).assertion;
   active = (import ./lib/consumer.nix { inherit inputs root self; }) {
     instanceNames = [ "dns-adguardhome" ];
+    includeNetwork = true;
   };
-  retainedModule = moduleFor (baseSettings // { lifecycle = "disabled-retained"; }) { };
+  disabledModule = moduleFor (baseSettings // { enable = false; }) { };
   customRulesAccepted = effective.user_rules == baseSettings.filtering.userRules;
   settingOverrideResults = [
     (rejectsSetting "adguardhome: dns.upstream must contain one 127.0.0.1:<port> Unbound endpoint." (
@@ -78,10 +79,6 @@ let
     ))
     (rejectsSetting "adguardhome: dns.bindHosts must be unique private addresses and include 127.0.0.1."
       (baseSettings // { dns.bindHosts = [ "0.0.0.0" ]; })
-    )
-    (rejectsSetting
-      "adguardhome: the retained secret name must be safe; active instances also require auth and safe username, certificate and TLS names."
-      (baseSettings // { auth.enable = false; })
     )
     (rejectsSetting
       "adguardhome: listener ports must be nonzero and distinct; DoT must remain disabled and two dnsproxy stages plus margin must fit the 10s outer budget."
@@ -128,6 +125,15 @@ let
         { settings.insecure = true; }
         { flags = [ "--insecure" ]; }
       ];
+  templateOverrideRejected =
+    !(assertionFor "adguardhome: the final template must exactly preserve the generated policy."
+      baseSettings
+      (
+        lib.recursiveUpdate baselineConfig {
+          sops.templates."dns-adguardhome-adguardhome.yaml".content = "{}";
+        }
+      )
+    ).assertion;
   inherit (active) machine;
   templateNames = builtins.filter (lib.hasSuffix "-adguardhome.yaml") (
     builtins.attrNames machine.sops.templates
@@ -164,7 +170,9 @@ let
     && rejectsSetting "adguardhome: dns.upstream must contain one 127.0.0.1:<port> Unbound endpoint." (
       baseSettings // { dns.upstream = [ "127.0.0.1:not-a-port" ]; }
     )
-    && !(schemaAccepts (baseSettings // { lifecycle = "removed"; }));
+    && !(schemaAccepts (baseSettings // { lifecycle = "enabled"; }))
+    && !(schemaAccepts (lib.recursiveUpdate baseSettings { auth.enable = true; }))
+    && !(schemaAccepts (lib.recursiveUpdate baseSettings { tls.dotPort = 0; }));
   effectiveContract =
     builtins.all (entry: entry.assertion) machine.assertions
     && machine.services.adguardhome.enable
@@ -260,14 +268,15 @@ let
       machine.networkCore.caddy.effectiveFragments."dns-adguardhome-doh".extraConfig
     );
   lifecycleContract =
-    (retainedModule.services or { }) == { }
-    && (retainedModule.systemd or { }) == { }
-    && (retainedModule.networkCore or { }) == { }
-    && (retainedModule.sops.templates or { }) == { }
-    && retainedModule.sops.secrets.${baseSettings.auth.passwordSecretName}.mode == "0400"
-    && builtins.elem "/var/lib/private/AdGuardHome" retainedModule.clan.core.state.adguardhome.folders;
+    (disabledModule.services or { }) == { }
+    && (disabledModule.systemd or { }) == { }
+    && (disabledModule.networkCore or { }) == { }
+    && ((disabledModule.sops or { }).templates or { }) == { }
+    && ((disabledModule.sops or { }).secrets or { }) == { }
+    && (disabledModule.clan or { }) == { };
   negativeContract =
     customRulesAccepted
+    && templateOverrideRejected
     && builtins.all (value: value) settingOverrideResults
     && builtins.all (value: value) packageOverrideResults
     && builtins.all (value: value) dnsproxyOverrideResults;

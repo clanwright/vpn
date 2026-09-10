@@ -45,13 +45,6 @@ in
     description = "Public VLESS/REALITY/XHTTP gateway listener";
     interface = { lib, ... }: {
       options = {
-        lifecycle = lib.mkOption {
-          type = lib.types.enum [
-            "enabled"
-            "disabled-retained"
-          ];
-          default = "enabled";
-        };
         enable = lib.mkOption {
           type = lib.types.bool;
           default = true;
@@ -88,16 +81,9 @@ in
         reality = lib.mkOption {
           type = lib.types.submodule (_: {
             options = {
-              target = lib.mkOption {
-                type = lib.types.submodule (_: {
-                  options = {
-                    host = lib.mkOption { type = hostnameType; };
-                    port = lib.mkOption { type = lib.types.enum [ 443 ]; };
-                    tlsVersion = lib.mkOption { type = lib.types.enum [ "1.3" ]; };
-                    alpn = lib.mkOption { type = lib.types.listOf (lib.types.enum [ "h2" ]); };
-                  };
-                });
-                description = "Explicit external TLS 1.3 and HTTP/2 REALITY target on port 443.";
+              targetHost = lib.mkOption {
+                type = hostnameType;
+                description = "External TLS 1.3 and HTTP/2 REALITY target; port 443 is fixed.";
               };
               serverNames = lib.mkOption {
                 type = lib.types.nonEmptyListOf hostnameType;
@@ -112,11 +98,6 @@ in
           type = lib.types.submodule (_: {
             options = {
               path = lib.mkOption { type = lib.types.addCheck lib.types.str validPath; };
-              mode = lib.mkOption {
-                type = lib.types.enum [ "auto" ];
-                default = "auto";
-                description = "Server-side mode fixed to stock XHTTP auto behavior.";
-              };
             };
           });
         };
@@ -157,7 +138,7 @@ in
         ...
       }:
       let
-        active = settings.enable && (settings.lifecycle or "enabled") == "enabled";
+        active = settings.enable;
         providerMachine =
           if machine ? name && machine.name != null && machine.name != "" then
             machine.name
@@ -199,12 +180,15 @@ in
             transportMetadata = {
               protocol = "vless-xhttp";
               reality = {
-                serverName = settings.reality.target.host;
+                serverName = settings.reality.targetHost;
                 inherit (settings.reality) serverNames publicKey;
-                target = "${settings.reality.target.host}:${toString settings.reality.target.port}";
+                target = "${settings.reality.targetHost}:443";
                 inherit shortIdsByProfile;
               };
-              inherit (settings) xhttp;
+              xhttp = {
+                inherit (settings.xhttp) path;
+                mode = "auto";
+              };
               fingerprint = settings.clientFingerprint;
               inherit (settings) doh;
             };
@@ -227,7 +211,7 @@ in
                 builtins.currentSystem;
             xrayPackage = xrayPackageFor system;
             bindCapability = lib.optional (settings.port < 1024) "CAP_NET_BIND_SERVICE";
-            active = settings.enable && (settings.lifecycle or "enabled") == "enabled";
+            active = settings.enable;
             serviceName = "xray.service";
             templateName = "xray-vless-xhttp.json";
             configCredentialPath = config.sops.templates.${templateName}.path;
@@ -252,13 +236,16 @@ in
                     security = "reality";
                     realitySettings = {
                       show = false;
-                      target = "${settings.reality.target.host}:${toString settings.reality.target.port}";
+                      target = "${settings.reality.targetHost}:443";
                       xver = 0;
                       inherit (settings.reality) serverNames;
                       privateKey = config.sops.placeholder.${settings.reality.privateKeySecretName};
                       inherit shortIds;
                     };
-                    xhttpSettings = { inherit (settings.xhttp) path mode; };
+                    xhttpSettings = {
+                      inherit (settings.xhttp) path;
+                      mode = "auto";
+                    };
                   };
                   sniffing.enabled = false;
                 }
@@ -306,15 +293,11 @@ in
                 message = "VLESS/XHTTP requires an exact non-wildcard bindIPv4 for scoped ingress.";
               }
               {
-                assertion = !active || settings.reality.target.alpn == [ "h2" ];
-                message = "VLESS/XHTTP REALITY target must explicitly require only HTTP/2.";
-              }
-              {
-                assertion = !active || builtins.elem settings.reality.target.host settings.reality.serverNames;
+                assertion = !active || builtins.elem settings.reality.targetHost settings.reality.serverNames;
                 message = "VLESS/XHTTP REALITY target host must be present in serverNames.";
               }
               {
-                assertion = !active || lib.toLower settings.reality.target.host != lib.toLower settings.domain;
+                assertion = !active || lib.toLower settings.reality.targetHost != lib.toLower settings.domain;
                 message = "VLESS/XHTTP REALITY target must differ from the public VPN endpoint domain.";
               }
               {

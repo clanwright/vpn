@@ -3,11 +3,12 @@
 Run the repository [verification gate](verify.md) and retain its logs and
 summary. Acceptance covers forced Nix assertions for the stock systemd-enabled
 package, loopback listeners and ACLs, host IPv6 policy, DNSSEC settings, bounded
-stale settings and the integrated AdGuard dependency graph.
+stale settings and absence of implicit AdGuard composition.
 
-AdGuard may request Unbound startup with `Wants`; it must not wait for backend
-readiness or require the backend to remain running. The consumer explicitly
-binds AdGuard's primary upstream to the selected loopback address and port.
+The consumer may request Unbound startup from AdGuard with `Wants`; this does
+not require waiting for backend readiness or keeping the backend running.
+The consumer also binds AdGuard's primary upstream to the selected loopback
+address and port. The Unbound role adds no AdGuard dependency edge.
 
 The project has no VM or real-machine tests. Do not execute Unbound,
 unbound-checkconf, DNS probes, readiness listeners or synthetic DNS servers as

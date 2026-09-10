@@ -19,19 +19,19 @@ Cloudflare Standard, Quad9 без threat blocking и Google Public DNS по DoH,
 `ingress.caddyBindIPv4`, `ingress.tailnetIPv4`, `dns.bindHosts`,
 `dns.port`, `dns.upstream`, `dns.fallbackPort`,
 `dns.fallbackTimeoutSeconds`, `tls.serverName`,
-`tls.httpsPort`, `tls.dotPort`, `acme.certName`, `auth.enable`,
+`tls.httpsPort`, `acme.certName`,
 `auth.username`, `auth.passwordSecretName`, `systemResolver.enableLocalStub`
 и `filtering.userRules`. `dns.upstream` содержит ровно
 один числовой loopback endpoint Unbound в формате `127.0.0.1:<port>`.
 
 ## Defaults
 
-Жизненный цикл по умолчанию — `enabled`; primary указывает на consumer-owned
+`enable` по умолчанию — `true`; primary указывает на consumer-owned
 Unbound `127.0.0.1:5335`. Fallback `dnsproxy` слушает `127.0.0.1:5336`, его
 таймаут каждой из двух стадий — 3 секунды при внешнем бюджете AdGuard 10 секунд.
 HTTPS использует порт `8444`,
 DoT выключен значением `0`, логин администратора — `admin`, локальный стаб и
-auth включены, системный resolver использует `127.0.0.1`.
+auth всегда включён, системный resolver использует `127.0.0.1`.
 
 AdGuard кеширует без искусственного min TTL и optimistic stale. DDR и hosts
 file выключены. Родительский контроль, Safe Search, HaGeZi Multi NORMAL,
@@ -67,8 +67,8 @@ DoH публикуется Caddy только на точном пути `/dns-q
 `caddyBindIPv4`. Caddy обращается к `https://127.0.0.1:8444` с проверкой
 сертификата и заданным SNI. UI route имеет отдельный tailnet listener и
 проверяет local destination и порт 443. Native backend-порты firewall не
-открывает. В режиме `disabled-retained` сохраняются только state и metadata
-секрета, без runtime, template, ACME claim, firewall и resolver edges.
+открывает. При `enable = false` роль не объявляет runtime, state, secrets,
+template, ACME claim, firewall или resolver edges.
 
 ## Verification
 

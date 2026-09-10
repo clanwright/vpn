@@ -60,8 +60,8 @@ interface и добавляет peer routes. В tools 3.1.20260812 command parse
 `clientSubnetIPv4` и исключает назначения внутри этой подсети.
 Несколько active NAT instances объединяют одно общее требование
 `net.ipv4.ip_forward = 1`; instance без NAT его не запрашивает.
-`disabled-retained` сохраняет secret declarations и
-metadata, но убирает interface, packages, firewall, forwarding, NAT и sysctl.
+При `enable = false` роль не публикует metadata и не объявляет secrets,
+interface, packages, firewall, forwarding, NAT или sysctl.
 
 ## Verification
 

@@ -1,18 +1,23 @@
 { lib }:
 let
-  safeIdentityType = lib.types.addCheck lib.types.nonEmptyStr (
-    value: builtins.match "[A-Za-z0-9][A-Za-z0-9._-]{0,63}" value != null
-  );
-  optionalSafeIdentityType = lib.types.addCheck lib.types.str (
-    value: value == "" || builtins.match "[A-Za-z0-9][A-Za-z0-9._-]{0,63}" value != null
-  );
-  safeSecretNameType = lib.types.addCheck lib.types.nonEmptyStr (
-    value: builtins.match "[A-Za-z0-9_][A-Za-z0-9_.+-]*(/[A-Za-z0-9_][A-Za-z0-9_.+-]*)*" value != null
-  );
+  identities = import ../../modules/contracts/identities.nix { inherit lib; };
+  inherit (identities)
+    optionalSafeIdentityType
+    safeIdentityType
+    safeSecretNameType
+    ;
+  linksPageDefaults = {
+    enable = true;
+    path = "/config-links/";
+    title = "VPN client profiles";
+    tailnetOnly = true;
+  };
+  providerNamespace =
+    provider:
+    "${toString (builtins.stringLength provider.machine)}-${provider.machine}-${toString (builtins.stringLength provider.instanceId)}-${provider.instanceId}";
   profileType = lib.types.submodule (_: {
     options = {
       name = lib.mkOption { type = safeIdentityType; };
-      vlessUuidSecretName = lib.mkOption { type = safeSecretNameType; };
       kind = lib.mkOption {
         type = lib.types.enum [
           "mobile"
@@ -58,19 +63,19 @@ let
     options = {
       enable = lib.mkOption {
         type = lib.types.bool;
-        default = true;
+        default = linksPageDefaults.enable;
       };
       path = lib.mkOption {
         type = lib.types.str;
-        default = "/config-links/";
+        default = linksPageDefaults.path;
       };
       title = lib.mkOption {
         type = lib.types.str;
-        default = "VPN client profiles";
+        default = linksPageDefaults.title;
       };
       tailnetOnly = lib.mkOption {
         type = lib.types.bool;
-        default = true;
+        default = linksPageDefaults.tailnetOnly;
       };
     };
   });
@@ -92,6 +97,8 @@ in
     safeIdentityType
     optionalSafeIdentityType
     safeSecretNameType
+    linksPageDefaults
+    providerNamespace
     profileType
     providerRefType
     profileLinkType

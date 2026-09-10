@@ -8,7 +8,6 @@ let
   interface = service.roles.addon.interface { inherit lib; };
   baseSettings = {
     enable = true;
-    machineName = "fixture";
     selectedPublicSiteClaim = "fixture-site";
     selectedPublicSiteEndpoint = {
       domain = "site.example.invalid";
@@ -161,7 +160,7 @@ let
     && !wrongEndpoint.assertionsPass
     && !mixedSelectedListener.assertionsPass
     && !missingProbe.assertionsPass
-    && !(schemaAccepts (baseSettings // { machineName = "bad/machine"; }))
+    && !(schemaAccepts (baseSettings // { machineName = "legacy-machine"; }))
     && !(schemaAccepts (
       baseSettings
       // {

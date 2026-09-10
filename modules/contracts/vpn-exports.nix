@@ -2,14 +2,13 @@
 let
   inherit (lib) types;
   inherit (types) nonEmptyListOf nonEmptyStr;
-  safeIdentity =
-    value: builtins.isString value && builtins.match "[A-Za-z0-9][A-Za-z0-9._-]{0,63}" value != null;
-  safeSecretName =
-    value:
-    builtins.isString value
-    && builtins.match "[A-Za-z0-9_][A-Za-z0-9_.+-]*(/[A-Za-z0-9_][A-Za-z0-9_.+-]*)*" value != null;
-  safeIdentityStr = types.addCheck nonEmptyStr safeIdentity;
-  safeSecretNameStr = types.addCheck nonEmptyStr safeSecretName;
+  identities = import ./identities.nix { inherit lib; };
+  inherit (identities)
+    safeIdentity
+    safeSecretName
+    safeIdentityType
+    safeSecretNameType
+    ;
   fixed = value: types.enum [ value ];
   nullableNonEmptyStr = types.nullOr nonEmptyStr;
   mkSubmodule = options: { inherit options; };
@@ -38,7 +37,7 @@ let
     ipv4 = mkOption nonEmptyStr;
   };
   awgPeerModule = mkSubmodule {
-    name = mkOption safeIdentityStr;
+    name = mkOption safeIdentityType;
     publicKey = mkOption nonEmptyStr;
     allowedIPs = mkOption (nonEmptyListOf nonEmptyStr);
     clientPersistentKeepalive = lib.mkOption {
@@ -83,7 +82,7 @@ let
         default = null;
       };
       userNames = lib.mkOption {
-        type = types.nullOr (nonEmptyListOf safeIdentityStr);
+        type = types.nullOr (nonEmptyListOf safeIdentityType);
         default = null;
       };
       port = lib.mkOption {
@@ -168,7 +167,7 @@ let
       };
     };
   };
-  metadataFields = {
+  protocolMetadataFields = {
     naiveproxy = [
       "protocol"
       "tlsServerName"
@@ -209,60 +208,63 @@ let
     value:
     builtins.isAttrs value
     && builtins.isString (value.protocol or null)
-    && builtins.hasAttr value.protocol metadataFields
-    && attrsHaveExactly metadataFields.${value.protocol} value;
+    && builtins.hasAttr value.protocol protocolMetadataFields
+    && attrsHaveExactly protocolMetadataFields.${value.protocol} value;
   metadataType = types.addCheck (types.submodule metadataModule) validMetadataShape;
 
   secretNamesModule = {
     options = {
       password = lib.mkOption {
-        type = types.nullOr (types.attrsOf safeSecretNameStr);
+        type = types.nullOr (types.attrsOf safeSecretNameType);
         default = null;
       };
       realityPrivateKey = lib.mkOption {
-        type = types.nullOr safeSecretNameStr;
+        type = types.nullOr safeSecretNameType;
         default = null;
       };
       vlessUuid = lib.mkOption {
-        type = types.nullOr (types.attrsOf safeSecretNameStr);
+        type = types.nullOr (types.attrsOf safeSecretNameType);
         default = null;
       };
       users = lib.mkOption {
-        type = types.nullOr (types.attrsOf safeSecretNameStr);
+        type = types.nullOr (types.attrsOf safeSecretNameType);
         default = null;
       };
       obfsPassword = lib.mkOption {
-        type = types.nullOr safeSecretNameStr;
+        type = types.nullOr safeSecretNameType;
         default = null;
       };
       clientPrivateKey = lib.mkOption {
-        type = types.nullOr (types.attrsOf safeSecretNameStr);
+        type = types.nullOr (types.attrsOf safeSecretNameType);
         default = null;
       };
       headerProtectionKey = lib.mkOption {
-        type = types.nullOr safeSecretNameStr;
+        type = types.nullOr safeSecretNameType;
         default = null;
       };
     };
   };
-  secretNamesFields = [
-    [ "password" ]
-    [
+  protocolSecretNameFields = {
+    naiveproxy = [ "password" ];
+    vless-xhttp = [
       "realityPrivateKey"
       "vlessUuid"
-    ]
-    [
+    ];
+    hysteria2 = [
       "users"
       "obfsPassword"
-    ]
-    [
+    ];
+    amneziawg = [
       "clientPrivateKey"
       "headerProtectionKey"
-    ]
-  ];
+    ];
+  };
   validSecretNamesShape =
     value:
-    builtins.isAttrs value && builtins.any (fields: attrsHaveExactly fields value) secretNamesFields;
+    builtins.isAttrs value
+    && builtins.any (fields: attrsHaveExactly fields value) (
+      builtins.attrValues protocolSecretNameFields
+    );
   secretNamesType = types.addCheck (types.submodule secretNamesModule) validSecretNamesShape;
 
   endpointModule = mkSubmodule {
@@ -280,8 +282,8 @@ let
   vpnProviderModule = {
     options = {
       schemaVersion = mkOption (fixed 1);
-      instanceId = mkOption safeIdentityStr;
-      machine = mkOption safeIdentityStr;
+      instanceId = mkOption safeIdentityType;
+      machine = mkOption safeIdentityType;
       role = mkOption (
         types.enum [
           "gateway"
@@ -299,21 +301,21 @@ let
       enabled = mkOption (fixed true);
       endpoint = mkOption (types.submodule endpointModule);
       transportMetadata = mkOption metadataType;
-      profileNames = mkOption (nonEmptyListOf safeIdentityStr);
+      profileNames = mkOption (nonEmptyListOf safeIdentityType);
       secretNames = mkOption secretNamesType;
     };
   };
 
   profileLinkModule = mkSubmodule {
-    name = mkOption safeIdentityStr;
+    name = mkOption safeIdentityType;
     label = mkOption nonEmptyStr;
     accountDomain = mkOption nonEmptyStr;
   };
   vpnPublisherModule = {
     options = {
       schemaVersion = mkOption (fixed 1);
-      instanceId = mkOption safeIdentityStr;
-      machine = mkOption safeIdentityStr;
+      instanceId = mkOption safeIdentityType;
+      machine = mkOption safeIdentityType;
       role = mkOption (fixed "publisher");
       enabled = mkOption (fixed true);
       accountDomain = mkOption nonEmptyStr;
@@ -370,44 +372,6 @@ let
     && values != [ ]
     && builtins.all safeIdentity values
     && values == lib.unique values;
-
-  metadataKeys = {
-    naiveproxy = [
-      "protocol"
-      "tlsServerName"
-      "userNames"
-      "port"
-    ];
-    vless-xhttp = [
-      "protocol"
-      "reality"
-      "xhttp"
-      "fingerprint"
-      "doh"
-    ];
-    hysteria2 = [
-      "protocol"
-      "sni"
-      "alpn"
-      "userNames"
-      "obfsName"
-      "obfsMinPacketSize"
-      "obfsMaxPacketSize"
-      "tlsVerify"
-      "credentialEncoding"
-    ];
-    amneziawg = [
-      "protocol"
-      "serverPublicKey"
-      "interfaceName"
-      "address"
-      "mtu"
-      "peers"
-      "peerPublicKeys"
-      "generation"
-      "profile"
-    ];
-  };
 
   validAwgProfile =
     value:
@@ -524,8 +488,8 @@ let
     context: protocol: value:
     let
       rawMetadata = if builtins.isAttrs value then value else { };
-      allowedKeys = metadataKeys.${protocol} or [ ];
-      schemaFields = lib.unique (lib.concatLists (builtins.attrValues metadataKeys));
+      allowedKeys = protocolMetadataFields.${protocol} or [ ];
+      schemaFields = lib.unique (lib.concatLists (builtins.attrValues protocolMetadataFields));
       metadata = lib.filterAttrs (
         name: item:
         builtins.elem name allowedKeys
@@ -534,7 +498,7 @@ let
     in
     if !builtins.isAttrs metadata then
       fail context "transportMetadata must be an attrset"
-    else if !(attrsHaveOnly metadataKeys.${protocol} metadata) then
+    else if !(attrsHaveOnly protocolMetadataFields.${protocol} metadata) then
       fail context "transportMetadata contains an unsupported field"
     else if (metadata.protocol or null) != protocol then
       fail context "transportMetadata.protocol does not match the requested protocol"
@@ -596,7 +560,6 @@ let
     {
       providerMachine,
       providerInstanceId,
-      providerRole,
       protocol,
       consumerInstanceId,
     }:
@@ -634,24 +597,9 @@ let
         transportMetadata = metadata;
       };
       expectedRole = protocolRoles.${protocol};
-      expectedSecretNames = {
-        naiveproxy = [ "password" ];
-        vless-xhttp = [
-          "realityPrivateKey"
-          "vlessUuid"
-        ];
-        hysteria2 = [
-          "users"
-          "obfsPassword"
-        ];
-        amneziawg = [
-          "clientPrivateKey"
-          "headerProtectionKey"
-        ];
-      };
       validSecretNames =
         builtins.isAttrs secretNames
-        && attrsHaveExactly expectedSecretNames.${protocol} secretNames
+        && attrsHaveExactly protocolSecretNameFields.${protocol} secretNames
         && (
           if protocol == "naiveproxy" then
             credentialMapExact metadata.userNames secretNames.password
@@ -673,7 +621,6 @@ let
         && raw.schemaVersion == 1
         && raw.instanceId == providerInstanceId
         && raw.machine == providerMachine
-        && raw.role == providerRole
         && raw.role == expectedRole
         && raw.protocol == protocol
         && raw.enabled == true
@@ -848,7 +795,6 @@ in
     {
       providerInstanceId,
       providerMachine,
-      providerRole,
       protocol,
       selectExports,
       exports,
@@ -879,7 +825,7 @@ in
                   scope:
                   scope.serviceName == protocolServices.${protocol}
                   && scope.instanceName == providerInstanceId
-                  && scope.roleName == providerRole
+                  && scope.roleName == expectedRole
                   && scope.machineName == providerMachine
                 ) exports;
             selectedScopeNames =
@@ -902,12 +848,10 @@ in
     in
     if expectedRole == null then
       fail context "unsupported provider protocol"
-    else if providerRole != expectedRole then
-      fail context "provider role does not match the closed protocol-role table"
     else if raw == null then
-      fail context "provider is missing, disabled-retained or has no active export"
+      fail context "provider is missing, disabled or has no active export"
     else
-      validateProvider (context // { inherit providerRole; }) raw;
+      validateProvider context raw;
 
   selectVpnPublisher =
     {

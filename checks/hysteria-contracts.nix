@@ -17,7 +17,6 @@ let
   staticMasqueradeRoot = "${staticMasqueradeOutput}/share/hysteria";
   baseSettings = {
     enable = true;
-    lifecycle = "enabled";
     listenIPv4 = "192.0.2.11";
     port = 443;
     serverName = "hysteria.example.invalid";
@@ -99,9 +98,9 @@ let
         pkgs = targetPkgs;
       };
       module = definition.config;
-      template = unwrap module.sops.templates."mihomo-hysteria2.json";
+      template = unwrap (module.sops.templates."mihomo-hysteria2.json" or null);
       rendered = if template == null then null else builtins.fromJSON template.content;
-      unit = unwrap module.systemd.services.mihomo-hysteria2;
+      unit = unwrap (module.systemd.services.mihomo-hysteria2 or null);
     in
     {
       inherit
@@ -209,17 +208,27 @@ let
     )).success;
   mergedConsumer = (import ./lib/consumer.nix { inherit inputs root self; }) {
     instanceNames = [ "vpn-mihomo-hysteria2" ];
+    includeNetwork = true;
   };
   mergedMachine = mergedConsumer.machine;
   mergedUnit = mergedMachine.systemd.services.mihomo-hysteria2;
   mergedTemplate = mergedMachine.sops.templates."mihomo-hysteria2.json";
   mergedListener = builtins.head (builtins.fromJSON mergedTemplate.content).listeners;
+  disabledResults = {
+    template = inactiveMissingRoot.template == null;
+    unit = inactiveMissingRoot.unit == null;
+    secrets = builtins.all (value: unwrap value == null) (
+      builtins.attrValues inactiveMissingRoot.module.sops.secrets
+    );
+    exports = inactiveMissingRoot.instance.exports == { };
+    acmeCerts = inactiveMissingRoot.module.security.acme.certs == { };
+  };
+  disabledContract = builtins.all (value: value) (builtins.attrValues disabledResults);
   schemaContract =
     schemaAccepts baseSettings
     && !(masqueradeRootOption ? default)
     && activeMissingRootRejected
-    && inactiveMissingRoot.template == null
-    && inactiveMissingRoot.unit == null
+    && disabledContract
     && builtins.hasContext contextualRoot.template.content
     && !(schemaAccepts (baseSettings // { listenIPv4 = "0.0.0.0"; }))
     && !(schemaAccepts (baseSettings // { listenIPv4 = "0.0.0.0/0"; }))
@@ -367,8 +376,7 @@ let
     &&
       (unwrap enabled.module.security.acme.certs.fixture.reloadServices) == [
         "mihomo-hysteria2.service"
-      ]
-    && mihomoPackage.version == "1.19.30";
+      ];
   firewallContract =
     lib.hasInfix "ip daddr 192.0.2.11 udp dport 443 accept" (
       unwrap enabled.module.networking.firewall.extraInputRules
@@ -408,6 +416,8 @@ if !contract then
     builtins.toJSON {
       inherit
         configContract
+        disabledContract
+        disabledResults
         exportContract
         firewallContract
         mergedUnitContract

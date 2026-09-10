@@ -1,11 +1,9 @@
 {
-  inputs,
-  root,
-  self,
+  combined,
+  fixture,
+  lib,
 }:
 let
-  lib = inputs.nixpkgs.lib;
-  fixture = import ./fixtures/example-clan.nix;
   supportNames = [
     "edge-wildcard-certificate"
     "network-caddy"
@@ -14,10 +12,7 @@ let
   serviceNames = builtins.filter (name: !(builtins.elem name supportNames)) (
     builtins.attrNames fixture.instances
   );
-  consumer = (import ./lib/consumer.nix { inherit inputs root self; }) {
-    instanceNames = serviceNames;
-  };
-  inherit (consumer) config machine;
+  inherit (combined) config machine;
   units = machine.systemd.services;
   adguardTemplateNames = builtins.filter (lib.hasSuffix "-adguardhome.yaml") (
     builtins.attrNames machine.sops.templates
@@ -35,8 +30,8 @@ let
     && !((machine.networkCore.mihomo or { }) ? vlessXhttp)
     && !((machine.networkCore.mihomo or { }) ? hysteria2)
     && !(units ? mihomo-gateway)
-    && machine.sops.templates ? "naiveproxy-fixture.caddy"
-    && machine.sops.templates."naiveproxy-fixture.caddy".reloadUnits == [ "caddy.service" ]
+    && machine.sops.templates ? "naiveproxy-vpn-fixture.caddy"
+    && machine.sops.templates."naiveproxy-vpn-fixture.caddy".reloadUnits == [ "caddy.service" ]
     && !(units ? naiveproxy-caddy-fragment-fixture)
     && !(units ? naiveproxy-caddy-refresh-fixture)
     && machine.services.adguardhome.enable

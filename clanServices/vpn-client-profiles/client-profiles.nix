@@ -4,10 +4,11 @@
   lib,
   pkgs,
   settings,
-  gatewayProfiles,
+  providers,
   mihomoPackage,
 }:
 let
+  profileTypes = import ./types.nix { inherit lib; };
   inherit (settings) localMachineName;
   localPublicNetwork = {
     inherit (settings) publicIPv4;
@@ -20,19 +21,14 @@ let
   inherit (settings) secretPrefix;
   profiles = builtins.filter (
     profile: !(builtins.elem profile.name settings.excludedProfileNames)
-  ) gatewayProfiles;
-  inherit (settings)
-    upstreams
-    amneziawgUpstreams
-    hysteria2Upstreams
-    naiveUpstreams
-    ;
-  profilePolicy =
-    profileName: upstream:
-    let
-      profileNames = upstream.profileNames or [ ];
-    in
-    profileNames == [ ] || builtins.elem profileName profileNames;
+  ) settings.profiles;
+  providersFor = protocol: builtins.filter (provider: provider.protocol == protocol) providers;
+  vlessProviders = providersFor "vless-xhttp";
+  amneziawgProviders = providersFor "amneziawg";
+  hysteria2Providers = providersFor "hysteria2";
+  naiveProviders = providersFor "naiveproxy";
+  providerId = profileTypes.providerNamespace;
+  profilePolicy = profileName: provider: builtins.elem profileName provider.profileNames;
 
   profileRoot = "/run/mihomo-client-config/${localMachineName}";
   secureDnsRuleSetPath = "${profileRoot}/rules/hagezi-doh.srs";
@@ -223,130 +219,110 @@ let
   ]
   ++ lib.optional (personalProxyDomains != [ ]) "RULE-SET,personal_proxy_domains,PROXY";
 
-  findUpstreamProfile =
-    profileName: upstream:
-    let
-      matches = builtins.filter (p: p.name == profileName) upstream.settings.profiles;
-    in
-    if builtins.length matches != 1 then
-      throw "Expected exactly one profile named ${profileName} for upstream ${upstream.machineName}"
-    else
-      builtins.head matches;
-
   findAmneziawgPeer =
-    profileName: upstream:
+    profileName: provider:
     let
-      matches = builtins.filter (peer: peer.name == profileName) upstream.settings.peers;
+      matches = builtins.filter (peer: peer.name == profileName) provider.transportMetadata.peers;
     in
     if builtins.length matches != 1 then
-      throw "Expected exactly one AmneziaWG peer named ${profileName} for upstream ${upstream.machineName}"
-    else
-      builtins.head matches;
-
-  findHysteria2User =
-    profileName: upstream:
-    let
-      matches = builtins.filter (user: user.name == profileName) upstream.users;
-    in
-    if builtins.length matches != 1 then
-      throw "Expected exactly one Hysteria2 user named ${profileName} for upstream ${upstream.machineName}"
+      throw "Expected exactly one AmneziaWG peer named ${profileName} for provider ${providerId provider}"
     else
       builtins.head matches;
 
   firstAddress = cidr: builtins.head (lib.splitString "/" cidr);
 
-  mkUpstreamCredential =
-    profileName: upstream:
+  mkVlessCredential =
+    profileName: provider:
     let
-      profile = findUpstreamProfile profileName upstream;
+      metadata = provider.transportMetadata;
+      machineName = providerId provider;
     in
     {
-      inherit (upstream) machineName;
-      inherit (profile) vlessUuidSecretName;
-      vlessTag = "${upstream.machineName}-${profileName}-vless";
-      inherit (upstream) edgeDomain port;
-      edgeIPv4 = upstream.edgeIPv4 or null;
-      inherit (upstream.settings) reality;
-      vless = upstream.settings.vless or { };
-      xhttp = upstream.settings.xhttp or null;
+      inherit machineName;
+      vlessUuidSecretName =
+        provider.secretNames.vlessUuid.${profileName}
+          or (throw "VLESS UUID secret name is required for ${machineName}/${profileName}");
+      vlessTag = "${machineName}-${profileName}-vless";
+      edgeDomain = provider.endpoint.domain;
+      port = provider.endpoint.port;
+      edgeIPv4 = provider.endpoint.ipv4;
+      inherit (metadata) reality xhttp;
+      dohDomain = metadata.doh.domain;
+      dohIPv4 = metadata.doh.ipv4;
+      clientFingerprint = metadata.fingerprint;
     };
-  enabledUpstreams = builtins.filter (upstream: upstream.settings.enable or true) upstreams;
-  enabledAmneziawgUpstreams = builtins.filter (
-    upstream: upstream.settings.enable or true
-  ) amneziawgUpstreams;
-  enabledHysteria2Upstreams = builtins.filter (upstream: upstream.enable or true) hysteria2Upstreams;
-  enabledNaiveUpstreams = builtins.filter (upstream: upstream.enable or true) naiveUpstreams;
 
   mkAmneziawgCredential =
-    profileName: upstream:
+    profileName: provider:
     let
-      peer = findAmneziawgPeer profileName upstream;
+      peer = findAmneziawgPeer profileName provider;
+      metadata = provider.transportMetadata;
+      machineName = providerId provider;
     in
     {
-      inherit (upstream) machineName serverPublicKey headerProtectionKeySecretName;
+      inherit machineName;
+      inherit (metadata) serverPublicKey;
+      headerProtectionKeySecretName = provider.secretNames.headerProtectionKey;
       clientPublicKey = peer.publicKey;
-      inherit (upstream) endpointDomain;
-      inherit (upstream.settings) listenPort;
-      mtu = upstream.settings.mtu or null;
+      endpointDomain = provider.endpoint.domain;
+      listenPort = provider.endpoint.port;
+      mtu = metadata.mtu or null;
       clientPersistentKeepalive = peer.clientPersistentKeepalive or 25;
-      amneziawgTag = "${upstream.machineName}-${profileName}-amneziawg";
-      endpointIPv4 = upstream.endpointIPv4 or null;
+      amneziawgTag = "${machineName}-${profileName}-amneziawg";
+      endpointIPv4 = provider.endpoint.ipv4;
       clientAddress = firstAddress (builtins.head peer.allowedIPs);
       clientPrivateKeySecretName =
-        upstream.clientPrivateKeySecretNames.${profileName}
-          or (throw "AmneziaWG private-key secret name is required for ${upstream.machineName}/${profileName}");
-      inherit (upstream.settings) generation profile;
+        provider.secretNames.clientPrivateKey.${profileName}
+          or (throw "AmneziaWG private-key secret name is required for ${machineName}/${profileName}");
+      inherit (metadata) generation profile;
     };
 
   mkHysteria2Credential =
-    profileName: upstream:
+    profileName: provider:
     let
-      user = findHysteria2User profileName upstream;
+      metadata = provider.transportMetadata;
+      machineName = providerId provider;
     in
     {
-      inherit (upstream)
-        machineName
-        endpointDomain
-        port
+      inherit machineName;
+      endpointDomain = provider.endpoint.domain;
+      endpointIPv4 = provider.endpoint.ipv4;
+      port = provider.endpoint.port;
+      inherit (metadata)
         sni
         alpn
-        obfsPasswordSecretName
         obfsName
         obfsMinPacketSize
         obfsMaxPacketSize
         tlsVerify
         credentialEncoding
         ;
+      obfsPasswordSecretName = provider.secretNames.obfsPassword;
       inherit profileName;
-      tag = "${upstream.machineName}-${profileName}-hysteria2";
-      endpointIPv4 = upstream.endpointIPv4 or null;
-      inherit (user) passwordSecretName;
+      tag = "${machineName}-${profileName}-hysteria2";
+      passwordSecretName =
+        provider.secretNames.users.${profileName}
+          or (throw "Hysteria2 password secret name is required for ${machineName}/${profileName}");
     };
 
   mkNaiveCredential =
-    profileName: upstream:
+    profileName: provider:
     let
+      machineName = providerId provider;
       passwordSecretName =
-        upstream.passwordSecretNames.${profileName}
-          or (throw "NaiveProxy password secret name is required for ${upstream.machineName}/${profileName}");
+        provider.secretNames.password.${profileName}
+          or (throw "NaiveProxy password secret name is required for ${machineName}/${profileName}");
     in
     {
-      inherit (upstream) machineName domain endpointIPv4;
-      port = upstream.port or 443;
-      username =
-        upstream.usernames.${profileName}
-          or (throw "NaiveProxy username is required for ${upstream.machineName}/${profileName}");
-      tlsServerName = upstream.tlsServerName or upstream.domain;
-      tag = "${upstream.machineName}-${profileName}-edge";
+      inherit machineName;
+      domain = provider.endpoint.domain;
+      endpointIPv4 = provider.endpoint.ipv4 or settings.publicIPv4;
+      port = provider.transportMetadata.port or provider.endpoint.port;
+      username = profileName;
+      tlsServerName = provider.transportMetadata.tlsServerName or provider.endpoint.domain;
+      tag = "${machineName}-${profileName}-edge";
       inherit passwordSecretName;
     };
-
-  naiveUpstreamEnabledForProfile =
-    profileName: upstream:
-    let
-      profileNames = upstream.profileNames or [ ];
-    in
-    profileNames == [ ] || builtins.elem profileName profileNames;
 
   mkProfile =
     profile:
@@ -360,66 +336,45 @@ let
         else
           !isRouterProfile;
       pathTokenSecret = "mihomo-client-${secretPrefix}-${profile.name}-path-token";
-      profileUpstreams = builtins.filter (upstream: profilePolicy profile.name upstream) enabledUpstreams;
+      profileVlessProviders = builtins.filter (profilePolicy profile.name) vlessProviders;
       # Mihomo cannot encode the strict transport-error-only reserve cascade.
       # Keep its resolver on the primary AdGuardHome endpoint until the owner
       # chooses an explicit compatibility tradeoff.
       dohNameservers = [ "https://${localPublicNetwork.domains.edge}/dns-query" ];
-      profileAmneziawgUpstreams = builtins.filter (
-        upstream: profilePolicy profile.name upstream
-      ) enabledAmneziawgUpstreams;
-      profileHysteria2Upstreams = builtins.filter (
-        upstream: profilePolicy profile.name upstream
-      ) enabledHysteria2Upstreams;
-      profileNaiveUpstreams = builtins.filter (
-        upstream:
-        profilePolicy profile.name upstream && naiveUpstreamEnabledForProfile profile.name upstream
-      ) enabledNaiveUpstreams;
-      upstreamCredentials = map (upstream: mkUpstreamCredential profile.name upstream) profileUpstreams;
-      amneziawgCredentials = map (
-        upstream: mkAmneziawgCredential profile.name upstream
-      ) profileAmneziawgUpstreams;
-      hysteria2Credentials = map (
-        upstream: mkHysteria2Credential profile.name upstream
-      ) profileHysteria2Upstreams;
-      naiveCredentials = map (upstream: mkNaiveCredential profile.name upstream) profileNaiveUpstreams;
+      profileAmneziawgProviders = builtins.filter (profilePolicy profile.name) amneziawgProviders;
+      profileHysteria2Providers = builtins.filter (profilePolicy profile.name) hysteria2Providers;
+      profileNaiveProviders = builtins.filter (profilePolicy profile.name) naiveProviders;
+      upstreamCredentials = map (mkVlessCredential profile.name) profileVlessProviders;
+      amneziawgCredentials = map (mkAmneziawgCredential profile.name) profileAmneziawgProviders;
+      hysteria2Credentials = map (mkHysteria2Credential profile.name) profileHysteria2Providers;
+      naiveCredentials = map (mkNaiveCredential profile.name) profileNaiveProviders;
       publishProfileJson = profileJsonRequested && naiveCredentials != [ ];
 
-      mkVlessProxy =
-        cred:
-        let
-          xhttpEnabled = cred.xhttp != null;
-        in
-        {
-          name = cred.vlessTag;
-          type = "vless";
-          server = cred.edgeDomain;
-          inherit (cred) port;
-          uuid = "__MIHOMO_VLESS_UUID_${cred.machineName}__";
-          network = if xhttpEnabled then "xhttp" else "tcp";
-          udp = true;
-          tls = true;
-          servername = cred.reality.serverName;
-          "client-fingerprint" = cred.vless.clientFingerprint or "edge";
-          "reality-opts" = {
-            "public-key" = cred.reality.publicKey;
-            "short-id" = cred.reality.shortIdsByProfile.${profile.name};
-          };
-        }
-        // lib.optionalAttrs (!xhttpEnabled) {
-          flow = cred.vless.flow or "xtls-rprx-vision";
-        }
-        // lib.optionalAttrs xhttpEnabled {
-          alpn = [ "h2" ];
-          "xhttp-opts" = {
-            inherit (cred.xhttp) path;
-            mode = "auto";
-          }
-          // lib.optionalAttrs (!isRouterProfile) {
-            host = cred.edgeDomain;
-            "reuse-settings"."max-connections" = "2";
-          };
+      mkVlessProxy = cred: {
+        name = cred.vlessTag;
+        type = "vless";
+        server = cred.edgeDomain;
+        inherit (cred) port;
+        uuid = "__MIHOMO_VLESS_UUID_${cred.machineName}__";
+        network = "xhttp";
+        udp = true;
+        tls = true;
+        servername = cred.reality.serverName;
+        "client-fingerprint" = cred.clientFingerprint;
+        "reality-opts" = {
+          "public-key" = cred.reality.publicKey;
+          "short-id" = cred.reality.shortIdsByProfile.${profile.name};
         };
+        alpn = [ "h2" ];
+        "xhttp-opts" = {
+          inherit (cred.xhttp) path;
+          mode = "auto";
+        }
+        // lib.optionalAttrs (!isRouterProfile) {
+          host = cred.edgeDomain;
+          "reuse-settings"."max-connections" = "2";
+        };
+      };
 
       mkAmneziawgProxy =
         cred:
@@ -522,12 +477,12 @@ let
           }
         ) upstreamCredentials
         ++ lib.concatMap (
-          u:
-          lib.optional (u.dohIPv4 != null) {
-            name = u.dohDomain;
-            value = u.dohIPv4;
+          cred:
+          lib.optional (cred.dohIPv4 != null) {
+            name = cred.dohDomain;
+            value = cred.dohIPv4;
           }
-        ) profileUpstreams
+        ) upstreamCredentials
         ++ lib.concatMap (
           cred:
           lib.optional (cred.endpointIPv4 != null) {

@@ -18,10 +18,10 @@ listener; wildcard и смешанный public/tailnet bind отклоняют�
 ## Settings
 
 Точная схема и defaults определены в [`default.nix`](default.nix).
-Параметры: `enable`, `machineName`, `selectedPublicSiteClaim`,
+Параметры: `enable`, `selectedPublicSiteClaim`,
 `selectedPublicSiteEndpoint` с полями `domain`, `publicIPv4`,
 `caddyBindIPv4`, карта `passwordSecretNames` вида `identity = secret-name`,
-`probeUserName` и `additionalDeny`. Identity и machine name — ограниченные токены;
+`probeUserName` и `additionalDeny`. Identity — ограниченный токен;
 secret names допускают namespace через `/`, но не traversal или управляющие
 символы. Endpoint должен совпадать с выбранным claim.
 

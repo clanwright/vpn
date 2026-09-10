@@ -12,7 +12,7 @@ protocols. Stable module ID — `@clanwright/vpn-mihomo-hysteria2`, systemd unit
 ## Settings
 
 Точная схема и defaults определены в [`default.nix`](default.nix).
-Параметры: `lifecycle`, `enable`, обязательные `listenIPv4`, `serverName`,
+Параметры: `enable`, обязательные `listenIPv4`, `serverName`,
 `acmeCertName`, список per-device `users` с `name` и
 `passwordSecretName`, а также `port` и `obfsPasswordSecretName`.
 `listenIPv4` должен быть конкретным адресом; wildcard `0.0.0.0` запрещен.

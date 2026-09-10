@@ -38,9 +38,10 @@ snapshot on exit.
 The evaluation suite covers the seven stable module IDs, closed schemas,
 negative security overrides, generated server and client configuration
 structures, service isolation, package authority, secret/template wiring and
-combined Clan composition. Each named test returns JSON-safe booleans; the
-top-level `all` value is asserted only after `builtins.deepSeq` forces every
-result.
+combined Clan composition. Each named test forces all its nested results and
+rejects false booleans or non-boolean leaves before returning JSON. Focused and
+full evaluation use that same success condition; the top-level `all` value
+forces every named result.
 
 Each run creates a unique ignored `.work/verification/<UTC-run-id>.<suffix>/`
 directory. `scope.txt` records `full` or `test:<name>` so a focused

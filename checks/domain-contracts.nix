@@ -8,7 +8,6 @@
 let
   lib = inputs.nixpkgs.lib;
   fixture = import ./fixtures/example-clan.nix;
-  appsPkgs = import inputs.apps-nixpkgs { inherit system; };
   consume = import ./lib/consumer.nix { inherit inputs root self; };
   serviceSpecs = {
     vpn-mihomo-vless-xhttp.role = "gateway";
@@ -20,43 +19,20 @@ let
     dns-unbound.role = "recursive-backend";
   };
   serviceNames = builtins.attrNames serviceSpecs;
-  appsPkgsFor =
-    targetSystem:
-    import inputs.apps-nixpkgs { system = targetSystem; }
-    // {
-      inherit (self.packages.${targetSystem})
-        amneziawg-go
-        amneziawg-tools
-        sing-box
-        ;
-    };
-  services = {
-    vpn-mihomo-vless-xhttp = import ../clanServices/mihomo-vless-xhttp/default.nix {
-      inherit lib;
-      mihomoPackageFor = targetSystem: self.packages.${targetSystem}.mihomo;
-      xrayPackageFor = targetSystem: self.packages.${targetSystem}.xray;
-    };
-    vpn-mihomo-hysteria2 = import ../clanServices/mihomo-hysteria2/default.nix {
-      inherit lib;
-      mihomoPackageFor = targetSystem: self.packages.${targetSystem}.mihomo;
-    };
-    vpn-amneziawg = import ../clanServices/amneziawg/default.nix {
-      inherit lib appsPkgsFor;
-    };
-    vpn-naiveproxy = import ../clanServices/naiveproxy/default.nix { inherit lib; };
-    vpn-client-profiles = import ../clanServices/vpn-client-profiles/default.nix {
-      inherit lib appsPkgsFor;
-      clanLib = inputs.clan-core.lib;
-      mihomoPackageFor = targetSystem: self.packages.${targetSystem}.mihomo;
-    };
-    dns-adguardhome = import ../clanServices/adguardhome/default.nix {
-      adguardPackageFor = targetSystem: self.packages.${targetSystem}.adguardhome;
-      dnsproxyPackageFor = targetSystem: self.packages.${targetSystem}.dnsproxy;
-    };
-    dns-unbound = import ../clanServices/unbound/default.nix {
-      unboundPackageFor = targetSystem: self.packages.${targetSystem}.unbound;
-    };
-  };
+  evaluatedServices = lib.mapAttrs' (
+    publicName: module:
+    let
+      evaluated = inputs.clan-core.lib.evalService {
+        modules = [ module ];
+        prefix = [ ];
+      };
+    in
+    lib.nameValuePair (lib.removePrefix "@clanwright/" publicName) evaluated.config
+  ) self.clan.modules;
+  services = lib.mapAttrs' (
+    publicName: module:
+    lib.nameValuePair (lib.removePrefix "@clanwright/" publicName) (builtins.head module.imports)
+  ) self.clan.modules;
   settingsFor = name: role: fixture.instances.${name}.roles.${role}.machines.vpn-fixture.settings;
   awgInstance = services.vpn-amneziawg.roles.gateway.perInstance {
     settings = settingsFor "vpn-amneziawg" "gateway";
@@ -70,7 +46,6 @@ let
     (self.lib.vpnExports { inherit lib; }).selectVpnProvider {
       providerInstanceId = "vpn-amneziawg";
       providerMachine = "vpn-fixture";
-      providerRole = "gateway";
       protocol = "amneziawg";
       consumerInstanceId = "contract-check";
       selectExports = _predicate: exports: exports;
@@ -102,7 +77,6 @@ let
     (self.lib.vpnExports { inherit lib; }).selectVpnProvider {
       providerInstanceId = "vpn-naiveproxy";
       providerMachine = "vpn-fixture";
-      providerRole = "addon";
       protocol = "naiveproxy";
       consumerInstanceId = "contract-check";
       selectExports = _predicate: exports: exports;
@@ -165,15 +139,7 @@ let
   );
   validSchemas = builtins.all (value: value) (builtins.attrValues validSchemaResults);
   registeredSchemas = builtins.all (
-    name:
-    let
-      evaluated =
-        (inputs.clan-core.lib.evalService {
-          modules = [ self.clan.modules."@clanwright/${name}" ];
-          prefix = [ ];
-        }).config;
-    in
-    builtins.deepSeq evaluated.result.api.schema true
+    name: builtins.deepSeq evaluatedServices.${name}.result.api.schema true
   ) serviceNames;
   closedSchemas = builtins.all (
     name:
@@ -227,7 +193,7 @@ let
       vpn-amneziawg =
         machine.systemd.services ? wireguard-awg-fixture
         && !(machine.networking.wireguard.interfaces ? awg-fixture);
-      vpn-naiveproxy = machine.sops.templates ? "naiveproxy-fixture.caddy";
+      vpn-naiveproxy = machine.sops.templates ? "naiveproxy-vpn-fixture.caddy";
       vpn-client-profiles = !(machine.systemd.services ? mihomo-client-caddy-fixture);
       dns-adguardhome = machine.services.adguardhome.enable;
       dns-unbound = machine.services.unbound.enable;
@@ -236,24 +202,53 @@ let
   independentPlacementResults = lib.genAttrs serviceNames (
     name:
     let
-      consumer = consume { instanceNames = [ name ]; };
+      includeNetwork = builtins.elem name [
+        "dns-adguardhome"
+        "vpn-client-profiles"
+        "vpn-naiveproxy"
+      ];
+      extraModule = lib.optionalAttrs (name == "vpn-mihomo-hysteria2") {
+        security.acme = {
+          acceptTerms = true;
+          defaults.email = "operator@example.invalid";
+          certs.fixture.webroot = "/var/lib/acme/acme-challenge";
+        };
+      };
+      supportNames = lib.optionals includeNetwork [
+        "edge-wildcard-certificate"
+        "network-caddy"
+        "network-certificates"
+      ];
+      consumer = consume {
+        instanceNames = [ name ];
+        inherit extraModule includeNetwork;
+      };
     in
-    builtins.attrNames consumer.config.inventory.instances == lib.sort builtins.lessThan [
-      "edge-wildcard-certificate"
-      "network-caddy"
-      "network-certificates"
-      name
-    ]
-    && builtins.length (builtins.attrNames consumer.config._services.allServices) == 4
+    builtins.attrNames consumer.config.inventory.instances
+    == lib.sort builtins.lessThan (supportNames ++ [ name ])
+    &&
+      builtins.length (builtins.attrNames consumer.config._services.allServices)
+      == builtins.length supportNames + 1
     && placementBehavior name consumer.machine
   );
   independentPlacements = builtins.all (value: value) (
     builtins.attrValues independentPlacementResults
   );
-  combined = consume { instanceNames = serviceNames; };
-  inherit (combined) machine;
-  overrideAttempt = consume {
+  combined = consume {
     instanceNames = serviceNames;
+    includeNetwork = true;
+    extraModule.systemd.services.adguardhome.wants = [ "unbound.service" ];
+  };
+  inherit (combined) machine;
+  combinedClanFixture = import ./combined-clan-fixture.nix {
+    inherit combined fixture lib;
+  };
+  overrideAttempt = consume {
+    instanceNames = [
+      "dns-adguardhome"
+      "dns-unbound"
+    ];
+    includeNetwork = true;
     extraModule = {
       services = {
         adguardhome.package = pkgs.hello;
@@ -284,17 +279,10 @@ let
     result ? amneziawg-go && result ? amneziawg-tools
   ) machine.nixpkgs.overlays;
   awgOverlay = builtins.head awgOverlays;
-  packageAuthorityResults = {
+  servicePackageAuthorityResults = {
     adguard = machine.services.adguardhome.package == self.packages.${system}.adguardhome;
-    adguardPinned =
-      self.packages.${system}.adguardhome == appsPkgs.adguardhome
-      && self.packages.${system}.adguardhome.version == "0.107.78";
     dnsproxy = machine.services.dnsproxy.package == self.packages.${system}.dnsproxy;
-    dnsproxyUpstream = self.packages.${system}.dnsproxy == appsPkgs.dnsproxy;
     unbound = machine.services.unbound.package == self.packages.${system}.unbound;
-    unboundUpstream =
-      self.packages.${system}.unbound == appsPkgs.unbound-with-systemd
-      && self.packages.${system}.unbound.version == "1.26.0";
     awgOverlayPresent = awgOverlays != [ ];
     awgGo = (awgOverlay pkgs pkgs).amneziawg-go == self.packages.${system}.amneziawg-go;
     awgTools = (awgOverlay pkgs pkgs).amneziawg-tools == self.packages.${system}.amneziawg-tools;
@@ -309,6 +297,7 @@ let
       overrideAttempt.machine.services.unbound.package == self.packages.${system}.unbound;
     inherit awgOverrideRejected;
   };
+  packageAuthorityResults = servicePackageAuthorityResults;
   packageAuthority = builtins.all (value: value) (builtins.attrValues packageAuthorityResults);
   dnsStateResults = {
     immutable = !machine.services.adguardhome.mutableSettings;
@@ -328,6 +317,7 @@ let
     && invalidNestedFields
     && invalidFieldTypes
     && independentPlacements
+    && combinedClanFixture.contract
     && awgTransportContract
     && naiveProviderContract
     && packageAuthority
@@ -346,6 +336,7 @@ if !contract then
         dnsStateResults
         independentPlacementResults
         independentPlacements
+        combinedClanFixture
         invalidFieldTypes
         invalidNestedFields
         packageAuthority
@@ -365,6 +356,7 @@ else
       naiveProviderContract
       naiveProviderResults
       dnsStatePreserved
+      combinedClanFixture
       independentPlacements
       invalidFieldTypes
       invalidNestedFields

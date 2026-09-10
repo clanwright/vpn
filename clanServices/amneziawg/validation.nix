@@ -240,9 +240,5 @@ in
         assertion = !settings.enableNat || cidrNetworkEqual settings.address settings.clientSubnetIPv4;
         message = "${serviceName}: clientSubnetIPv4 must describe the interface IPv4 subnet when NAT is enabled.";
       }
-      {
-        assertion = settings.mtu == 1280;
-        message = "${serviceName}: the selected AWG3 profile requires MTU 1280.";
-      }
     ];
 }

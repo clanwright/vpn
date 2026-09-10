@@ -28,8 +28,7 @@ The result must contain true values for:
   parallel, then the three plaintext addresses, with no bootstrap or cache;
 - `credentialContract`: the bcrypt placeholder stays in the root-only SOPS
   template and systemd credential wiring preserves the native unit;
-- `lifecycleContract`: disabled-retained keeps state and secret metadata
-  without runtime or exposure contributions;
+- the disabled-role contract: no service, secret or exposure declarations;
 - `negativeContract`: package substitution and unsafe overrides fail.
 
 Evaluation must also force invalid upstream strings such as missing,
@@ -63,7 +62,7 @@ The evaluated configuration must show these source properties:
 4. AdGuard's 10-second outer timeout exceeds both 3-second dnsproxy stages plus
    the asserted margin. AdGuard and Unbound are the only cache layers; only
    Unbound may serve stale data.
-5. Active lifecycle forces auth, root-only secret/template metadata,
+5. An enabled role forces auth, root-only secret/template metadata,
    `settings=null`, `LoadCredential`, direct `install -m 600` and the exact
    package's `--check-config` command. The native ExecStart, DynamicUser,
    StateDirectory and sandbox remain owned by the NixOS module.

@@ -49,16 +49,17 @@ rec {
     sops.defaultSopsFile = ./empty-sops.yaml;
     sops.age.keyFile = "/run/vpn-fixture/age-key";
     system.stateVersion = "26.11";
-    networkCore.caddy.fragments.fixture-site = {
-      hostName = "site.example.invalid";
-      listenAddresses = [ "192.0.2.10" ];
-      useACMEHost = "fixture";
-      logFile = "/var/log/caddy/fixture-access.log";
-      publicSite = true;
-      siteOwners = [ "fixture" ];
-      capabilities = [ ];
-      extraConfig = ''respond "fixture"'';
-    };
+  };
+
+  networkIntegrationModule.networkCore.caddy.fragments.fixture-site = {
+    hostName = "site.example.invalid";
+    listenAddresses = [ "192.0.2.10" ];
+    useACMEHost = "fixture";
+    logFile = "/var/log/caddy/fixture-access.log";
+    publicSite = true;
+    siteOwners = [ "fixture" ];
+    capabilities = [ ];
+    extraConfig = ''respond "fixture"'';
   };
 
   instances = {
@@ -84,19 +85,13 @@ rec {
         ipv4 = "192.0.2.53";
       };
       reality = {
-        target = {
-          host = "donor.example.invalid";
-          port = 443;
-          tlsVersion = "1.3";
-          alpn = [ "h2" ];
-        };
+        targetHost = "donor.example.invalid";
         serverNames = [ "donor.example.invalid" ];
         publicKey = "BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB";
         privateKeySecretName = "fixture-reality-private-key";
       };
       xhttp = {
         path = "/fixture";
-        mode = "auto";
       };
       profiles = map (profile: profile // { realityShortId = "0123456789abcdef"; }) profiles;
     };
@@ -118,12 +113,10 @@ rec {
 
     vpn-amneziawg = vpnInstance "vpn-amneziawg" "gateway" {
       enable = true;
-      lifecycle = "enabled";
       interfaceName = "awg-fixture";
       listenIPv4 = "192.0.2.12";
       endpointDomain = "awg.example.invalid";
       listenPort = 443;
-      mtu = 1280;
       address = "10.77.0.1/24";
       privateKeySecretName = "fixture-awg-server-private-key";
       headerProtectionKeySecretName = "fixture-awg-header-protection-key";
@@ -143,7 +136,6 @@ rec {
 
     vpn-naiveproxy = vpnInstance "vpn-naiveproxy" "addon" {
       enable = true;
-      machineName = "fixture";
       selectedPublicSiteClaim = "fixture-site";
       selectedPublicSiteEndpoint = {
         domain = "site.example.invalid";
@@ -174,7 +166,6 @@ rec {
           name = "cHJvYmU";
           kind = "probe";
           publishProfileJson = true;
-          vlessUuidSecretName = "fixture-vless-uuid";
         }
       ];
       profileLinks = [
@@ -216,11 +207,9 @@ rec {
     dns-unbound = vpnInstance "dns-unbound" "recursive-backend" {
       listen.hosts = [ "127.0.0.1" ];
       listen.port = 5335;
-      adguardIntegrationProvider = "dns-adguardhome";
     };
 
     dns-adguardhome = vpnInstance "dns-adguardhome" "resolver" {
-      lifecycle = "enabled";
       ui = {
         host = "127.0.0.1";
         port = 3000;
@@ -241,11 +230,9 @@ rec {
       tls = {
         serverName = "dns.example.invalid";
         httpsPort = 8444;
-        dotPort = 0;
       };
       acme.certName = "fixture";
       auth = {
-        enable = true;
         passwordSecretName = "fixture-adguard-admin-bcrypt-hash";
       };
       filtering.userRules = [

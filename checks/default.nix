@@ -6,7 +6,7 @@
   system ? pkgs.system,
 }:
 let
-  results = {
+  rawResults = {
     domain-contracts = import ./domain-contracts.nix {
       inherit
         inputs
@@ -16,9 +16,6 @@ let
         system
         ;
     };
-    combined-clan-fixture = import ./combined-clan-fixture.nix {
-      inherit inputs root self;
-    };
     client-render-contracts = import ./client-render-smoke.nix {
       inherit
         inputs
@@ -26,6 +23,9 @@ let
         root
         self
         ;
+    };
+    package-authority-contracts = import ./package-authority-contracts.nix {
+      inherit inputs self system;
     };
     unbound-contracts = import ./unbound-contracts.nix {
       inherit
@@ -84,9 +84,33 @@ let
       builtins.all allBooleansTrue value
     else
       throw "evaluationTests results must contain only booleans, attribute sets and lists";
-  allPassed = builtins.deepSeq results (allBooleansTrue results);
+  checkResult =
+    name: value:
+    if builtins.deepSeq value (allBooleansTrue value) then
+      value
+    else
+      throw "Pure Nix evaluation contract '${name}' returned a false diagnostic";
+  resultCheckerContracts = {
+    falseDiagnosticRejected =
+      !(builtins.tryEval (
+        builtins.deepSeq (checkResult "false-diagnostic" {
+          contract = true;
+          diagnostic = false;
+        }) true
+      )).success;
+    nonBooleanDiagnosticRejected =
+      !(builtins.tryEval (
+        builtins.deepSeq (checkResult "non-boolean-diagnostic" { diagnostic = "pass"; }) true
+      )).success;
+  };
+  results = builtins.mapAttrs checkResult (
+    rawResults
+    // {
+      result-checker-contracts = resultCheckerContracts;
+    }
+  );
 in
 {
   inherit results;
-  all = if allPassed then true else throw "One or more pure Nix evaluation contracts failed";
+  all = builtins.deepSeq results true;
 }

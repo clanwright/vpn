@@ -52,7 +52,6 @@ let
   explicitIpv4 = evaluate { listen.hosts = [ "127.9.8.7" ]; } true { };
   explicitIpv6 = evaluate { listen.hosts = [ "::1" ]; } true { };
   explicitIpv6Conflict = evaluate { listen.hosts = [ "::1" ]; } false { };
-  noAdguardEdge = evaluate { adguardIntegrationProvider = null; } true { };
   rejectsOverride = extraModule: !(evaluate { } true extraModule).assertionsPass;
   effectiveOverrideResults = map rejectsOverride [
     { services.unbound.package = lib.mkOverride 0 pkgs.hello; }
@@ -122,7 +121,6 @@ let
   ipv4Server = ipv4Only.config.services.unbound.settings.server;
   explicitServer = explicitIpv4.config.services.unbound.settings.server;
   explicitIpv6Server = explicitIpv6.config.services.unbound.settings.server;
-  adguardUnit = defaults.config.systemd.services.adguardhome;
   schemaContract =
     defaults.settings.listen.hosts == null
     && defaults.settings.listen.port == 5335
@@ -142,7 +140,8 @@ let
     && !(schemaAccepts { listen.hosts = [ "127.00.0.1" ]; })
     && !(schemaAccepts { listen.hosts = [ "2001:db8::1" ]; })
     && !(schemaAccepts { listen.port = 0; })
-    && !(schemaAccepts { listen.port = 65536; });
+    && !(schemaAccepts { listen.port = 65536; })
+    && !(schemaAccepts { adguardIntegrationProvider = "dns-adguardhome"; });
   defaultContract =
     defaults.assertionsPass
     &&
@@ -197,11 +196,7 @@ let
     && explicitIpv6Server.do-ip4
     && explicitIpv6Server.do-ip6
     && !explicitIpv6Conflict.assertionsPass;
-  integrationContract =
-    adguardUnit.wants == [ "unbound.service" ]
-    && !(builtins.elem "unbound.service" adguardUnit.after)
-    && !(builtins.elem "unbound.service" adguardUnit.requires)
-    && !(noAdguardEdge.config.systemd.services ? adguardhome);
+  integrationContract = !(defaults.config.systemd.services ? adguardhome);
   effectiveOverrideRejected = builtins.all (value: value) effectiveOverrideResults;
   dnssecOverrideRejected = builtins.all (value: value) dnssecOverrideResults;
   includeOverrideRejected = builtins.all (value: value) includeOverrideResults;

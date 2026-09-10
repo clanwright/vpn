@@ -21,14 +21,6 @@ in
       { lib, ... }:
       {
         options = {
-          lifecycle = lib.mkOption {
-            type = lib.types.enum [
-              "enabled"
-              "disabled-retained"
-            ];
-            default = "enabled";
-          };
-
           enable = lib.mkOption {
             type = lib.types.bool;
             default = true;
@@ -53,12 +45,6 @@ in
           listenPort = lib.mkOption {
             type = lib.types.port;
             default = 443;
-          };
-
-          mtu = lib.mkOption {
-            type = lib.types.enum [ 1280 ];
-            default = 1280;
-            description = "Fixed MTU for the selected AWG3 profile.";
           };
 
           address = lib.mkOption {
@@ -132,20 +118,19 @@ in
         ...
       }:
       let
-        active = settings.enable && (settings.lifecycle or "enabled") == "enabled";
+        active = settings.enable;
         providerMachine =
           if machine ? name && machine.name != null && machine.name != "" then
             machine.name
           else
             builtins.head (lib.splitString "--" instanceName);
-        rendererMachineName = lib.removeSuffix "-grosbeak" providerMachine;
         profileNames = map (peer: peer.name) settings.peers;
         secretNames = {
           headerProtectionKey = settings.headerProtectionKeySecretName;
           clientPrivateKey = lib.listToAttrs (
             map (peer: {
               inherit (peer) name;
-              value = "amneziawg-${rendererMachineName}-client-${peer.name}-private-key";
+              value = "amneziawg-${providerMachine}-client-${peer.name}-private-key";
             }) settings.peers
           );
         };
@@ -172,7 +157,7 @@ in
               inherit (settings) serverPublicKey;
               inherit (settings) interfaceName;
               inherit (settings) address;
-              inherit (settings) mtu;
+              mtu = 1280;
               inherit (settings) peers;
               peerPublicKeys = lib.listToAttrs (
                 map (peer: {
@@ -217,7 +202,7 @@ in
                 serviceName = "amneziawg";
               }
             );
-            active = settings.enable && (settings.lifecycle or "enabled") == "enabled";
+            active = settings.enable;
             interfaceClaims = config.clanwright.vpn.amneziawg.interfaceClaims;
             listenPortClaims = config.clanwright.vpn.amneziawg.listenPortClaims;
             requiredCapabilities = [
@@ -382,7 +367,7 @@ in
                 fi
 
                 ${pkgs.iproute2}/bin/ip address add ${lib.escapeShellArg settings.address} dev ${interfaceNameArgument}
-                ${pkgs.iproute2}/bin/ip link set dev ${interfaceNameArgument} mtu ${toString settings.mtu}
+                ${pkgs.iproute2}/bin/ip link set dev ${interfaceNameArgument} mtu 1280
                 ${pkgs.iproute2}/bin/ip link set up dev ${interfaceNameArgument}
                 ${peerRouteCommands}
               '';
@@ -393,9 +378,7 @@ in
             };
 
           }
-          // lib.optionalAttrs settings.enable {
-            # Retain the declaration and restart metadata while a brick is
-            # disabled-retained; the active block above owns runtime effects.
+          // lib.optionalAttrs active {
             sops.secrets =
               lib.genAttrs
                 (lib.unique [

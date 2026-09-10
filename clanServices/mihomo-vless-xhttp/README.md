@@ -11,9 +11,9 @@ or restart state with Hysteria2.
 The exact schema and defaults are defined in [`default.nix`](default.nix).
 The consumer supplies an exact `bindIPv4`, endpoint `domain`, per-device
 `profiles`, and client publication metadata. Each profile has its own SOPS UUID
-secret name and REALITY short ID. The REALITY target is explicit: a hostname on
-port 443, declared TLS 1.3 and HTTP/2 support, and a matching `serverNames`
-entry. The XHTTP path must start with `/`; server mode is fixed to `auto`.
+secret name and REALITY short ID. `reality.targetHost` names the REALITY target;
+port 443, TLS 1.3, and HTTP/2 are fixed policy, and `serverNames` must contain the
+target. The XHTTP path must start with `/`; server mode is fixed to `auto`.
 
 The target declarations are configuration preconditions. Pure evaluation cannot
 prove the target's live protocol negotiation or certificate SANs; verify those

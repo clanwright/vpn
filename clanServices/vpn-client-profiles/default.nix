@@ -9,18 +9,26 @@
 }:
 let
   types = import ./types.nix { inherit lib; };
-  adapter = import ../../modules/contracts/vpn-exports.nix { inherit lib; };
-  protocolRole = {
-    naiveproxy = "addon";
-    vless-xhttp = "gateway";
-    hysteria2 = "gateway";
-    amneziawg = "gateway";
+  vpnExports = import ../../modules/contracts/vpn-exports.nix { inherit lib; };
+  inherit (types) linksPageDefaults;
+  publisherDefaults = {
+    enable = false;
+    localMachineName = "";
+    configGatewayDomain = null;
+    publicIPv4 = null;
+    caddyBindIPv4 = null;
+    tailnetIPv4 = null;
+    edgeDomain = null;
+    acmeCertName = null;
+    secretPrefix = "";
+    excludedProfileNames = [ "probe" ];
+    tailnetAdminDomains = [ ];
+    personalProxyDomains = [ ];
+    profiles = [ ];
+    providerRefs = [ ];
+    profileLinks = [ ];
+    linksPage = linksPageDefaults;
   };
-
-  lifecycleType = lib.types.enum [
-    "enabled"
-    "disabled-retained"
-  ];
 
   profileNamesFor =
     ref: provider:
@@ -35,89 +43,72 @@ let
     else
       selected;
 
-  rendererMachineName =
-    machine:
-    # debt: Renderer tags retain the pre-migration short edge identity; remove this projection when
-    # vpnProvider schema v2 carries an explicit renderer namespace.
-    lib.removeSuffix "-grosbeak" machine;
-
-  requireMapValue =
-    context: map: name:
-    if builtins.isAttrs map && builtins.hasAttr name map then
-      builtins.getAttr name map
-    else
-      throw "vpn-client-profiles: ${context} is missing profile ${name}";
-
   publisherProfileOptions = {
-    lifecycle = lib.mkOption {
-      type = lifecycleType;
-      default = "enabled";
-    };
     enable = lib.mkOption {
       type = lib.types.bool;
-      default = false;
+      default = publisherDefaults.enable;
     };
     localMachineName = lib.mkOption {
       type = types.optionalSafeIdentityType;
-      default = "";
+      default = publisherDefaults.localMachineName;
     };
     configGatewayDomain = lib.mkOption {
       type = lib.types.nullOr lib.types.str;
-      default = null;
+      default = publisherDefaults.configGatewayDomain;
     };
     publicIPv4 = lib.mkOption {
       type = lib.types.nullOr lib.types.str;
-      default = null;
+      default = publisherDefaults.publicIPv4;
     };
     caddyBindIPv4 = lib.mkOption {
       type = lib.types.nullOr lib.types.str;
-      default = null;
+      default = publisherDefaults.caddyBindIPv4;
     };
     tailnetIPv4 = lib.mkOption {
       type = lib.types.nullOr lib.types.str;
-      default = null;
+      default = publisherDefaults.tailnetIPv4;
       description = "Tailnet IPv4 address for the dedicated profile listener.";
     };
     edgeDomain = lib.mkOption {
       type = lib.types.nullOr lib.types.str;
-      default = null;
+      default = publisherDefaults.edgeDomain;
     };
     acmeCertName = lib.mkOption {
       type = lib.types.nullOr lib.types.str;
-      default = null;
+      default = publisherDefaults.acmeCertName;
     };
     secretPrefix = lib.mkOption {
       type = types.optionalSafeIdentityType;
-      default = "";
+      default = publisherDefaults.secretPrefix;
     };
     excludedProfileNames = lib.mkOption {
       type = lib.types.listOf types.safeIdentityType;
-      default = [ "probe" ];
+      default = publisherDefaults.excludedProfileNames;
     };
     tailnetAdminDomains = lib.mkOption {
       type = lib.types.listOf lib.types.str;
-      default = [ ];
+      default = publisherDefaults.tailnetAdminDomains;
     };
     personalProxyDomains = lib.mkOption {
       type = lib.types.listOf lib.types.str;
-      default = [ ];
+      default = publisherDefaults.personalProxyDomains;
       description = "Consumer-owned domain suffixes routed by the selective profile.";
     };
     profiles = lib.mkOption {
       type = lib.types.listOf types.profileType;
-      default = [ ];
+      default = publisherDefaults.profiles;
     };
     providerRefs = lib.mkOption {
       type = lib.types.listOf types.providerRefType;
-      default = [ ];
+      default = publisherDefaults.providerRefs;
     };
     profileLinks = lib.mkOption {
       type = lib.types.listOf types.profileLinkType;
-      default = [ ];
+      default = publisherDefaults.profileLinks;
     };
     linksPage = lib.mkOption {
       type = types.linksPageType;
-      default = { };
+      default = publisherDefaults.linksPage;
     };
   };
 in
@@ -145,196 +136,37 @@ in
         ...
       }:
       let
-        defaults = {
-          lifecycle = "enabled";
-          enable = false;
-          localMachineName = "";
-          configGatewayDomain = null;
-          publicIPv4 = null;
-          caddyBindIPv4 = null;
-          tailnetIPv4 = null;
-          edgeDomain = null;
-          acmeCertName = null;
-          secretPrefix = "";
-          excludedProfileNames = [ "probe" ];
-          tailnetAdminDomains = [ ];
-          personalProxyDomains = [ ];
-          profiles = [ ];
-          providerRefs = [ ];
-          profileLinks = [ ];
-          linksPage = { };
-        };
         publisher =
-          defaults
+          publisherDefaults
           // settings
           // {
-            linksPage = {
-              enable = true;
-              path = "/config-links/";
-              title = "VPN client profiles";
-              tailnetOnly = true;
-            }
-            // (settings.linksPage or { });
+            linksPage = linksPageDefaults // (settings.linksPage or { });
           };
         providerRefs = publisher.providerRefs or [ ];
-        active = publisher.enable && publisher.lifecycle == "enabled";
+        active = publisher.enable;
         providerFor =
           ref:
-          adapter.selectVpnProvider {
+          vpnExports.selectVpnProvider {
             providerInstanceId = ref.instanceId;
             providerMachine = ref.machine;
-            providerRole = protocolRole.${ref.protocol};
             inherit (ref) protocol;
             consumerInstanceId = instanceName;
             selectExports = if clanLib == null then null else clanLib.selectExports;
             inherit exports;
           };
-        providerEntries =
+        providers =
           if !active then
             [ ]
           else
-            map (ref: {
-              inherit ref;
-              provider = providerFor ref;
-            }) providerRefs;
-        mkProfile = provider: profileName: {
-          name = profileName;
-          vlessUuidSecretName = requireMapValue "VLESS UUID secret map" ((provider.secretNames or { })
-            .vlessUuid or { }
-          ) profileName;
-        };
-        mkVlessUpstream =
-          provider: ref:
-          let
-            metadata = provider.transportMetadata;
-            profileNames = profileNamesFor ref provider;
-          in
-          {
-            machineName = rendererMachineName provider.machine;
-            edgeDomain = provider.endpoint.domain;
-            edgeIPv4 = provider.endpoint.ipv4;
-            port = provider.endpoint.port;
-            dohDomain = metadata.doh.domain;
-            dohIPv4 = metadata.doh.ipv4;
-            inherit profileNames;
-            settings = {
-              enable = provider.enabled;
-              inherit (metadata) reality;
-              inherit (metadata) xhttp;
-              vless.clientFingerprint = metadata.fingerprint or "edge";
-              profiles = map (mkProfile provider) profileNames;
-            };
-          };
-        mkHysteria2Upstream =
-          provider: ref:
-          let
-            metadata = provider.transportMetadata;
-            profileNames = profileNamesFor ref provider;
-            userSecrets = (provider.secretNames or { }).users or { };
-            users = map (name: {
-              inherit name;
-              passwordSecretName = requireMapValue "Hysteria2 user secret map" userSecrets name;
-            }) profileNames;
-          in
-          {
-            machineName = rendererMachineName provider.machine;
-            endpointDomain = provider.endpoint.domain;
-            endpointIPv4 = provider.endpoint.ipv4;
-            inherit profileNames;
-            inherit users;
-            port = provider.endpoint.port;
-            inherit (metadata) sni;
-            inherit (metadata) alpn;
-            inherit (metadata)
-              obfsName
-              obfsMinPacketSize
-              obfsMaxPacketSize
-              tlsVerify
-              credentialEncoding
-              ;
-            enable = provider.enabled;
-            obfsPasswordSecretName = (provider.secretNames or { }).obfsPassword or null;
-          };
-        mkAwgUpstream =
-          provider: ref:
-          let
-            metadata = provider.transportMetadata;
-            profileNames = profileNamesFor ref provider;
-            peers = metadata.peers or [ ];
-            selectedPeers = builtins.filter (peer: builtins.elem peer.name profileNames) peers;
-          in
-          {
-            machineName = rendererMachineName provider.machine;
-            endpointDomain = provider.endpoint.domain;
-            endpointIPv4 = provider.endpoint.ipv4;
-            inherit (metadata) serverPublicKey;
-            inherit profileNames;
-            clientPrivateKeySecretNames = (provider.secretNames or { }).clientPrivateKey or { };
-            headerProtectionKeySecretName = (provider.secretNames or { }).headerProtectionKey or null;
-            settings = {
-              enable = provider.enabled;
-              listenPort = provider.endpoint.port;
-              inherit (metadata) mtu;
-              inherit (metadata) generation profile;
-              peers = map (
-                name:
-                let
-                  matches = builtins.filter (peer: peer.name == name) selectedPeers;
-                  peer = if matches == [ ] then null else builtins.head matches;
-                in
-                if peer == null then throw "vpn-client-profiles: AmneziaWG export is missing peer ${name}" else peer
-              ) profileNames;
-            };
-          };
-        mkNaiveUpstream =
-          provider: ref:
-          let
-            metadata = provider.transportMetadata;
-            profileNames = profileNamesFor ref provider;
-            passwords = (provider.secretNames or { }).password or { };
-          in
-          {
-            machineName = rendererMachineName provider.machine;
-            domain = provider.endpoint.domain;
-            endpointIPv4 = provider.endpoint.ipv4 or publisher.publicIPv4;
-            port = metadata.port or provider.endpoint.port;
-            inherit (metadata) tlsServerName;
-            inherit profileNames;
-            usernames = lib.genAttrs profileNames (name: name);
-            passwordSecretNames = lib.genAttrs profileNames (
-              name: requireMapValue "NaiveProxy password secret map" passwords name
-            );
-            enable = provider.enabled;
-          };
-        upstreams = map (entry: mkVlessUpstream entry.provider entry.ref) (
-          lib.filter (entry: entry.ref.protocol == "vless-xhttp") providerEntries
-        );
-        amneziawgUpstreams = map (entry: mkAwgUpstream entry.provider entry.ref) (
-          lib.filter (entry: entry.ref.protocol == "amneziawg") providerEntries
-        );
-        hysteria2Upstreams = map (entry: mkHysteria2Upstream entry.provider entry.ref) (
-          lib.filter (entry: entry.ref.protocol == "hysteria2") providerEntries
-        );
-        naiveUpstreams = map (entry: mkNaiveUpstream entry.provider entry.ref) (
-          lib.filter (entry: entry.ref.protocol == "naiveproxy") providerEntries
-        );
-        gatewayProfiles =
-          (builtins.removeAttrs publisher [
-            "providerRefs"
-            "profileLinks"
-            "linksPage"
-          ])
-          // {
-            enable = active;
-            inherit
-              upstreams
-              amneziawgUpstreams
-              hysteria2Upstreams
-              naiveUpstreams
-              ;
-          };
-        runtimeMachineName = rendererMachineName gatewayProfiles.localMachineName;
-        inherit (gatewayProfiles) profiles;
+            map (
+              ref:
+              let
+                provider = providerFor ref;
+              in
+              provider // { profileNames = profileNamesFor ref provider; }
+            ) providerRefs;
+        runtimeMachineName = publisher.localMachineName;
+        inherit (publisher) profiles;
         publisherProfileNames = map (profile: profile.name) profiles;
         providerRefKeys = map (ref: "${ref.machine}/${ref.instanceId}/${ref.protocol}") providerRefs;
         profileLinkNames = map (link: link.name) publisher.profileLinks;
@@ -342,10 +174,10 @@ in
         publisherMetadata = {
           schemaVersion = 1;
           instanceId = instanceName;
-          machine = gatewayProfiles.localMachineName;
+          machine = publisher.localMachineName;
           role = "publisher";
           enabled = active;
-          accountDomain = gatewayProfiles.configGatewayDomain;
+          accountDomain = publisher.configGatewayDomain;
           pagePath = publisher.linksPage.path;
           profileLinks = map (
             link: builtins.removeAttrs link [ "pathTokenSecretName" ]
@@ -378,12 +210,10 @@ in
                 mihomoPackage
                 pkgs
                 ;
-              settings = gatewayProfiles // {
-                localMachineName = runtimeMachineName;
-              };
-              gatewayProfiles = profiles;
+              settings = publisher;
+              inherit providers;
             };
-            linksPageEnabled = gatewayProfiles.enable && publisher.linksPage.enable;
+            linksPageEnabled = active && publisher.linksPage.enable;
             linksServiceName = "vpn-client-profiles-links-${runtimeMachineName}";
             linkSecretDecls =
               lib.genAttrs (lib.unique (map (link: link.pathTokenSecretName) profileLinks))
@@ -396,10 +226,7 @@ in
                 });
             linksRoot = "/run/mihomo-client-config/${runtimeMachineName}/config-links";
             caddyBindIPv4 =
-              if gatewayProfiles.caddyBindIPv4 == null then
-                gatewayProfiles.publicIPv4
-              else
-                gatewayProfiles.caddyBindIPv4;
+              if publisher.caddyBindIPv4 == null then publisher.publicIPv4 else publisher.caddyBindIPv4;
             inherit (publisher) profileLinks;
             profileLinkLine =
               link:
@@ -429,7 +256,7 @@ in
                     path ${publisher.linksPage.path} ${publisher.linksPage.path}*
                   }
                   @wrong_listener_config_links {
-                    expression `{http.request.local.host} != "${gatewayProfiles.tailnetIPv4}"`
+                    expression `{http.request.local.host} != "${publisher.tailnetIPv4}"`
                     path ${publisher.linksPage.path} ${publisher.linksPage.path}*
                   }
                   handle @vpn_client_profile_links {
@@ -507,35 +334,35 @@ in
             _module.args.vpnClientProfileRender = clientProfilesModule.renderedProfiles;
             assertions = [
               {
-                assertion = !gatewayProfiles.enable || gatewayProfiles.localMachineName != "";
+                assertion = !active || publisher.localMachineName != "";
                 message = "vpn-client-profiles: localMachineName is required when profile publishing is enabled.";
               }
               {
-                assertion = !gatewayProfiles.enable || gatewayProfiles.configGatewayDomain != null;
+                assertion = !active || publisher.configGatewayDomain != null;
                 message = "vpn-client-profiles: configGatewayDomain is required when profile publishing is enabled.";
               }
               {
-                assertion = !gatewayProfiles.enable || gatewayProfiles.publicIPv4 != null;
+                assertion = !active || publisher.publicIPv4 != null;
                 message = "vpn-client-profiles: publicIPv4 is required when profile publishing is enabled.";
               }
               {
-                assertion = !active || gatewayProfiles.tailnetIPv4 != null;
+                assertion = !active || publisher.tailnetIPv4 != null;
                 message = "vpn-client-profiles: tailnetIPv4 is required when profile publishing is active.";
               }
               {
-                assertion = !gatewayProfiles.enable || gatewayProfiles.edgeDomain != null;
+                assertion = !active || publisher.edgeDomain != null;
                 message = "vpn-client-profiles: edgeDomain is required when profile publishing is enabled.";
               }
               {
-                assertion = !gatewayProfiles.enable || gatewayProfiles.acmeCertName != null;
+                assertion = !active || publisher.acmeCertName != null;
                 message = "vpn-client-profiles: acmeCertName is required when profile publishing is enabled.";
               }
               {
-                assertion = !gatewayProfiles.enable || gatewayProfiles.secretPrefix != "";
+                assertion = !active || publisher.secretPrefix != "";
                 message = "vpn-client-profiles: secretPrefix is required when profile publishing is enabled.";
               }
               {
-                assertion = !gatewayProfiles.enable || providerRefs != [ ];
+                assertion = !active || providerRefs != [ ];
                 message = "vpn-client-profiles: enabled publisher requires explicit providerRefs.";
               }
               {
@@ -560,8 +387,7 @@ in
               }
               {
                 assertion = builtins.all (
-                  link:
-                  link.pathTokenSecretName == "mihomo-client-${gatewayProfiles.secretPrefix}-${link.name}-path-token"
+                  link: link.pathTokenSecretName == "mihomo-client-${publisher.secretPrefix}-${link.name}-path-token"
                 ) publisher.profileLinks;
                 message = "vpn-client-profiles: each profile link must use the profile renderer's path-token secret.";
               }
@@ -570,16 +396,16 @@ in
                 message = "vpn-client-profiles: profile links may reference only declared profiles.";
               }
             ];
-            sops.secrets = lib.mkIf gatewayProfiles.enable (
+            sops.secrets = lib.mkIf active (
               lib.mkMerge [
                 clientProfilesModule.sops.secrets
                 (lib.mkIf linksPageEnabled linkSecretDecls)
               ]
             );
             systemd = {
-              tmpfiles.rules = lib.mkIf gatewayProfiles.enable clientProfilesModule.systemd.tmpfiles.rules;
-              timers = lib.mkIf gatewayProfiles.enable clientProfilesModule.systemd.timers;
-              services = lib.mkIf gatewayProfiles.enable (
+              tmpfiles.rules = lib.mkIf active clientProfilesModule.systemd.tmpfiles.rules;
+              timers = lib.mkIf active clientProfilesModule.systemd.timers;
+              services = lib.mkIf active (
                 {
                   caddy =
                     clientProfilesModule.systemd.services.caddy
@@ -606,20 +432,20 @@ in
             networkCore =
               lib.optionalAttrs
                 (
-                  gatewayProfiles.enable
-                  && gatewayProfiles.tailnetIPv4 != null
+                  active
+                  && publisher.tailnetIPv4 != null
                   && caddyBindIPv4 != null
-                  && gatewayProfiles.configGatewayDomain != null
-                  && gatewayProfiles.acmeCertName != null
+                  && publisher.configGatewayDomain != null
+                  && publisher.acmeCertName != null
                 )
                 {
                   caddy.fragments.${instanceName} = {
-                    hostName = gatewayProfiles.configGatewayDomain;
+                    hostName = publisher.configGatewayDomain;
                     listenAddresses = [
                       caddyBindIPv4
-                      gatewayProfiles.tailnetIPv4
+                      publisher.tailnetIPv4
                     ];
-                    useACMEHost = gatewayProfiles.acmeCertName;
+                    useACMEHost = publisher.acmeCertName;
                     afterUnits = [
                       "tailscaled.service"
                       "tailscaled-autoconnect.service"
@@ -630,8 +456,8 @@ in
                     ];
                     logFile = "/var/log/caddy/mihomo-client-${runtimeMachineName}-access.log";
                     extraConfig = ''
-                      bind ${caddyBindIPv4} ${gatewayProfiles.tailnetIPv4}
-                      tls /var/lib/acme/${gatewayProfiles.acmeCertName}/fullchain.pem /var/lib/acme/${gatewayProfiles.acmeCertName}/key.pem
+                      bind ${caddyBindIPv4} ${publisher.tailnetIPv4}
+                      tls /var/lib/acme/${publisher.acmeCertName}/fullchain.pem /var/lib/acme/${publisher.acmeCertName}/key.pem
                       import /run/caddy-auth/mihomo-client-${runtimeMachineName}.caddy
                       ${lib.optionalString linksPageEnabled "import /run/caddy-auth/mihomo-client-links-${runtimeMachineName}.caddy"}
                       handle {
@@ -639,7 +465,7 @@ in
                       }
                     '';
                   };
-                  acme.reloadServices.${gatewayProfiles.acmeCertName} = [ "caddy.service" ];
+                  acme.reloadServices.${publisher.acmeCertName} = [ "caddy.service" ];
                 };
           };
       };

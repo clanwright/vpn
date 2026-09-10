@@ -34,6 +34,10 @@ These outputs must come from the NixOS cache; local overrides and custom binary
 wrappers are prohibited. Cache availability is an external property, not a
 result of the repository's pure evaluation gate.
 
+The package authority contract checks the complete eight-application output
+set against its stock source selections and exact versions. Service contracts
+also reject substitution of those packages in the evaluated configuration.
+
 ## Caddy integration
 
 NaiveProxy uses the consumer's Network-owned Caddy with forwardproxy and

@@ -35,21 +35,6 @@
       forAllSystems = lib.genAttrs systems;
       appsPkgsFor = system: import apps-nixpkgs { inherit system; };
       modernAppsPkgsFor = system: import modern-apps-nixpkgs { inherit system; };
-      domainAppsPkgsFor =
-        system:
-        let
-          appsPkgs = appsPkgsFor system;
-        in
-        appsPkgs
-        // {
-          inherit (self.packages.${system}) sing-box;
-        }
-        // lib.optionalAttrs (system == "x86_64-linux") {
-          inherit (self.packages.${system})
-            amneziawg-go
-            amneziawg-tools
-            ;
-        };
       service = path: args: lib.modules.importApply path args;
       packageSet =
         system:
@@ -94,13 +79,13 @@
           };
           "@clanwright/vpn-amneziawg" = service ./clanServices/amneziawg/default.nix {
             inherit lib;
-            appsPkgsFor = domainAppsPkgsFor;
+            appsPkgsFor = system: self.packages.${system};
           };
           "@clanwright/vpn-naiveproxy" = service ./clanServices/naiveproxy/default.nix { inherit lib; };
           "@clanwright/vpn-client-profiles" = service ./clanServices/vpn-client-profiles/default.nix {
             inherit lib;
             clanLib = clan-core.lib;
-            appsPkgsFor = domainAppsPkgsFor;
+            appsPkgsFor = system: self.packages.${system};
             mihomoPackageFor = system: self.packages.${system}.mihomo;
           };
           "@clanwright/dns-adguardhome" = service ./clanServices/adguardhome/default.nix {
@@ -127,17 +112,17 @@
             lib,
             pkgs,
             settings,
-            gatewayProfiles,
+            providers,
           }:
           import ./clanServices/vpn-client-profiles/client-profiles.nix {
-            appsPkgs = domainAppsPkgsFor pkgs.system;
+            appsPkgs = self.packages.${pkgs.system};
             mihomoPackage = self.packages.${pkgs.system}.mihomo;
             inherit
               config
               lib
               pkgs
               settings
-              gatewayProfiles
+              providers
               ;
           };
         inherit exportInterfaces;

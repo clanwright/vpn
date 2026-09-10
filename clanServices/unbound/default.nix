@@ -61,14 +61,6 @@
               default = true;
             };
           };
-          adguardIntegrationProvider = lib.mkOption {
-            type = lib.types.nullOr (lib.types.enum [ "dns-adguardhome" ]);
-            default = "dns-adguardhome";
-            description = ''
-              Optional explicit AdGuard role integrated with this recursive backend.
-              Null keeps Unbound independently selectable without an AdGuard startup edge.
-            '';
-          };
         };
       };
 
@@ -273,9 +265,6 @@
                 serve-expired-reply-ttl = lib.mkForce 30;
               };
             };
-          }
-          // lib.optionalAttrs (settings.adguardIntegrationProvider != null) {
-            systemd.services.adguardhome.wants = [ "unbound.service" ];
           };
       };
   };

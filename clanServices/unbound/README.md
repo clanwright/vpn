@@ -16,7 +16,6 @@ consumer.
 Разрешены IPv4 из `127.0.0.0/8` и `::1`; hostnames, wildcard и public addresses
 отклоняются. `listen.port` принимает `1..65535`. Privacy flags:
 `prefetch`, `hideIdentity`, `hideVersion`, `qnameMinimisation`.
-`adguardIntegrationProvider` принимает только `null` или `dns-adguardhome`.
 
 ## Defaults and resolver policy
 
@@ -36,10 +35,8 @@ fresh-answer wait `1800ms`, stale reply TTL `30s`.
 
 ## Integration dependency
 
-По умолчанию `adguardIntegrationProvider = "dns-adguardhome"` добавляет только
-soft `Wants=unbound.service` к `adguardhome.service`. Роль не добавляет
-`Requires=` или `After=`: отказ/медленный старт backend не должен блокировать
-AdGuard и его consumer-owned fallback. При `null` startup edge отсутствует.
+Startup composition с AdGuard, включая systemd dependencies, принадлежит
+consumer.
 
 ## Trust-anchor lifecycle
 
