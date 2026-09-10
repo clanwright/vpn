@@ -16,7 +16,10 @@ The flake does not import a consumer checkout. TCP tuning belongs to the consume
 
 ## VPN services
 
-- VLESS/REALITY with XHTTP runs in Xray.
+- VLESS/REALITY with XHTTP runs in Xray, either directly on its public endpoint
+  or on an optional loopback listener behind consumer-owned TCP passthrough.
+  Public profile addresses and ports are independent of that local listener;
+  the consumer owns shared-port SNI routing and HTTPS composition.
 - Hysteria2 runs in a separate Mihomo service with Gecko obfuscation and serves
   static masquerade content from a consumer-supplied store directory.
 - AmneziaWG runs as a userspace generation-3 UDP gateway with a runtime

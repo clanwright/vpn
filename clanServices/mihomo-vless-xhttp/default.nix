@@ -25,6 +25,7 @@ let
     in
     lib.length octets == 4
     && builtins.all (octet: parseDecimal octet && builtins.fromJSON octet <= 255) octets;
+  validLoopbackIPv4 = value: validIPv4 value && builtins.head (lib.splitString "." value) == "127";
   validShortId = value: builtins.match "[0-9a-f]{16}" value != null;
   validPublicKey = value: builtins.match "[A-Za-z0-9_-]{43}" value != null;
   validPath = value: builtins.match "/[^[:space:]]*" value != null;
@@ -51,7 +52,7 @@ in
         };
         bindIPv4 = lib.mkOption {
           type = lib.types.addCheck lib.types.str validIPv4;
-          description = "Exact IPv4 destination address for the listener and firewall rule.";
+          description = "Public endpoint IPv4 address and direct-listener bind address.";
         };
         port = lib.mkOption {
           type = lib.types.port;
@@ -60,6 +61,25 @@ in
         domain = lib.mkOption {
           type = hostnameType;
           description = "Public VLESS endpoint hostname used by generated clients.";
+        };
+        localListener = lib.mkOption {
+          type = lib.types.nullOr (
+            lib.types.submodule (_: {
+              options = {
+                ipv4 = lib.mkOption {
+                  type = lib.types.addCheck lib.types.str validLoopbackIPv4;
+                  default = "127.0.0.1";
+                  description = "Canonical loopback IPv4 address for consumer-owned TCP passthrough.";
+                };
+                port = lib.mkOption {
+                  type = lib.types.addCheck lib.types.port (port: port != 0);
+                  description = "Required local Xray listener port for consumer-owned TCP passthrough.";
+                };
+              };
+            })
+          );
+          default = null;
+          description = "Optional loopback listener behind consumer-owned TCP passthrough.";
         };
         clientFingerprint = lib.mkOption {
           type = lib.types.enum [
@@ -162,6 +182,7 @@ in
             }) settings.profiles
           );
         };
+        localListener = settings.localListener or null;
       in
       {
         exports = lib.optionalAttrs active (mkExports {
@@ -210,7 +231,9 @@ in
               else
                 builtins.currentSystem;
             xrayPackage = xrayPackageFor system;
-            bindCapability = lib.optional (settings.port < 1024) "CAP_NET_BIND_SERVICE";
+            listenerIPv4 = if localListener == null then settings.bindIPv4 else localListener.ipv4;
+            listenerPort = if localListener == null then settings.port else localListener.port;
+            bindCapability = lib.optional (listenerPort < 1024) "CAP_NET_BIND_SERVICE";
             active = settings.enable;
             serviceName = "xray.service";
             templateName = "xray-vless-xhttp.json";
@@ -221,8 +244,8 @@ in
               inbounds = [
                 {
                   tag = "vless-xhttp-in";
-                  listen = settings.bindIPv4;
-                  inherit (settings) port;
+                  listen = listenerIPv4;
+                  port = listenerPort;
                   protocol = "vless";
                   settings = {
                     clients = map (profile: {
@@ -285,12 +308,18 @@ in
               }
               {
                 assertion =
-                  !active || (config.networking.firewall.enable && config.networking.firewall.backend == "nftables");
+                  !active
+                  || localListener != null
+                  || (config.networking.firewall.enable && config.networking.firewall.backend == "nftables");
                 message = "VLESS/XHTTP requires the consumer's enabled nftables firewall for destination-scoped ingress.";
               }
               {
                 assertion = !active || settings.bindIPv4 != "0.0.0.0";
                 message = "VLESS/XHTTP requires an exact non-wildcard bindIPv4 for scoped ingress.";
+              }
+              {
+                assertion = !active || localListener == null || !validLoopbackIPv4 settings.bindIPv4;
+                message = "VLESS/XHTTP local-listener mode requires a non-loopback public bindIPv4 endpoint.";
               }
               {
                 assertion = !active || builtins.elem settings.reality.targetHost settings.reality.serverNames;
@@ -368,6 +397,8 @@ in
                 UMask = "0077";
               };
             };
+          }
+          // lib.optionalAttrs (active && localListener == null) {
             networking.firewall.extraInputRules = lib.mkAfter ''
               ip daddr ${settings.bindIPv4} tcp dport ${toString settings.port} accept comment "xray vless destination-scoped ingress"
             '';

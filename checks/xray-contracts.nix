@@ -20,18 +20,15 @@ let
       machine.name = "vpn-fixture";
       mkExports = value: value;
     }).exports.vpnProvider;
-  schemaResult =
+  schemaConfig =
     value:
-    builtins.tryEval (
-      builtins.deepSeq
-        (lib.evalModules {
-          modules = [
-            (service.roles.gateway.interface { inherit lib; })
-            { config = value; }
-          ];
-        }).config
-        true
-    );
+    (lib.evalModules {
+      modules = [
+        (service.roles.gateway.interface { inherit lib; })
+        { config = value; }
+      ];
+    }).config;
+  schemaResult = value: builtins.tryEval (builtins.deepSeq (schemaConfig value) true);
   moduleForWithInstances =
     rawSettings: firewall: activeInstances:
     let
@@ -78,11 +75,58 @@ let
     port = 8443;
   };
   highPortModule = moduleFor highPortSettings nftablesFirewall;
+  localListenerSettings = schemaConfig (settings // { localListener.port = 18443; });
+  localListenerModule = moduleFor localListenerSettings {
+    enable = false;
+    backend = "iptables";
+  };
+  localListenerRendered =
+    builtins.fromJSON
+      localListenerModule.sops.templates."xray-vless-xhttp.json".content;
+  localListenerInbound = builtins.head localListenerRendered.inbounds;
+  localListenerUnit = localListenerModule.systemd.services.xray;
+  localLowPortSettings = highPortSettings // {
+    localListener = {
+      ipv4 = "127.0.0.1";
+      port = 443;
+    };
+  };
+  localLowPortModule = moduleFor localLowPortSettings {
+    enable = false;
+    backend = "iptables";
+  };
+  localProviderExport =
+    (service.roles.gateway.perInstance {
+      settings = localListenerSettings;
+      instanceName = "vpn-mihomo-vless-xhttp";
+      machine.name = "vpn-fixture";
+      mkExports = value: value;
+    }).exports.vpnProvider;
   disabledModule = moduleForWithInstances (settings // { enable = false; }) nftablesFirewall [ ];
   highPortCapabilitiesContract =
     builtins.all (entry: entry.assertion) highPortModule.assertions
     && unwrap highPortModule.systemd.services.xray.serviceConfig.AmbientCapabilities == [ ]
     && unwrap highPortModule.systemd.services.xray.serviceConfig.CapabilityBoundingSet == [ ];
+  localListenerContract =
+    builtins.all (entry: entry.assertion) localListenerModule.assertions
+    && localListenerSettings.localListener.ipv4 == "127.0.0.1"
+    && localListenerInbound.listen == localListenerSettings.localListener.ipv4
+    && localListenerInbound.port == localListenerSettings.localListener.port
+    &&
+      localProviderExport.endpoint == {
+        inherit (settings) domain port;
+        ipv4 = settings.bindIPv4;
+        transport = "tcp";
+      }
+    && unwrap localListenerUnit.serviceConfig.AmbientCapabilities == [ ]
+    && unwrap localListenerUnit.serviceConfig.CapabilityBoundingSet == [ ]
+    &&
+      unwrap localLowPortModule.systemd.services.xray.serviceConfig.AmbientCapabilities
+      == [ "CAP_NET_BIND_SERVICE" ]
+    &&
+      unwrap localLowPortModule.systemd.services.xray.serviceConfig.CapabilityBoundingSet
+      == [ "CAP_NET_BIND_SERVICE" ]
+    && ((localListenerModule.networking or { }).firewall or { }) == { };
   secondProfile = {
     name = "second";
     kind = "mobile";
@@ -178,6 +222,8 @@ let
       ) nftablesFirewall);
     firewallDisabled = !(assertionsPass settings (nftablesFirewall // { enable = false; }));
     iptablesFirewall = !(assertionsPass settings (nftablesFirewall // { backend = "iptables"; }));
+    localListenerLoopbackPublicEndpoint =
+      !(assertionsPass (localListenerSettings // { bindIPv4 = "127.0.0.9"; }) nftablesFirewall);
     duplicateActiveInstance =
       !(builtins.all (entry: entry.assertion)
         (moduleForWithInstances settings nftablesFirewall [
@@ -202,6 +248,48 @@ let
   inherit (unit) serviceConfig;
   malformedSchemasRejected = builtins.all (result: !result.success) [
     (schemaResult (settings // { bindIPv4 = "0.0.0.0/0"; }))
+    (schemaResult (
+      settings
+      // {
+        localListener = {
+          port = 18443;
+          ipv4 = "126.255.255.255";
+        };
+      }
+    ))
+    (schemaResult (
+      settings
+      // {
+        localListener = {
+          port = 18443;
+          ipv4 = "127.00.0.1";
+        };
+      }
+    ))
+    (schemaResult (
+      settings
+      // {
+        localListener = {
+          ipv4 = "127.0.0.1";
+        };
+      }
+    ))
+    (schemaResult (
+      settings
+      // {
+        localListener = {
+          port = 0;
+        };
+      }
+    ))
+    (schemaResult (
+      settings
+      // {
+        localListener = {
+          port = "18443";
+        };
+      }
+    ))
     (schemaResult (
       settings
       // {
@@ -280,6 +368,11 @@ let
         inherit (settings.xhttp) path;
         mode = "auto";
       };
+  directDefaultsContract =
+    (schemaResult settings).success
+    && (schemaConfig settings).localListener == null
+    && inbound.listen == settings.bindIPv4
+    && inbound.port == settings.port;
   templateContract =
     builtins.attrNames rendered == [
       "inbounds"
@@ -374,9 +467,11 @@ let
     malformedSchemasRejected
     && negativeAssertionsContract
     && exportContract
+    && directDefaultsContract
     && templateContract
     && runtimeContract
     && highPortCapabilitiesContract
+    && localListenerContract
     && exposureContract
     && independentRuntime
     && disabledContract;
@@ -387,8 +482,10 @@ if !contract then
       inherit
         exposureContract
         exportContract
+        directDefaultsContract
         highPortCapabilitiesContract
         independentRuntime
+        localListenerContract
         malformedSchemasRejected
         negativeAssertionResults
         negativeAssertionsContract
@@ -403,8 +500,10 @@ else
     inherit
       exposureContract
       exportContract
+      directDefaultsContract
       highPortCapabilitiesContract
       independentRuntime
+      localListenerContract
       malformedSchemasRejected
       negativeAssertionsContract
       runtimeContract

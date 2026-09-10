@@ -49,8 +49,14 @@ SOPS bindings and declared runtime paths. Module pages specify each secret's
 format; literal template substitution does not escape arbitrary values.
 
 The consumer also supplies addresses, interfaces, certificates, Caddy site
-claims and personal domain/filter rules. Xray, Hysteria2 and AmneziaWG scoped
+claims and personal domain/filter rules. Direct Xray, Hysteria2 and AmneziaWG scoped
 ingress requires an enabled nftables firewall; those roles assert that backend.
+
+Xray's optional `localListener` binds only to IPv4 loopback behind a
+consumer-owned TCP passthrough entry. Its public `bindIPv4`, `domain` and `port`
+continue to define the provider endpoint; provider schema version 2 is unchanged.
+The local mode creates no ingress firewall rule. SNI routing, public exposure
+and web-server composition belong to the consumer; TLS must reach Xray intact.
 
 Hysteria2 requires the NixOS option
 `clanwright.vpn.hysteria2.masqueradeRoot` to name an absolute Nix store directory
