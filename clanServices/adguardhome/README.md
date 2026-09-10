@@ -15,11 +15,10 @@ Cloudflare Standard, Quad9 без threat blocking и Google Public DNS по DoH,
 ## Settings
 
 Точная схема и defaults определены в [`default.nix`](default.nix).
-Основные входы роли: `ui.host`, `ui.port`, `ui.domain`, `ingress.publicIPv4`,
-`ingress.caddyBindIPv4`, `ingress.tailnetIPv4`, `dns.bindHosts`,
+Основные входы роли: `ui.host`, `ui.port`, `dns.bindHosts`,
 `dns.port`, `dns.upstream`, `dns.fallbackPort`,
 `dns.fallbackTimeoutSeconds`, `tls.serverName`,
-`tls.httpsPort`, `acme.certName`,
+`tls.httpsPort`, `tls.certificateFile`, `tls.privateKeyFile`,
 `auth.username`, `auth.passwordSecretName`, `systemResolver.enableLocalStub`
 и `filtering.userRules`. `dns.upstream` содержит ровно
 один числовой loopback endpoint Unbound в формате `127.0.0.1:<port>`.
@@ -41,10 +40,11 @@ Query log хранится 7 дней, statistics — 90 дней, IP не ан�
 
 ## Exports and dependencies
 
-Роль регистрирует ACME claim для сертификата и публикует typed DNS-provider
-metadata для потребителей. Caddy-конфигурация зависит от claim и от
-интерфейса tailnet; локальный резолвер может быть выбран другими сервисами
-через inventory.
+Read-only NixOS output `clanwright.dns.adguardhome.integration` содержит
+`schemaVersion = 1`, `uiBackend` с host/port, `dohBackend` с host/port/serverName
+и `reloadUnits`. При отключённой роли output равен null. Consumer использует
+эти сведения для своих Caddy claims, ACME reload bindings и сетевой политики.
+Модуль не зависит от схемы Network и не объявляет Caddy или Tailscale edges.
 
 ## State and secrets
 
@@ -59,16 +59,20 @@ Template передаётся сервису как systemd credential; пере
 `adguardhome.service`. Изменения через UI пригодны для диагностики, но следующий
 restart восстанавливает декларативную конфигурацию.
 
+`tls.certificateFile` и `tls.privateKeyFile` — явные абсолютные runtime paths.
+Consumer обеспечивает их наличие и права чтения сервисом, а также перезагрузку
+экспортированных `reloadUnits` после обновления сертификата. Роль не предполагает
+группу `acme` и не владеет выпуском сертификатов.
+
 ## Network exposure
 
 Plain DNS допускает только loopback, RFC1918 и Tailscale IPv4 listener; он
-обязан включать `127.0.0.1`, а firewall открывает `53` только на `tailscale0`.
-DoH публикуется Caddy только на точном пути `/dns-query` и явном
-`caddyBindIPv4`. Caddy обращается к `https://127.0.0.1:8444` с проверкой
-сертификата и заданным SNI. UI route имеет отдельный tailnet listener и
-проверяет local destination и порт 443. Native backend-порты firewall не
-открывает. При `enable = false` роль не объявляет runtime, state, secrets,
-template, ACME claim, firewall или resolver edges.
+обязан включать `127.0.0.1`. Firewall и публичную публикацию определяет consumer.
+Consumer fixture показывает DoH только на `/dns-query`, HTTPS backend с проверкой
+сертификата и заданным SNI, а UI — на отдельном private listener с проверкой
+destination address. Это пример композиции, не автоматически включаемая политика.
+При `enable = false` роль не объявляет runtime, state, secrets, template или
+resolver edges.
 
 ## Verification
 

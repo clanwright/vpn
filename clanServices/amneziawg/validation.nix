@@ -145,6 +145,12 @@ in
       peers = settings.peers or [ ];
       peerNames = map (peer: peer.name) peers;
       peerPublicKeys = map (peer: peer.publicKey) peers;
+      peerClientPrivateKeySecretNames = map (peer: peer.clientPrivateKeySecretName) peers;
+      privateKeySecretNames = [
+        settings.privateKeySecretName
+        settings.headerProtectionKeySecretName
+      ]
+      ++ peerClientPrivateKeySecretNames;
       allowedIPs = lib.concatMap (peer: peer.allowedIPs) peers;
       clientAddresses = map (
         peer: if peer.allowedIPs == [ ] then "" else lib.removeSuffix "/32" (builtins.head peer.allowedIPs)
@@ -190,8 +196,8 @@ in
         message = "${serviceName}: headerProtectionKeySecretName must be a safe relative SOPS secret name.";
       }
       {
-        assertion = settings.privateKeySecretName != settings.headerProtectionKeySecretName;
-        message = "${serviceName}: private and header protection keys must use distinct secret names.";
+        assertion = allUnique privateKeySecretNames;
+        message = "${serviceName}: server, header protection, and peer private keys must use pairwise distinct secret names.";
       }
       {
         assertion = validKey settings.serverPublicKey;
@@ -208,6 +214,10 @@ in
       {
         assertion = builtins.all validKey peerPublicKeys && allUnique peerPublicKeys;
         message = "${serviceName}: peer public keys must be canonical and unique.";
+      }
+      {
+        assertion = builtins.all validSecretName peerClientPrivateKeySecretNames;
+        message = "${serviceName}: every peer clientPrivateKeySecretName must be a safe relative SOPS secret name.";
       }
       {
         assertion = builtins.all clientAddressShapeValid peers;

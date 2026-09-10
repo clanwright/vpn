@@ -246,7 +246,8 @@ let
     ))
   ];
   exportContract =
-    providerExport.protocol == "vless-xhttp"
+    providerExport.schemaVersion == 2
+    && providerExport.protocol == "vless-xhttp"
     &&
       providerExport.endpoint == {
         inherit (settings) domain port;

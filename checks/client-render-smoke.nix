@@ -76,13 +76,13 @@ let
   publisherSettings =
     fixture.instances.vpn-client-profiles.roles.publisher.machines.vpn-fixture.settings;
   runtimeMachineName = publisherSettings.localMachineName;
-  linkUnitName = "vpn-client-profiles-links-${runtimeMachineName}";
+  publicationUnitName = "vpn-client-profiles-publish-${runtimeMachineName}";
   publisherWith =
     settings:
     lib.recursiveUpdate fixture.instances {
       vpn-client-profiles.roles.publisher.machines.vpn-fixture.settings = settings;
     };
-  rejectsInstances =
+  evaluateInstances =
     name: instances:
     let
       candidate = inputs.clan-core.lib.clan {
@@ -114,11 +114,104 @@ let
         ];
       };
     in
+    candidate;
+  rejectsInstances =
+    name: instances:
+    let
+      candidate = evaluateInstances name instances;
+    in
     !(builtins.tryEval (
       builtins.deepSeq
         candidate.config.nixosConfigurations.${fixtureMachineName}.config.system.build.toplevel.drvPath
         true
     )).success;
+  secondPublisherWith =
+    settings:
+    lib.recursiveUpdate fixture.instances.vpn-client-profiles {
+      roles.publisher.machines.vpn-fixture.settings = settings;
+    };
+  publisherSettingsFor =
+    localMachineName: secretPrefix: configGatewayDomain:
+    publisherSettings
+    // {
+      inherit localMachineName secretPrefix configGatewayDomain;
+      profileLinks = map (
+        link:
+        link
+        // {
+          pathTokenSecretName = "mihomo-client-${secretPrefix}-${link.name}-path-token";
+          accountDomain = configGatewayDomain;
+        }
+      ) publisherSettings.profileLinks;
+    };
+  firstPublisherSettings = publisherSettingsFor "fixture-a" "fixture-a" "profiles-a.example.invalid";
+  secondPublisherSettings = publisherSettingsFor "fixture-b" "fixture-b" "profiles-b.example.invalid";
+  publisherPair =
+    firstSettings: secondSettings:
+    builtins.removeAttrs fixture.instances [ "vpn-client-profiles" ]
+    // {
+      profile-a = secondPublisherWith firstSettings;
+      profile_a = secondPublisherWith secondSettings;
+    };
+  duplicatePublisherRuntimeIdentityRejected = rejectsInstances "duplicate-publisher-runtime" (
+    publisherPair firstPublisherSettings (
+      secondPublisherSettings // { inherit (firstPublisherSettings) localMachineName; }
+    )
+  );
+  duplicatePublisherDomainRejected = rejectsInstances "duplicate-publisher-domain" (
+    publisherPair firstPublisherSettings (
+      secondPublisherSettings // { inherit (firstPublisherSettings) configGatewayDomain; }
+    )
+  );
+  duplicatePublisherDomainCaseRejected = rejectsInstances "duplicate-publisher-domain-case" (
+    publisherPair firstPublisherSettings (
+      publisherSettingsFor "fixture-b" "fixture-b" "PROFILES-A.EXAMPLE.INVALID"
+    )
+  );
+  disjointPublisherConsumer = evaluateInstances "disjoint-publishers" (
+    publisherPair firstPublisherSettings secondPublisherSettings
+  );
+  disjointPublisherMachine =
+    disjointPublisherConsumer.config.nixosConfigurations.${fixtureMachineName}.config;
+  disjointPublisherIntegrations = disjointPublisherMachine.clanwright.vpn.publishers;
+  disjointPublisherResults = {
+    registryMerged =
+      builtins.attrNames disjointPublisherIntegrations == [
+        "profile-a"
+        "profile_a"
+      ];
+    profileRootsDistinct =
+      disjointPublisherIntegrations.profile-a.profileRoot
+      == "/run/vpn-client-profiles/fixture-a/published/current"
+      &&
+        disjointPublisherIntegrations.profile_a.profileRoot
+        == "/run/vpn-client-profiles/fixture-b/published/current";
+    unitsDistinct =
+      disjointPublisherIntegrations.profile-a.publicationUnit
+      == "vpn-client-profiles-publish-fixture-a.service"
+      &&
+        disjointPublisherIntegrations.profile_a.publicationUnit
+        == "vpn-client-profiles-publish-fixture-b.service"
+      &&
+        disjointPublisherIntegrations.profile_a.refreshUnit
+        == "vpn-client-profiles-public-assets-fixture-b.service";
+    stateDistinct =
+      disjointPublisherIntegrations.profile_a.assetRoot == "/var/lib/vpn-client-profiles/fixture-b/assets"
+      &&
+        disjointPublisherIntegrations.profile_a.statusPath
+        == "/var/lib/vpn-client-profiles/fixture-b/status.json";
+    domainsDistinct =
+      disjointPublisherIntegrations.profile-a.configGatewayDomain == "profiles-a.example.invalid"
+      && disjointPublisherIntegrations.profile_a.configGatewayDomain == "profiles-b.example.invalid";
+    matcherNamespacesInjective =
+      disjointPublisherIntegrations.profile-a.routeConfig
+      != disjointPublisherIntegrations.profile_a.routeConfig
+      && lib.hasInfix "vpn_client_profile_yaml_profile_ha" disjointPublisherIntegrations.profile-a.routeConfig
+      && lib.hasInfix "vpn_client_profile_yaml_profile_ua" disjointPublisherIntegrations.profile_a.routeConfig;
+  };
+  disjointPublisherContract = builtins.all (value: value) (
+    builtins.attrValues disjointPublisherResults
+  );
   unknownProfileRejected = rejectsInstances "unknown-profile" (
     publisherWith (
       publisherSettings
@@ -181,8 +274,8 @@ let
   rendered = builtins.head consumerMachine.clanwright.checks.vpnClientProfileRender;
   zeroNaiveMachine = zeroNaiveConsumer.config.nixosConfigurations.${fixtureMachineName}.config;
   zeroNaiveRendered = builtins.head zeroNaiveMachine.clanwright.checks.vpnClientProfileRender;
-  zeroNaiveLinksScript = zeroNaiveMachine.systemd.services.${linkUnitName}.script;
-  linksScript = consumerMachine.systemd.services.${linkUnitName}.script;
+  zeroNaivePublicationScript = zeroNaiveMachine.systemd.services.${publicationUnitName}.script;
+  publicationScript = consumerMachine.systemd.services.${publicationUnitName}.script;
   mihomoTypes = map (proxy: proxy.type) rendered.mihomoSelectiveTemplate.proxies;
   selectiveGroups = map (group: group.name) rendered.mihomoSelectiveTemplate."proxy-groups";
   fullGroups = map (group: group.name) rendered.mihomoFullTemplate."proxy-groups";
@@ -374,11 +467,11 @@ let
     && (builtins.elemAt profile.dns.rules ((builtins.length profile.dns.rules) - 1)).action == "reject"
     && profile.dns.final == "edge-doh";
   zeroNaiveResults = {
-    linksUnitPresent = builtins.hasAttr linkUnitName zeroNaiveMachine.systemd.services;
+    publicationUnitPresent = builtins.hasAttr publicationUnitName zeroNaiveMachine.systemd.services;
     mihomoLinksRetained =
-      lib.hasInfix "/mihomo.yaml" zeroNaiveLinksScript
-      && lib.hasInfix "/mihomo-full.yaml" zeroNaiveLinksScript;
-    profileLinkSuppressed = !(lib.hasInfix "/profile.json" zeroNaiveLinksScript);
+      lib.hasInfix "/mihomo.yaml" zeroNaivePublicationScript
+      && lib.hasInfix "/mihomo-full.yaml" zeroNaivePublicationScript;
+    profileLinkSuppressed = !(lib.hasInfix "/profile.json" zeroNaivePublicationScript);
     publicationDisabled = !zeroNaiveRendered.publishProfileJson;
     templateSuppressed = zeroNaiveRendered.profileJsonTemplate == null;
   };
@@ -386,14 +479,22 @@ let
   negativeResults = {
     inherit
       deadPublisherCredentialRejected
+      duplicatePublisherDomainCaseRejected
+      duplicatePublisherDomainRejected
+      duplicatePublisherRuntimeIdentityRejected
       duplicateProfileRejected
       duplicateProviderRefRejected
       missingCredentialRejected
       unknownProfileRejected
       ;
-    tokenLengthValidationPresent = lib.hasInfix "wc -c" linksScript;
-    tokenPatternValidationPresent = lib.hasInfix "^[A-Za-z0-9_-]{32,128}$" linksScript;
-    tokenRawByteValidationPresent = lib.hasInfix "trailing newline or NUL byte" linksScript;
+    tokenLengthValidationPresent = lib.hasInfix "wc -c" publicationScript;
+    tokenPatternValidationPresent = lib.hasInfix "^[A-Za-z0-9_-]{32,128}$" publicationScript;
+    explicitAwgClientKeyBinding =
+      consumerMachine.sops.secrets."fixture-awg-client-private-key".restartUnits
+      == [ "${publicationUnitName}.service" ]
+      &&
+        lib.hasInfix consumerMachine.sops.secrets."fixture-awg-client-private-key".path
+          publicationScript;
   };
   negativeContract = builtins.all (value: value) (builtins.attrValues negativeResults);
   contract =
@@ -403,6 +504,7 @@ let
     && dnsContract
     && namespaceContract
     && zeroNaiveContract
+    && disjointPublisherContract
     && negativeContract;
 in
 if !contract then
@@ -410,6 +512,8 @@ if !contract then
     builtins.toJSON {
       inherit
         dnsContract
+        disjointPublisherContract
+        disjointPublisherResults
         mihomoContract
         namespaceContract
         namespaceResults
@@ -427,6 +531,8 @@ else
     all = true;
     inherit
       dnsContract
+      disjointPublisherContract
+      disjointPublisherResults
       mihomoContract
       namespaceContract
       namespaceResults

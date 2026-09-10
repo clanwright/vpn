@@ -34,6 +34,108 @@ let
     lib.nameValuePair (lib.removePrefix "@clanwright/" publicName) (builtins.head module.imports)
   ) self.clan.modules;
   settingsFor = name: role: fixture.instances.${name}.roles.${role}.machines.vpn-fixture.settings;
+  providerSpecs = {
+    vpn-mihomo-vless-xhttp = {
+      role = "gateway";
+      protocol = "vless-xhttp";
+    };
+    vpn-mihomo-hysteria2 = {
+      role = "gateway";
+      protocol = "hysteria2";
+    };
+    vpn-amneziawg = {
+      role = "gateway";
+      protocol = "amneziawg";
+    };
+    vpn-naiveproxy = {
+      role = "addon";
+      protocol = "naiveproxy";
+    };
+  };
+  providerExports = lib.mapAttrs (
+    name: spec:
+    let
+      service = services.${name};
+      settings =
+        (lib.evalModules {
+          modules = [
+            (service.roles.${spec.role}.interface { inherit lib; })
+            { config = settingsFor name spec.role; }
+          ];
+        }).config;
+    in
+    (service.roles.${spec.role}.perInstance {
+      inherit settings;
+      instanceName = name;
+      machine.name = "vpn-fixture";
+      mkExports = value: value;
+    }).exports.vpnProvider
+  ) providerSpecs;
+  selectProvider =
+    name: raw:
+    let
+      spec = providerSpecs.${name};
+    in
+    (self.lib.vpnExports { inherit lib; }).selectVpnProvider {
+      providerInstanceId = name;
+      providerMachine = "vpn-fixture";
+      inherit (spec) protocol;
+      consumerInstanceId = "version-contract-check";
+      selectExports = _predicate: exports: exports;
+      exports.only.vpnProvider = raw;
+    };
+  providerVersionResults = lib.mapAttrs (name: raw: {
+    currentAccepted = raw.schemaVersion == 2 && builtins.deepSeq (selectProvider name raw) true;
+    legacyRejected =
+      !(builtins.tryEval (builtins.deepSeq (selectProvider name (raw // { schemaVersion = 1; })) true))
+      .success;
+    missingRejected =
+      !(builtins.tryEval (
+        builtins.deepSeq (selectProvider name (builtins.removeAttrs raw [ "schemaVersion" ])) true
+      )).success;
+  }) providerExports;
+  providerVersionsContract = builtins.all (
+    result: builtins.all (value: value) (builtins.attrValues result)
+  ) (builtins.attrValues providerVersionResults);
+  publisherExport = {
+    schemaVersion = 1;
+    instanceId = "vpn-client-profiles";
+    machine = "fixture";
+    role = "publisher";
+    enabled = true;
+    accountDomain = "profiles.example.invalid";
+    pagePath = "/config-links/";
+    profileLinks = [
+      {
+        name = "cHJvYmU";
+        label = "Fixture profile";
+        accountDomain = "profiles.example.invalid";
+      }
+    ];
+  };
+  selectPublisher =
+    raw:
+    (self.lib.vpnExports { inherit lib; }).selectVpnPublisher {
+      publisherInstanceId = "vpn-client-profiles";
+      publisherMachine = "fixture";
+      consumerInstanceId = "publisher-version-contract-check";
+      selectExports = _predicate: exports: exports;
+      exports.only.vpnPublisher = raw;
+    };
+  publisherVersionResults = {
+    currentAccepted = builtins.deepSeq (selectPublisher publisherExport) true;
+    wrongVersionRejected =
+      !(builtins.tryEval (
+        builtins.deepSeq (selectPublisher (publisherExport // { schemaVersion = 2; })) true
+      )).success;
+    missingVersionRejected =
+      !(builtins.tryEval (
+        builtins.deepSeq (selectPublisher (builtins.removeAttrs publisherExport [ "schemaVersion" ])) true
+      )).success;
+  };
+  publisherVersionContract = builtins.all (value: value) (
+    builtins.attrValues publisherVersionResults
+  );
   awgInstance = services.vpn-amneziawg.roles.gateway.perInstance {
     settings = settingsFor "vpn-amneziawg" "gateway";
     instanceName = "vpn-amneziawg";
@@ -52,7 +154,14 @@ let
       exports.only.vpnProvider = raw;
     };
   awgTransportContract =
-    builtins.deepSeq (selectAwgProvider awgProvider) true
+    awgProvider.schemaVersion == 2
+    && builtins.deepSeq (selectAwgProvider awgProvider) true
+    && !(builtins.tryEval (
+      builtins.deepSeq (selectAwgProvider (awgProvider // { schemaVersion = 1; })) true
+    )).success
+    && !(builtins.tryEval (
+      builtins.deepSeq (selectAwgProvider (builtins.removeAttrs awgProvider [ "schemaVersion" ])) true
+    )).success
     && !(builtins.tryEval (
       builtins.deepSeq (selectAwgProvider (
         lib.recursiveUpdate awgProvider { endpoint.transport = "tcp"; }
@@ -83,7 +192,16 @@ let
       exports.only.vpnProvider = raw;
     };
   naiveProviderResults = {
-    actual = builtins.deepSeq (selectNaiveProvider naiveProvider) true;
+    actual =
+      naiveProvider.schemaVersion == 2 && builtins.deepSeq (selectNaiveProvider naiveProvider) true;
+    legacyVersionRejected =
+      !(builtins.tryEval (
+        builtins.deepSeq (selectNaiveProvider (naiveProvider // { schemaVersion = 1; })) true
+      )).success;
+    missingVersionRejected =
+      !(builtins.tryEval (
+        builtins.deepSeq (selectNaiveProvider (builtins.removeAttrs naiveProvider [ "schemaVersion" ])) true
+      )).success;
     unknownProfileRejected =
       !(builtins.tryEval (
         builtins.deepSeq (selectNaiveProvider (
@@ -179,6 +297,17 @@ let
       }
     ))
   ];
+  missingAwgClientPrivateKeyBindingRejected =
+    let
+      settings = settingsFor "vpn-amneziawg" "gateway";
+    in
+    !(schemaResult "vpn-amneziawg" (
+      settings
+      // {
+        peers = map (peer: builtins.removeAttrs peer [ "clientPrivateKeySecretName" ]) settings.peers;
+      }
+    )).success;
+  publicHelperRemoved = !(self.lib ? clientProfiles);
   placementBehavior =
     name: machine:
     {
@@ -223,12 +352,16 @@ let
         instanceNames = [ name ];
         inherit extraModule includeNetwork;
       };
+      caddyFragments = lib.attrByPath [ "networkCore" "caddy" "effectiveFragments" ] { } consumer.machine;
     in
     builtins.attrNames consumer.config.inventory.instances
     == lib.sort builtins.lessThan (supportNames ++ [ name ])
     &&
       builtins.length (builtins.attrNames consumer.config._services.allServices)
       == builtins.length supportNames + 1
+    && (!includeNetwork || ((caddyFragments ? dns-adguardhome-ui) == (name == "dns-adguardhome")))
+    && (!includeNetwork || ((caddyFragments ? dns-adguardhome-doh) == (name == "dns-adguardhome")))
+    && (!includeNetwork || !(caddyFragments ? vpn-client-profiles))
     && placementBehavior name consumer.machine
   );
   independentPlacements = builtins.all (value: value) (
@@ -316,6 +449,10 @@ let
     && closedSchemas
     && invalidNestedFields
     && invalidFieldTypes
+    && missingAwgClientPrivateKeyBindingRejected
+    && publicHelperRemoved
+    && providerVersionsContract
+    && publisherVersionContract
     && independentPlacements
     && combinedClanFixture.contract
     && awgTransportContract
@@ -338,12 +475,18 @@ if !contract then
         independentPlacements
         combinedClanFixture
         invalidFieldTypes
+        missingAwgClientPrivateKeyBindingRejected
         invalidNestedFields
         packageAuthority
         packageAuthorityResults
+        providerVersionResults
+        providerVersionsContract
+        publisherVersionContract
+        publisherVersionResults
         registeredSchemas
         validSchemaResults
         validSchemas
+        publicHelperRemoved
         ;
     }
   }"
@@ -359,9 +502,13 @@ else
       combinedClanFixture
       independentPlacements
       invalidFieldTypes
+      missingAwgClientPrivateKeyBindingRejected
       invalidNestedFields
       packageAuthority
+      providerVersionsContract
+      publisherVersionContract
       registeredSchemas
       validSchemas
+      publicHelperRemoved
       ;
   }

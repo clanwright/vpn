@@ -16,6 +16,11 @@ AmneziaWG 3.1 interface и публикует typed metadata для клиент
 32-byte WireGuard public keys и глобальную уникальность peer names, public keys
 и allowed IPs.
 
+Каждый peer также задаёт обязательный `clientPrivateKeySecretName` — точное
+имя consumer-owned SOPS binding. Имя не выводится из machine или profile name.
+Имена клиентских private-key bindings должны быть уникальны и не совпадать с
+bindings серверного private key или HeaderProtectionKey.
+
 Профиль фиксирован: MTU 1280, S1–S4 `12`, H1–H4 `1/2/3/4`,
 ContentPaddingAddition `2-10`, RandomTrailers включен, DisableCookies выключен.
 Jc/I1–I5 и пользовательские timer ranges сервер не задает. Поле
@@ -24,10 +29,13 @@ Jc/I1–I5 и пользовательские timer ranges сервер не з
 
 ## Exports and packages
 
-`vpnProvider` содержит UDP endpoint, `transportMetadata.generation = 3`, typed
+`vpnProvider` версии схемы 2 содержит UDP endpoint, `transportMetadata.generation = 3`, typed
 public `profile`, интерфейс, адрес, MTU и несекретную peer metadata. Имя
 HeaderProtectionKey находится отдельно в
 `secretNames.headerProtectionKey`; значение секрета в export отсутствует.
+Клиентские private-key bindings находятся в `secretNames.clientPrivateKey`.
+Public keys экспортируются только в `transportMetadata.peers`; отдельной
+дублирующей карты `peerPublicKeys` нет.
 
 Роль использует stock packages из application package set и требует семейство
 3.1 для `amneziawg-go` и `amneziawg-tools`. Foreground

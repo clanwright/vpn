@@ -31,6 +31,19 @@ It renders Mihomo selective/full profiles and publishes a sing-box profile only
 for devices with an eligible Naive provider. Personal proxy domain additions
 come from the consumer.
 
+Rendering, public rule-asset refresh and secret publication are separate
+components. Public rule assets live in persistent state; credentials and
+token-named publication paths live only under `/run`. Initial publication waits
+for a complete required asset set. Refresh failures retain accepted public
+assets without a hard expiry and expose nonsecret status for consumer monitoring.
+
+A publication refresh withdraws the old profile generation before rendering
+and exposes a complete generation only on success. Failed refreshes cannot keep
+serving revoked credentials. Caddy uses static routes and does not require,
+restart or reload for the publisher. The consumer supplies site claims, grants
+the exported reader group and restricts access to the links page. Access logging
+of tokenized URIs is suppressed.
+
 ## DNS
 
 AdGuard Home provides the DNS/DoH front end. Its normal upstream is loopback
@@ -39,6 +52,10 @@ startup relationship between AdGuard and Unbound. The AdGuard role configures a
 loopback dnsproxy reserve: parallel encrypted providers, followed by plaintext
 providers only after encrypted exchange failures. Received NXDOMAIN or SERVFAIL
 does not activate the plaintext tier.
+
+AdGuard exposes typed local UI/DoH backend metadata. The consumer supplies
+certificate file bindings and permissions, ACME reload relationships, Caddy
+publication and firewall exposure. The role does not depend on Network's schema.
 
 Mihomo profiles use primary AdGuard DNS only. If AdGuard is unavailable, new
 queries without a usable cached answer fail. The sing-box profile has its own

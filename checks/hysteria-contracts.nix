@@ -303,12 +303,14 @@ let
       "mux-option"
     ];
   exportContract =
-    enabled.instance.exports.vpnProvider.endpoint == {
-      domain = "hysteria.example.invalid";
-      ipv4 = "192.0.2.11";
-      port = 443;
-      transport = "udp";
-    }
+    enabled.instance.exports.vpnProvider.schemaVersion == 2
+    &&
+      enabled.instance.exports.vpnProvider.endpoint == {
+        domain = "hysteria.example.invalid";
+        ipv4 = "192.0.2.11";
+        port = 443;
+        transport = "udp";
+      }
     &&
       metadata == {
         protocol = "hysteria2";

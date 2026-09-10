@@ -134,6 +134,8 @@ let
     legacy.assertionsPass
     && activationScriptMode.assertionsPass
     && arbitrary.assertionsPass
+    && legacy.instance.exports.vpnProvider.schemaVersion == 2
+    && arbitrary.instance.exports.vpnProvider.schemaVersion == 2
     &&
       legacy.instance.exports.vpnProvider.transportMetadata.userNames == [
         "bsv"

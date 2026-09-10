@@ -77,6 +77,10 @@ in
                   publicKey = lib.mkOption {
                     type = lib.types.str;
                   };
+                  clientPrivateKeySecretName = lib.mkOption {
+                    type = lib.types.str;
+                    description = "SOPS secret containing this peer's client private key.";
+                  };
                   allowedIPs = lib.mkOption {
                     type = lib.types.listOf lib.types.str;
                   };
@@ -130,7 +134,7 @@ in
           clientPrivateKey = lib.listToAttrs (
             map (peer: {
               inherit (peer) name;
-              value = "amneziawg-${providerMachine}-client-${peer.name}-private-key";
+              value = peer.clientPrivateKeySecretName;
             }) settings.peers
           );
         };
@@ -138,7 +142,7 @@ in
       {
         exports = lib.optionalAttrs active (mkExports {
           vpnProvider = {
-            schemaVersion = 1;
+            schemaVersion = 2;
             instanceId = instanceName;
             machine = providerMachine;
             role = "gateway";
@@ -158,13 +162,14 @@ in
               inherit (settings) interfaceName;
               inherit (settings) address;
               mtu = 1280;
-              inherit (settings) peers;
-              peerPublicKeys = lib.listToAttrs (
-                map (peer: {
-                  inherit (peer) name;
-                  value = peer.publicKey;
-                }) settings.peers
-              );
+              peers = map (peer: {
+                inherit (peer)
+                  name
+                  publicKey
+                  allowedIPs
+                  clientPersistentKeepalive
+                  ;
+              }) settings.peers;
             };
             inherit profileNames secretNames;
           };

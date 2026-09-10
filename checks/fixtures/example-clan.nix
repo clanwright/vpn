@@ -51,16 +51,124 @@ rec {
     system.stateVersion = "26.11";
   };
 
-  networkIntegrationModule.networkCore.caddy.fragments.fixture-site = {
-    hostName = "site.example.invalid";
-    listenAddresses = [ "192.0.2.10" ];
-    useACMEHost = "fixture";
-    logFile = "/var/log/caddy/fixture-access.log";
-    publicSite = true;
-    siteOwners = [ "fixture" ];
-    capabilities = [ ];
-    extraConfig = ''respond "fixture"'';
-  };
+  networkIntegrationModule =
+    {
+      config,
+      lib,
+      options,
+      ...
+    }:
+    let
+      adguardOptionPresent = lib.hasAttrByPath [ "clanwright" "dns" "adguardhome" "integration" ] options;
+      adguardIntegration = lib.attrByPath [ "clanwright" "dns" "adguardhome" "integration" ] null config;
+      publisherOptionPresent = lib.hasAttrByPath [ "clanwright" "vpn" "publishers" ] options;
+      publisherIntegrations = lib.attrByPath [ "clanwright" "vpn" "publishers" ] { } config;
+      publisherIntegration = publisherIntegrations.vpn-client-profiles or null;
+    in
+    {
+      config = lib.mkMerge [
+        {
+          networkCore.caddy.fragments.fixture-site = {
+            hostName = "site.example.invalid";
+            listenAddresses = [ "192.0.2.10" ];
+            useACMEHost = "fixture";
+            logFile = "/var/log/caddy/fixture-access.log";
+            publicSite = true;
+            siteOwners = [ "fixture" ];
+            capabilities = [ ];
+            extraConfig = ''respond "fixture"'';
+          };
+        }
+        (lib.mkIf (adguardOptionPresent && adguardIntegration != null) {
+          networkCore = {
+            acme.reloadServices.fixture = [
+              "caddy.service"
+            ]
+            ++ adguardIntegration.reloadUnits;
+            caddy.fragments = {
+              dns-adguardhome-ui = {
+                hostName = "adguard.example.invalid";
+                listenAddresses = [ "100.64.0.10" ];
+                useACMEHost = "fixture";
+                logFile = "/var/log/caddy/adguardhome-ui-access.log";
+                extraConfig = ''
+                  bind 100.64.0.10
+                  tls /var/lib/acme/fixture/fullchain.pem /var/lib/acme/fixture/key.pem
+                  @wrong_listener expression `{http.request.local.host} != "100.64.0.10" || {http.request.local.port} != "443"`
+                  route {
+                    respond @wrong_listener 404
+                    reverse_proxy ${adguardIntegration.uiBackend.host}:${toString adguardIntegration.uiBackend.port}
+                  }
+                '';
+              };
+              dns-adguardhome-doh = {
+                hostName = "dns.example.invalid";
+                listenAddresses = [ "192.0.2.10" ];
+                useACMEHost = "fixture";
+                logFile = "/var/log/caddy/adguardhome-doh-access.log";
+                extraConfig = ''
+                  bind 192.0.2.10
+                  tls /var/lib/acme/fixture/fullchain.pem /var/lib/acme/fixture/key.pem
+                  @wrong_listener expression `{http.request.local.host} != "192.0.2.10" || {http.request.local.port} != "443"`
+                  respond @wrong_listener 404
+                  handle /dns-query {
+                    reverse_proxy https://${adguardIntegration.dohBackend.host}:${toString adguardIntegration.dohBackend.port} {
+                      header_up Host ${adguardIntegration.dohBackend.serverName}
+                      transport http {
+                        tls
+                        tls_server_name ${adguardIntegration.dohBackend.serverName}
+                      }
+                    }
+                  }
+                  handle {
+                    respond 404
+                  }
+                '';
+              };
+            };
+          };
+          networking.firewall.interfaces.tailscale0 = {
+            allowedTCPPorts = [
+              53
+              443
+            ];
+            allowedUDPPorts = [ 53 ];
+          };
+          systemd.services.adguardhome.serviceConfig.SupplementaryGroups = [ "acme" ];
+        })
+        (lib.mkIf (publisherOptionPresent && publisherIntegration != null) {
+          networkCore.caddy.fragments.vpn-client-profiles = {
+            hostName = publisherIntegration.configGatewayDomain;
+            listenAddresses = [
+              "192.0.2.10"
+              "100.64.0.10"
+            ];
+            useACMEHost = "fixture";
+            logFile = "/var/log/caddy/vpn-client-profiles-access.log";
+            publicSite = true;
+            siteOwners = [ "vpn-client-profiles" ];
+            capabilities = [ ];
+            extraConfig = ''
+              bind 192.0.2.10 100.64.0.10
+              tls /var/lib/acme/fixture/fullchain.pem /var/lib/acme/fixture/key.pem
+              @links_wrong_listener {
+                path /config-links/*
+                expression `{http.request.local.host} != "100.64.0.10" || {http.request.local.port} != "443"`
+              }
+              respond @links_wrong_listener 404
+              handle /config-links/* {
+                root * ${publisherIntegration.linksRoot}
+                rewrite * /index.html
+                header Cache-Control "no-store"
+                file_server
+              }
+              ${publisherIntegration.routeConfig}
+            '';
+          };
+          systemd.services.caddy.serviceConfig.SupplementaryGroups = [ publisherIntegration.readerGroup ];
+        })
+      ];
+    };
 
   instances = {
     network-caddy = networkInstance "network-caddy" "ingress" { };
@@ -125,6 +233,7 @@ rec {
         {
           name = "cHJvYmU";
           publicKey = "CCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCA=";
+          clientPrivateKeySecretName = "fixture-awg-client-private-key";
           allowedIPs = [ "10.77.0.2/32" ];
           clientPersistentKeepalive = 25;
         }
@@ -155,10 +264,7 @@ rec {
       localMachineName = "fixture";
       configGatewayDomain = "profiles.example.invalid";
       publicIPv4 = "192.0.2.10";
-      caddyBindIPv4 = "192.0.2.10";
-      tailnetIPv4 = "100.64.0.10";
       edgeDomain = "edge.example.invalid";
-      acmeCertName = "fixture";
       secretPrefix = "fixture";
       excludedProfileNames = [ ];
       profiles = [
@@ -213,12 +319,6 @@ rec {
       ui = {
         host = "127.0.0.1";
         port = 3000;
-        domain = "adguard.example.invalid";
-      };
-      ingress = {
-        publicIPv4 = "192.0.2.10";
-        caddyBindIPv4 = "192.0.2.10";
-        tailnetIPv4 = "100.64.0.10";
       };
       dns = {
         bindHosts = [ "127.0.0.1" ];
@@ -230,8 +330,9 @@ rec {
       tls = {
         serverName = "dns.example.invalid";
         httpsPort = 8444;
+        certificateFile = "/var/lib/acme/fixture/fullchain.pem";
+        privateKeyFile = "/var/lib/acme/fixture/key.pem";
       };
-      acme.certName = "fixture";
       auth = {
         passwordSecretName = "fixture-adguard-admin-bcrypt-hash";
       };

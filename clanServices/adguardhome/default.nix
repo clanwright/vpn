@@ -29,26 +29,6 @@
               type = lib.types.port;
               default = 3000;
             };
-            domain = lib.mkOption {
-              type = lib.types.str;
-              default = "localhost";
-              description = "Tailnet-only UI hostname served by the composition-owned Caddy claim.";
-            };
-          };
-
-          ingress = {
-            publicIPv4 = lib.mkOption {
-              type = lib.types.str;
-              default = "127.0.0.1";
-            };
-            caddyBindIPv4 = lib.mkOption {
-              type = lib.types.nullOr lib.types.str;
-              default = null;
-            };
-            tailnetIPv4 = lib.mkOption {
-              type = lib.types.str;
-              default = "127.0.0.1";
-            };
           };
 
           dns = {
@@ -86,10 +66,14 @@
               type = lib.types.port;
               default = 8444;
             };
-          };
-
-          acme.certName = lib.mkOption {
-            type = lib.types.str;
+            certificateFile = lib.mkOption {
+              type = lib.types.addCheck lib.types.str (lib.hasPrefix "/");
+              description = "Consumer-owned absolute runtime path to the TLS certificate chain.";
+            };
+            privateKeyFile = lib.mkOption {
+              type = lib.types.addCheck lib.types.str (lib.hasPrefix "/");
+              description = "Consumer-owned absolute runtime path to the TLS private key.";
+            };
           };
 
           enable = lib.mkOption {
@@ -155,23 +139,8 @@
               mode = "0400";
               restartUnits = [ ];
             };
-            caddyBindIPv4 =
-              if settings.ingress.caddyBindIPv4 == null then
-                settings.ingress.publicIPv4
-              else
-                settings.ingress.caddyBindIPv4;
-            certBase = "/var/lib/acme/${settings.acme.certName}";
-            isTailscaleIPv4BindHost =
-              host: builtins.match "100\\.(6[4-9]|[7-9][0-9]|1[01][0-9]|12[0-7])\\..*" host != null;
-            needsTailscaleOrdering = builtins.any isTailscaleIPv4BindHost settings.dns.bindHosts;
-            tailscaleUnits = [
-              "tailscaled.service"
-              "tailscaled-autoconnect.service"
-            ];
             sopsUnits = lib.optionals config.sops.useSystemdActivation [ "sops-install-secrets.service" ];
             ipv4Octet = "(25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9]?[0-9])";
-            isIPv4 =
-              host: builtins.match "${ipv4Octet}\\.${ipv4Octet}\\.${ipv4Octet}\\.${ipv4Octet}" host != null;
             isPrivateBindHost =
               host:
               host == "::1"
@@ -456,8 +425,8 @@
                 force_https = false;
                 port_https = settings.tls.httpsPort;
                 port_dns_over_tls = 0;
-                certificate_path = "${certBase}/fullchain.pem";
-                private_key_path = "${certBase}/key.pem";
+                certificate_path = settings.tls.certificateFile;
+                private_key_path = settings.tls.privateKeyFile;
               };
             };
             effectiveSettings = lib.recursiveUpdate baseSettings {
@@ -470,254 +439,212 @@
             };
           in
           {
-            assertions = [
-              {
-                assertion = !active || config.services.adguardhome.package == adguardPackage;
-                message = "adguardhome: the runtime package must come from the VPN domain platform pin.";
-              }
-              {
-                assertion =
-                  !active
-                  ||
-                    config.services.adguardhome.enable
-                    && config.services.adguardhome.settings == null
-                    && !config.services.adguardhome.mutableSettings
-                    && !config.services.adguardhome.openFirewall;
-                message = "adguardhome: the native service must retain credential-owned settings and closed firewall defaults.";
-              }
-              {
-                assertion = !active || config.services.dnsproxy.package == dnsproxyPackage;
-                message = "adguardhome: the fallback dnsproxy package must come from the VPN domain platform pin.";
-              }
-              {
-                assertion =
-                  !active
-                  ||
-                    config.services.dnsproxy.enable
-                    && config.services.dnsproxy.settings == dnsproxySettings
-                    && config.services.dnsproxy.flags == [ ];
-                message = "adguardhome: dnsproxy settings and flags must preserve the loopback encrypted-to-plaintext cascade.";
-              }
-              {
-                assertion =
-                  !active
-                  ||
-                    builtins.length settings.dns.upstream == 1
-                    && unboundPortAttempt.success
-                    && builtins.isInt unboundPort
-                    && unboundPort > 0
-                    && unboundPort <= 65535;
-                message = "adguardhome: dns.upstream must contain one 127.0.0.1:<port> Unbound endpoint.";
-              }
-              {
-                assertion =
-                  !active
-                  ||
-                    settings.dns.bindHosts != [ ]
-                    && builtins.elem "127.0.0.1" settings.dns.bindHosts
-                    && builtins.all isPrivateBindHost settings.dns.bindHosts
-                    && builtins.length settings.dns.bindHosts == builtins.length (lib.unique settings.dns.bindHosts);
-                message = "adguardhome: dns.bindHosts must be unique private addresses and include 127.0.0.1.";
-              }
-              {
-                assertion =
-                  !active
-                  ||
-                    settings.ui.host == "127.0.0.1"
-                    && isIPv4 settings.ingress.publicIPv4
-                    && isIPv4 caddyBindIPv4
-                    && caddyBindIPv4 != "0.0.0.0"
-                    && isIPv4 settings.ingress.tailnetIPv4
-                    && isPrivateBindHost settings.ingress.tailnetIPv4;
-                message = "adguardhome: UI must use loopback and Caddy listeners must be explicit, non-wildcard addresses.";
-              }
-              {
-                assertion =
-                  !active
-                  ||
-                    validName settings.auth.passwordSecretName
-                    && validName settings.auth.username
-                    && validName settings.acme.certName
-                    && validName settings.tls.serverName
-                    && validName settings.ui.domain;
-                message = "adguardhome: active instances require safe auth, certificate and TLS names.";
-              }
-              {
-                assertion =
-                  !active
-                  ||
-                    settings.dns.port > 0
-                    && settings.ui.port > 0
-                    && settings.tls.httpsPort > 0
-                    && settings.dns.fallbackPort > 0
-                    && (2 * settings.dns.fallbackTimeoutSeconds + 1) < 10
-                    &&
-                      builtins.length (
-                        lib.unique [
-                          settings.dns.port
-                          unboundPort
-                          settings.dns.fallbackPort
-                          settings.ui.port
-                          settings.tls.httpsPort
-                        ]
-                      ) == 5;
-                message = "adguardhome: listener ports must be nonzero and distinct; DoT must remain disabled and two dnsproxy stages plus margin must fit the 10s outer budget.";
-              }
-              {
-                assertion =
-                  !active
-                  || !settings.systemResolver.enableLocalStub
-                  ||
-                    settings.dns.port == 53
-                    && settings.systemResolver.nameservers != [ ]
-                    && builtins.all (
-                      host: builtins.elem host settings.dns.bindHosts
-                    ) settings.systemResolver.nameservers;
-                message = "adguardhome: the enabled system resolver must target configured AdGuard listeners on port 53.";
-              }
-              {
-                assertion =
-                  !active
-                  ||
-                    config.networkCore.caddy.fragments."${instanceName}-ui".listenAddresses
-                    == [ settings.ingress.tailnetIPv4 ]
-                    && config.networkCore.caddy.fragments."${instanceName}-doh".listenAddresses == [ caddyBindIPv4 ];
-                message = "adguardhome: Caddy UI and DoH fragments must retain their address-specific listeners.";
-              }
-              {
-                assertion =
-                  !active || config.sops.templates.${templateName}.content == builtins.toJSON effectiveSettings;
-                message = "adguardhome: the final template must exactly preserve the generated policy.";
-              }
-            ];
-
-          }
-          // lib.optionalAttrs active {
-            clan.core.state.adguardhome.folders = [ "/var/lib/private/AdGuardHome" ];
-            sops = {
-              secrets."${settings.auth.passwordSecretName}" = secretSettings;
-              templates.${templateName} = {
-                content = builtins.toJSON effectiveSettings;
-                owner = "root";
-                group = "root";
-                mode = "0400";
-                restartUnits = [ "adguardhome.service" ];
-              };
-            };
-
-            networkCore = {
-              acme.reloadServices.${settings.acme.certName} = [
-                "caddy.service"
-                "adguardhome.service"
-              ];
-              caddy.fragments = {
-                "${instanceName}-ui" = {
-                  hostName = settings.ui.domain;
-                  listenAddresses = [ settings.ingress.tailnetIPv4 ];
-                  useACMEHost = settings.acme.certName;
-                  afterUnits = [
-                    "tailscaled.service"
-                    "tailscaled-autoconnect.service"
-                  ];
-                  wantsUnits = [
-                    "tailscaled.service"
-                    "tailscaled-autoconnect.service"
-                  ];
-                  logFile = "/var/log/caddy/adguardhome-ui-access.log";
-                  extraConfig = ''
-                    bind ${settings.ingress.tailnetIPv4}
-                    tls /var/lib/acme/${settings.acme.certName}/fullchain.pem /var/lib/acme/${settings.acme.certName}/key.pem
-                    @wrong_listener expression `{http.request.local.host} != "${settings.ingress.tailnetIPv4}" || {http.request.local.port} != "443"`
-                    route {
-                      respond @wrong_listener 404
-                      reverse_proxy ${settings.ui.host}:${toString settings.ui.port}
-                    }
-                  '';
-                };
-                "${instanceName}-doh" = {
-                  hostName = settings.tls.serverName;
-                  listenAddresses = [ caddyBindIPv4 ];
-                  useACMEHost = settings.acme.certName;
-                  afterUnits = [
-                    "tailscaled.service"
-                    "tailscaled-autoconnect.service"
-                  ];
-                  wantsUnits = [
-                    "tailscaled.service"
-                    "tailscaled-autoconnect.service"
-                  ];
-                  logFile = "/var/log/caddy/adguardhome-doh-access.log";
-                  extraConfig = ''
-                    bind ${caddyBindIPv4}
-                    tls /var/lib/acme/${settings.acme.certName}/fullchain.pem /var/lib/acme/${settings.acme.certName}/key.pem
-                    @wrong_listener expression `{http.request.local.host} != "${caddyBindIPv4}" || {http.request.local.port} != "443"`
-                    respond @wrong_listener 404
-                    handle /dns-query {
-                      reverse_proxy https://127.0.0.1:${toString settings.tls.httpsPort} {
-                        header_up Host ${settings.tls.serverName}
-                        transport http {
-                          tls
-                          tls_server_name ${settings.tls.serverName}
-                        }
-                      }
-                    }
-                    handle {
-                      respond 404
-                    }
-                  '';
-                };
-              };
-            };
-
-            services = {
-              adguardhome = {
-                enable = true;
-                package = lib.mkForce adguardPackage;
-                openFirewall = false;
-                inherit (settings.ui) host port;
-                mutableSettings = false;
-                settings = null;
-              };
-              dnsproxy = {
-                enable = true;
-                package = lib.mkForce dnsproxyPackage;
-                settings = dnsproxySettings;
-                flags = [ ];
-              };
-              resolved.enable = lib.mkIf settings.systemResolver.enableLocalStub (lib.mkForce false);
-            };
-
-            systemd.services.adguardhome = {
-              after = [
-                "dnsproxy.service"
-              ]
-              ++ sopsUnits
-              ++ lib.optionals needsTailscaleOrdering tailscaleUnits;
-              wants = [
-                "dnsproxy.service"
-              ]
-              ++ sopsUnits
-              ++ lib.optionals needsTailscaleOrdering tailscaleUnits;
-              serviceConfig = {
-                SupplementaryGroups = [ "acme" ];
-                LoadCredential = "config:${configCredentialPath}";
-                ExecStartPre = [
-                  "${pkgs.coreutils}/bin/install -m 600 %d/config /var/lib/AdGuardHome/AdGuardHome.yaml"
-                  "${adguardPackage}/bin/AdGuardHome -c /var/lib/AdGuardHome/AdGuardHome.yaml --check-config"
-                ];
-              };
-            };
-
-            networking = {
-              resolvconf.useLocalResolver = lib.mkIf settings.systemResolver.enableLocalStub true;
-              nameservers = lib.mkIf settings.systemResolver.enableLocalStub (
-                lib.mkForce settings.systemResolver.nameservers
+            options.clanwright.dns.adguardhome.integration = lib.mkOption {
+              type = lib.types.nullOr (
+                lib.types.submodule {
+                  options = {
+                    schemaVersion = lib.mkOption { type = lib.types.enum [ 1 ]; };
+                    uiBackend = lib.mkOption {
+                      type = lib.types.submodule {
+                        options = {
+                          host = lib.mkOption { type = lib.types.str; };
+                          port = lib.mkOption { type = lib.types.port; };
+                        };
+                      };
+                    };
+                    dohBackend = lib.mkOption {
+                      type = lib.types.submodule {
+                        options = {
+                          host = lib.mkOption { type = lib.types.str; };
+                          port = lib.mkOption { type = lib.types.port; };
+                          serverName = lib.mkOption { type = lib.types.str; };
+                        };
+                      };
+                    };
+                    reloadUnits = lib.mkOption { type = lib.types.listOf lib.types.str; };
+                  };
+                }
               );
-              firewall.interfaces.tailscale0.allowedTCPPorts = [
-                settings.dns.port
-                443
+              default =
+                if active then
+                  {
+                    schemaVersion = 1;
+                    uiBackend = {
+                      inherit (settings.ui) host port;
+                    };
+                    dohBackend = {
+                      host = settings.ui.host;
+                      port = settings.tls.httpsPort;
+                      serverName = settings.tls.serverName;
+                    };
+                    reloadUnits = [ "adguardhome.service" ];
+                  }
+                else
+                  null;
+              readOnly = true;
+              description = "Read-only AdGuard backend data for consumer-owned integration.";
+            };
+
+            config = {
+              assertions = [
+                {
+                  assertion = !active || config.services.adguardhome.package == adguardPackage;
+                  message = "adguardhome: the runtime package must come from the VPN domain platform pin.";
+                }
+                {
+                  assertion =
+                    !active
+                    ||
+                      config.services.adguardhome.enable
+                      && config.services.adguardhome.settings == null
+                      && !config.services.adguardhome.mutableSettings
+                      && !config.services.adguardhome.openFirewall;
+                  message = "adguardhome: the native service must retain credential-owned settings and closed firewall defaults.";
+                }
+                {
+                  assertion = !active || config.services.dnsproxy.package == dnsproxyPackage;
+                  message = "adguardhome: the fallback dnsproxy package must come from the VPN domain platform pin.";
+                }
+                {
+                  assertion =
+                    !active
+                    ||
+                      config.services.dnsproxy.enable
+                      && config.services.dnsproxy.settings == dnsproxySettings
+                      && config.services.dnsproxy.flags == [ ];
+                  message = "adguardhome: dnsproxy settings and flags must preserve the loopback encrypted-to-plaintext cascade.";
+                }
+                {
+                  assertion =
+                    !active
+                    ||
+                      builtins.length settings.dns.upstream == 1
+                      && unboundPortAttempt.success
+                      && builtins.isInt unboundPort
+                      && unboundPort > 0
+                      && unboundPort <= 65535;
+                  message = "adguardhome: dns.upstream must contain one 127.0.0.1:<port> Unbound endpoint.";
+                }
+                {
+                  assertion =
+                    !active
+                    ||
+                      settings.dns.bindHosts != [ ]
+                      && builtins.elem "127.0.0.1" settings.dns.bindHosts
+                      && builtins.all isPrivateBindHost settings.dns.bindHosts
+                      && builtins.length settings.dns.bindHosts == builtins.length (lib.unique settings.dns.bindHosts);
+                  message = "adguardhome: dns.bindHosts must be unique private addresses and include 127.0.0.1.";
+                }
+                {
+                  assertion = !active || settings.ui.host == "127.0.0.1";
+                  message = "adguardhome: UI backend must remain loopback-only.";
+                }
+                {
+                  assertion =
+                    !active
+                    ||
+                      validName settings.auth.passwordSecretName
+                      && validName settings.auth.username
+                      && validName settings.tls.serverName
+                      && lib.hasPrefix "/" settings.tls.certificateFile
+                      && lib.hasPrefix "/" settings.tls.privateKeyFile;
+                  message = "adguardhome: active instances require safe auth and TLS names plus absolute runtime certificate paths.";
+                }
+                {
+                  assertion =
+                    !active
+                    ||
+                      settings.dns.port > 0
+                      && settings.ui.port > 0
+                      && settings.tls.httpsPort > 0
+                      && settings.dns.fallbackPort > 0
+                      && (2 * settings.dns.fallbackTimeoutSeconds + 1) < 10
+                      &&
+                        builtins.length (
+                          lib.unique [
+                            settings.dns.port
+                            unboundPort
+                            settings.dns.fallbackPort
+                            settings.ui.port
+                            settings.tls.httpsPort
+                          ]
+                        ) == 5;
+                  message = "adguardhome: listener ports must be nonzero and distinct; DoT must remain disabled and two dnsproxy stages plus margin must fit the 10s outer budget.";
+                }
+                {
+                  assertion =
+                    !active
+                    || !settings.systemResolver.enableLocalStub
+                    ||
+                      settings.dns.port == 53
+                      && settings.systemResolver.nameservers != [ ]
+                      && builtins.all (
+                        host: builtins.elem host settings.dns.bindHosts
+                      ) settings.systemResolver.nameservers;
+                  message = "adguardhome: the enabled system resolver must target configured AdGuard listeners on port 53.";
+                }
+                {
+                  assertion =
+                    !active || config.sops.templates.${templateName}.content == builtins.toJSON effectiveSettings;
+                  message = "adguardhome: the final template must exactly preserve the generated policy.";
+                }
               ];
-              firewall.interfaces.tailscale0.allowedUDPPorts = [ settings.dns.port ];
+            }
+            // lib.optionalAttrs active {
+              clan.core.state.adguardhome.folders = [ "/var/lib/private/AdGuardHome" ];
+              sops = {
+                secrets."${settings.auth.passwordSecretName}" = secretSettings;
+                templates.${templateName} = {
+                  content = builtins.toJSON effectiveSettings;
+                  owner = "root";
+                  group = "root";
+                  mode = "0400";
+                  restartUnits = [ "adguardhome.service" ];
+                };
+              };
+
+              services = {
+                adguardhome = {
+                  enable = true;
+                  package = lib.mkForce adguardPackage;
+                  openFirewall = false;
+                  inherit (settings.ui) host port;
+                  mutableSettings = false;
+                  settings = null;
+                };
+                dnsproxy = {
+                  enable = true;
+                  package = lib.mkForce dnsproxyPackage;
+                  settings = dnsproxySettings;
+                  flags = [ ];
+                };
+                resolved.enable = lib.mkIf settings.systemResolver.enableLocalStub (lib.mkForce false);
+              };
+
+              systemd.services.adguardhome = {
+                after = [
+                  "dnsproxy.service"
+                ]
+                ++ sopsUnits;
+                wants = [
+                  "dnsproxy.service"
+                ]
+                ++ sopsUnits;
+                serviceConfig = {
+                  LoadCredential = "config:${configCredentialPath}";
+                  ExecStartPre = [
+                    "${pkgs.coreutils}/bin/install -m 600 %d/config /var/lib/AdGuardHome/AdGuardHome.yaml"
+                    "${adguardPackage}/bin/AdGuardHome -c /var/lib/AdGuardHome/AdGuardHome.yaml --check-config"
+                  ];
+                };
+              };
+
+              networking = {
+                resolvconf.useLocalResolver = lib.mkIf settings.systemResolver.enableLocalStub true;
+                nameservers = lib.mkIf settings.systemResolver.enableLocalStub (
+                  lib.mkForce settings.systemResolver.nameservers
+                );
+              };
             };
           };
       };

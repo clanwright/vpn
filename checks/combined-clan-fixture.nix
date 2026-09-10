@@ -13,12 +13,38 @@ let
     builtins.attrNames fixture.instances
   );
   inherit (combined) config machine;
+  machineOptions = config.nixosConfigurations.vpn-fixture.options;
+  publisherFieldOptions =
+    machineOptions.clanwright.vpn.publishers.type.nestedTypes.elemType.getSubOptions
+      [ ];
   units = machine.systemd.services;
   adguardTemplateNames = builtins.filter (lib.hasSuffix "-adguardhome.yaml") (
     builtins.attrNames machine.sops.templates
   );
   adguardTemplate = machine.sops.templates.${builtins.head adguardTemplateNames};
   adguardSettings = builtins.fromJSON adguardTemplate.content;
+  adguardIntegration = machine.clanwright.dns.adguardhome.integration;
+  publisherIntegration = machine.clanwright.vpn.publishers.vpn-client-profiles;
+  caddyFragments = machine.networkCore.caddy.effectiveFragments;
+  acmeReloadUnits = machine.networkCore.acme.reloadServices.fixture;
+  publicationUnitName = lib.removeSuffix ".service" publisherIntegration.publicationUnit;
+  refreshUnitName = lib.removeSuffix ".service" publisherIntegration.refreshUnit;
+  publicationUnit = units.${publicationUnitName};
+  refreshUnit = units.${refreshUnitName};
+  caddyUnit = units.caddy;
+  pathTokenSecret = machine.sops.secrets."mihomo-client-fixture-cHJvYmU-path-token";
+  tmpfilesRules = machine.systemd.tmpfiles.rules;
+  afterFinalPrivateReset = lib.last (lib.splitString "private_tmp_files=()" publicationUnit.script);
+  unitDoesNotReference =
+    referenced: unit:
+    builtins.all (field: !(builtins.elem referenced (lib.toList (unit.${field} or [ ])))) [
+      "after"
+      "before"
+      "requires"
+      "requiredBy"
+      "wants"
+      "wantedBy"
+    ];
   contract =
     builtins.attrNames config.inventory.instances
     == lib.sort builtins.lessThan (supportNames ++ serviceNames)
@@ -45,9 +71,110 @@ let
     && !(builtins.elem "unbound.service" units.adguardhome.requires)
     && adguardSettings.dns.upstream_dns == [ "127.0.0.1:5335" ]
     && adguardSettings.dns.fallback_dns == [ "127.0.0.1:5336" ]
+    &&
+      adguardIntegration == {
+        schemaVersion = 1;
+        uiBackend = {
+          host = "127.0.0.1";
+          port = 3000;
+        };
+        dohBackend = {
+          host = "127.0.0.1";
+          port = 8444;
+          serverName = "dns.example.invalid";
+        };
+        reloadUnits = [ "adguardhome.service" ];
+      }
+    && machineOptions.clanwright.dns.adguardhome.integration.readOnly
+    && caddyFragments ? dns-adguardhome-ui
+    && caddyFragments.dns-adguardhome-ui.listenAddresses == [ "100.64.0.10" ]
+    && lib.hasInfix ''{http.request.local.host} != "100.64.0.10"'' caddyFragments.dns-adguardhome-ui.extraConfig
+    && lib.hasInfix ''{http.request.local.port} != "443"'' caddyFragments.dns-adguardhome-ui.extraConfig
+    && caddyFragments ? dns-adguardhome-doh
+    && caddyFragments.dns-adguardhome-doh.listenAddresses == [ "192.0.2.10" ]
+    && lib.hasInfix ''{http.request.local.host} != "192.0.2.10"'' caddyFragments.dns-adguardhome-doh.extraConfig
+    && lib.hasInfix "tls_server_name ${adguardIntegration.dohBackend.serverName}" caddyFragments.dns-adguardhome-doh.extraConfig
+    && builtins.elem "caddy.service" acmeReloadUnits
+    && builtins.elem "adguardhome.service" acmeReloadUnits
+    && builtins.elem "acme" (lib.toList units.adguardhome.serviceConfig.SupplementaryGroups)
+    &&
+      machine.networking.firewall.interfaces.tailscale0.allowedTCPPorts == [
+        53
+        443
+      ]
+    && machine.networking.firewall.interfaces.tailscale0.allowedUDPPorts == [ 53 ]
+    && publisherIntegration.schemaVersion == 1
+    && publisherFieldOptions.schemaVersion.type.check 1
+    && !(publisherFieldOptions.schemaVersion.type.check 2)
+    && builtins.all (field: publisherFieldOptions.${field}.readOnly) [
+      "schemaVersion"
+      "configGatewayDomain"
+      "profileRoot"
+      "assetRoot"
+      "linksRoot"
+      "routeConfig"
+      "publicationUnit"
+      "refreshUnit"
+      "statusPath"
+      "readerGroup"
+    ]
+    && publisherIntegration.profileRoot == "/run/vpn-client-profiles/fixture/published/current"
+    && publisherIntegration.configGatewayDomain == "profiles.example.invalid"
+    && publisherIntegration.assetRoot == "/var/lib/vpn-client-profiles/fixture/assets"
+    && publisherIntegration.linksRoot == "/run/vpn-client-profiles/fixture/published/current/links"
+    && publisherIntegration.statusPath == "/var/lib/vpn-client-profiles/fixture/status.json"
+    && publisherIntegration.readerGroup == "vpn-client-profiles"
+    && publisherIntegration.publicationUnit == "vpn-client-profiles-publish-fixture.service"
+    && publisherIntegration.refreshUnit == "vpn-client-profiles-public-assets-fixture.service"
+    && lib.hasPrefix "log_skip" (lib.strings.trim publisherIntegration.routeConfig)
+    && !(lib.hasInfix "profiles.example.invalid" publisherIntegration.routeConfig)
+    && !(lib.hasInfix "bind " publisherIntegration.routeConfig)
+    && !(lib.hasInfix "tls " publisherIntegration.routeConfig)
+    && !(lib.hasInfix "import " publisherIntegration.routeConfig)
+    && caddyFragments ? vpn-client-profiles
+    && caddyFragments.vpn-client-profiles.hostName == publisherIntegration.configGatewayDomain
+    &&
+      caddyFragments.vpn-client-profiles.listenAddresses == [
+        "192.0.2.10"
+        "100.64.0.10"
+      ]
+    && lib.hasInfix ''{http.request.local.host} != "100.64.0.10"'' caddyFragments.vpn-client-profiles.extraConfig
+    && lib.hasInfix publisherIntegration.linksRoot caddyFragments.vpn-client-profiles.extraConfig
+    && lib.hasInfix publisherIntegration.routeConfig caddyFragments.vpn-client-profiles.extraConfig
+    && builtins.elem publisherIntegration.readerGroup (
+      lib.toList caddyUnit.serviceConfig.SupplementaryGroups
+    )
+    && unitDoesNotReference publisherIntegration.publicationUnit caddyUnit
+    && unitDoesNotReference "caddy.service" publicationUnit
+    && publicationUnit.serviceConfig.Restart == "on-failure"
+    && lib.hasSuffix "/bin/rm -f ${publisherIntegration.profileRoot}" publicationUnit.serviceConfig.ExecStartPre
+    && lib.hasInfix "rm -f -- ${publisherIntegration.profileRoot}" publicationUnit.postStop
+    && lib.hasInfix "find /run/vpn-client-profiles/fixture/generations" publicationUnit.postStop
+    && lib.hasInfix "/bin/rm -rf -- {} +" publicationUnit.postStop
+    && lib.hasInfix "exec >/dev/null 2>&1" publicationUnit.postStop
+    && lib.hasInfix ''mv -Tf -- "$link_tmp" ${publisherIntegration.profileRoot}'' publicationUnit.script
+    && builtins.all (rule: builtins.elem rule tmpfilesRules) [
+      "d /run/vpn-client-profiles/fixture 0750 root ${publisherIntegration.readerGroup} -"
+      "d /run/vpn-client-profiles/fixture/published 0750 root ${publisherIntegration.readerGroup} -"
+      "d /run/vpn-client-profiles/fixture/generations 0750 root ${publisherIntegration.readerGroup} -"
+    ]
+    && lib.hasInfix ''find "$stage" -type d -exec chmod 0750'' publicationUnit.script
+    && lib.hasInfix ''find "$stage" -type f -exec chmod 0440'' publicationUnit.script
+    && lib.hasInfix ''private_tmp_files+=("$tmp")'' publicationUnit.script
+    && lib.hasInfix ''rm -f -- "''${private_tmp_files[@]}"'' publicationUnit.script
+    && lib.hasInfix "trap - EXIT" afterFinalPrivateReset
+    && lib.hasInfix "test -s ${publisherIntegration.assetRoot}/" publicationUnit.script
+    && !(builtins.elem publisherIntegration.refreshUnit (lib.toList (publicationUnit.after or [ ])))
+    && !(builtins.elem publisherIntegration.refreshUnit (lib.toList (publicationUnit.wants or [ ])))
+    && refreshUnit.serviceConfig.Restart == "on-failure"
+    && machine.systemd.timers.${refreshUnitName}.timerConfig.Persistent
+    && lib.hasInfix ''record_status "$name" failed download_failed'' refreshUnit.script
+    && !(lib.hasInfix "rm -f ${publisherIntegration.assetRoot}/" refreshUnit.script)
+    && lib.hasInfix publisherIntegration.statusPath refreshUnit.script
+    && pathTokenSecret.restartUnits == [ publisherIntegration.publicationUnit ]
     && machine.services.dnsproxy.settings.listen-addrs == [ "127.0.0.1" ]
-    && machine.networkCore.caddy.effectiveFragments ? fixture-site
-    && builtins.elem "forward-proxy" machine.networkCore.caddy.effectiveFragments.fixture-site.capabilities;
+    && caddyFragments ? fixture-site
+    && builtins.elem "forward-proxy" caddyFragments.fixture-site.capabilities;
 in
 if !contract then
   throw "Combined external Clan fixture contract failed"

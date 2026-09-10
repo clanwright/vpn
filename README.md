@@ -23,6 +23,8 @@ bindings, exposure policy, monitoring and deployment.
 - [Package authority](docs/package-authority.md): package sources and selection.
 - [Verification](docs/operations/verify.md): local checks and retained artifacts.
 - [Release](docs/operations/release.md): release procedure.
+- [Contract migration](docs/operations/migrate-contracts.md): consumer changes
+  for provider schema 2 and the separated publication/exposure contracts.
 
 Module pages document settings and link to their operating procedures.
 Documentation describes the checked-in implementation; it does not establish

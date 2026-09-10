@@ -38,7 +38,11 @@ snapshot on exit.
 The evaluation suite covers the seven stable module IDs, closed schemas,
 negative security overrides, generated server and client configuration
 structures, service isolation, package authority, secret/template wiring and
-combined Clan composition. Each named test forces all its nested results and
+combined Clan composition. Publisher checks cover static log suppression,
+publication cleanup/retry declarations, public-cache paths and readiness,
+secret restart targets and consumer-owned integration. These are generated
+configuration and script contracts, not execution of the runtime scripts.
+Each named test forces all its nested results and
 rejects false booleans or non-boolean leaves before returning JSON. Focused and
 full evaluation use that same success condition; the top-level `all` value
 forces every named result.

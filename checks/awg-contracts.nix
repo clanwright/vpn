@@ -27,6 +27,7 @@ let
       {
         name = "probe";
         publicKey = "CCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCA=";
+        clientPrivateKeySecretName = "consumer/arbitrary-probe-private-key";
         allowedIPs = [ "10.77.0.2/32" ];
         clientPersistentKeepalive = 25;
       }
@@ -46,6 +47,7 @@ let
       {
         name = "second";
         publicKey = "MjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjI=";
+        clientPrivateKeySecretName = "consumer/arbitrary-second-private-key";
         allowedIPs = [ "10.78.0.2/32" ];
         clientPersistentKeepalive = null;
       }
@@ -144,6 +146,62 @@ let
       }
     ))
     && !(assertionsPass (baseSettings // { serverPublicKey = "not-a-key"; }))
+    && !(schemaAccepts (
+      baseSettings
+      // {
+        peers = [
+          (builtins.removeAttrs (builtins.head baseSettings.peers) [ "clientPrivateKeySecretName" ])
+        ];
+      }
+    ))
+    && !(assertionsPass (
+      baseSettings
+      // {
+        peers = [
+          ((builtins.head baseSettings.peers) // { clientPrivateKeySecretName = "../secret"; })
+        ];
+      }
+    ))
+    && !(assertionsPass (
+      baseSettings
+      // {
+        peers = [
+          (
+            (builtins.head baseSettings.peers)
+            // {
+              clientPrivateKeySecretName = baseSettings.privateKeySecretName;
+            }
+          )
+        ];
+      }
+    ))
+    && !(assertionsPass (
+      baseSettings
+      // {
+        peers = [
+          (
+            (builtins.head baseSettings.peers)
+            // {
+              clientPrivateKeySecretName = baseSettings.headerProtectionKeySecretName;
+            }
+          )
+        ];
+      }
+    ))
+    && !(assertionsPass (
+      baseSettings
+      // {
+        peers = baseSettings.peers ++ [
+          {
+            name = "second";
+            publicKey = "DDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDA=";
+            clientPrivateKeySecretName = "consumer/arbitrary-probe-private-key";
+            allowedIPs = [ "10.77.0.3/32" ];
+            clientPersistentKeepalive = null;
+          }
+        ];
+      }
+    ))
     && !(assertionsPass (
       baseSettings
       // {
@@ -166,6 +224,7 @@ let
           {
             name = "second";
             publicKey = "DDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDA=";
+            clientPrivateKeySecretName = "consumer/second-private-key";
             allowedIPs = [ "10.77.0.2/32" ];
             clientPersistentKeepalive = null;
           }
@@ -193,6 +252,7 @@ let
           {
             name = "second";
             publicKey = "DDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDA=";
+            clientPrivateKeySecretName = "consumer/second-private-key";
             allowedIPs = [ "10.77.0.3/32" ];
             clientPersistentKeepalive = null;
           }
@@ -243,11 +303,15 @@ let
     && !(schemaAccepts (baseSettings // { serverPersistentKeepalive = 25; }));
 
   exportContract =
-    provider.secretNames.headerProtectionKey == "fixture/awg-header-protection-key"
+    provider.schemaVersion == 2
+    && provider.secretNames.headerProtectionKey == "fixture/awg-header-protection-key"
+    && provider.secretNames.clientPrivateKey.probe == "consumer/arbitrary-probe-private-key"
     && metadata.generation == 3
     && metadata.profile == validation.profile
     && metadata.mtu == 1280
     && !(metadata ? headerProtectionKey)
+    && !(metadata ? peerPublicKeys)
+    && !(builtins.head metadata.peers ? clientPrivateKeySecretName)
     && !(metadata ? extraOptions)
     &&
       validation.profile == {

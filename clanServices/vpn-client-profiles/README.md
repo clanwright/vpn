@@ -13,8 +13,7 @@ typed non-secret metadata VPN providers, генерирует профили и 
 Точная схема и defaults определены в [`default.nix`](default.nix), а типы
 профилей, provider refs и links page — в [`types.nix`](types.nix).
 Входы: `enable`, `localMachineName`,
-`configGatewayDomain`, `publicIPv4`, `caddyBindIPv4`, `tailnetIPv4`,
-`edgeDomain`, `acmeCertName`, `secretPrefix`,
+`configGatewayDomain`, `publicIPv4`, `edgeDomain`, `secretPrefix`,
 `excludedProfileNames`, `tailnetAdminDomains`, `personalProxyDomains`, `profiles`,
 `providerRefs`, `profileLinks` и `linksPage`. Provider refs
 содержат machine, instance и canonical protocol. Publisher profiles содержат
@@ -27,8 +26,8 @@ Publisher `enable = false`, `secretPrefix` и gateway address fields пусты
 или nullable. При `enable = false` роль не объявляет сервисы и секреты.
 Из публикации исключается
 профиль `probe`; links page включена, path —
-`/config-links/`, title — `VPN client profiles`, tailnet-only режим
-включён.
+`/config-links/`, title — `VPN client profiles`. Private exposure links page
+задаётся только в consumer.
 
 ## Exports and dependencies
 
@@ -43,6 +42,21 @@ protocol-specific adapter shapes.
 Имена proxies включают полный canonical machine ID и instance ID. Компоненты
 кодируются с длиной, поэтому разные пары machine/instance не могут дать одно
 имя. Compatibility aliases для прежних имён без `-grosbeak` не создаются.
+
+`vpnProvider` использует версию схемы 2, `vpnPublisher` — 1. Read-only NixOS
+output `clanwright.vpn.publishers.<instance>` содержит `schemaVersion = 1`,
+`configGatewayDomain`, `profileRoot`, `assetRoot`, `linksRoot`, `routeConfig`, `readerGroup`,
+`publicationUnit`, `refreshUnit` и `statusPath`. Consumer использует эти
+данные для собственного Caddy site claim и private links route. Публичного
+helper `lib.clientProfiles` нет; внутренние renderer-файлы не являются API.
+
+У active publisher-инстансов на одной машине должны быть разные
+`localMachineName`: это consumer-defined имя runtime-каталогов и units.
+Совпадения отклоняются при evaluation, чтобы инстансы не перезаписывали
+публикацию друг друга.
+Каждому publisher нужен отдельный `configGatewayDomain` и Caddy virtual host:
+два набора token routes и `/assets/v1/catalog/` нельзя объединять в одном site.
+Повторяющиеся gateway domains на одной машине также отклоняются.
 
 Mihomo поступает из `apps-nixpkgs`, а Sing-box — из
 `modern-apps-nixpkgs`; точные revisions и package outputs описаны в
@@ -87,22 +101,50 @@ Naive credentials выбираются по именам профилей из p
 
 ## State and secrets
 
-Runtime files находятся под `/run/mihomo-client-config/<machine>` и
-`/run/caddy-auth`; persistent state роль не объявляет. UUID/password/
-key inputs читаются по SOPS paths через заданные secret names. Generated
-profiles, link tokens и credentials не записываются в Git или Nix store.
+Secret runtime files находятся под `/run/vpn-client-profiles/<machine>`.
+UUID/password/key inputs читаются по SOPS paths через заданные secret names.
+Generated profiles, link tokens и credentials не записываются в Git или Nix store.
 Имена machine/profile/instance ограничены безопасными 64-символьными
 идентификаторами, а secret names — сегментным SOPS path grammar. Каждый
 profile link обязан ссылаться на renderer-owned path-token secret. Сам token
 должен состоять из 32–128 unpadded base64url символов без завершающего newline;
-renderer проверяет raw bytes до генерации Caddy fragment и links page.
+renderer проверяет raw bytes до публикации файлов и links page.
+
+Публикация — одна транзакция для всех profiles и links page. Старое дерево
+убирается из выдачи перед генерацией; новое становится доступным только после
+успешного завершения. Ошибка или остановка publisher убирает текущую публикацию,
+поэтому старые credentials не остаются доступными при неудачном обновлении.
+Загруженные ранее профили у клиентов этим не отзываются: provider credential
+revocation остаётся операцией consumer. Publisher добавляет секретам только
+publication unit как restart target; другие роли могут объявлять собственные
+restart targets для тех же bindings.
+
+Публичные rule assets сохраняются в
+`/var/lib/vpn-client-profiles/<machine>/assets`. Первый запуск ждёт необходимых
+списков с автоматическими повторами. Ошибка обновления сохраняет последнюю
+принятую копию без жёсткого срока; возраст и ошибки доступны через несекретный
+`statusPath` для consumer monitoring. Это не гарантирует актуальность selective
+rules при длительной недоступности upstream.
+
+`statusPath` — JSON по именам скачиваемых файлов: `attempted_at`, `result`
+(`refreshed` или `failed`), `reason` и время последнего принятого обновления
+`refreshed_at`, сохраняемое после ошибки. Для ошибок записи самого status file
+consumer также учитывает результат refresh unit. Локальный список
+`personalProxyDomains` синхронизирует только publication unit до проверки
+готовности; удалённый refresh его не перезаписывает.
+При runtime-загрузке SRS проходит проверку штатным sing-box; для MRS и
+текстовых upstream-списков принятие ограничено успешным HTTP-ответом и
+непустым файлом. Cache не является доказательством корректности всех rule sets
+для реального клиента.
 
 ## Network exposure
 
-Publisher добавляет Caddy config gateway и optional tailnet-only links
-page; public bind и certificate claim задаются явно. Mirror jobs для
-rule assets и HageZi работают как timers, но не создают новый VPN
-listener. Profile page не является публичной WAN admin surface.
+Consumer объявляет Caddy config gateway, bind/certificate claims и private
+links page, а также добавляет `readerGroup` к supplementary groups Caddy.
+`routeConfig` статичен, не содержит токенов, host/bind/TLS и подавляет access
+logging. Caddy не импортирует runtime fragments, не зависит от publication unit
+и не перезапускается при обновлении профилей. Ошибка publisher делает недоступной
+только публикацию. Mirror timers обновляют публичные assets без нового listener.
 
 ## Verification
 

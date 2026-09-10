@@ -26,12 +26,16 @@ The VLESS module ID contains `mihomo` for identity stability; its runtime is Xra
 | `lib.exportInterfaces { lib }` | Constructs the interface definitions. |
 | `lib.vpnExports { lib }` | Closed provider/publisher types and projections. |
 | `lib.awgValidation { lib }` | AmneziaWG option and package-family validation. |
-| `lib.clientProfiles { config, lib, pkgs, settings, providers }` | Profile renderer consuming selected typed providers with repository-owned package selection. |
 
 Provider and publisher schemas reject unknown fields. Their definitions are in
 [the export schema](../modules/contracts/vpn-exports.nix); modules and checks
 use the same definitions. Provider selection derives the required role from the
 protocol; callers do not supply a separate role mapping.
+
+`vpnProvider` uses schema version 2; `vpnPublisher` uses version 1. AWG peer
+public keys have one canonical representation in `transportMetadata.peers`.
+Each AWG peer supplies `clientPrivateKeySecretName`; its exact consumer binding
+is exported through `secretNames.clientPrivateKey`.
 
 Consumers must use public attributes, without importing internal files under
 `modules/`, `packages/`, `checks/` or `clanServices/`. Extending the interface
@@ -54,6 +58,27 @@ containing public static content. NaiveProxy requires one explicit listener on
 its selected public-site claim, matching the declared bind address. The consumer
 supplies AdGuard's Unbound upstream binding and any systemd startup relationship
 between the two services.
+
+AdGuard and the profile publisher do not create Network claims, ACME bindings
+or Tailscale ordering. Their read-only NixOS integration outputs expose runtime
+endpoints and paths for consumer composition:
+
+- `clanwright.dns.adguardhome.integration`: version 1, `uiBackend`,
+  `dohBackend` (including TLS server name), and `reloadUnits`; null when disabled.
+- `clanwright.vpn.publishers.<instance>`: version 1, consumer-supplied gateway
+  domain, publication and public-asset
+  paths, static route configuration, reader group, unit names and update status.
+
+The consumer owns host names, bind addresses, certificate permissions, Caddy
+claims and private access to the links page. It grants Caddy the exported reader
+group and uses the publisher's static route configuration with access logging
+suppressed. Tokenized request URIs must never enter access logs.
+Each active publisher has a distinct runtime label and gateway domain on its
+machine; one static route configuration belongs to one Caddy virtual host.
+
+The profile renderer is internal. Consumers use the publisher role and its
+integration output rather than importing renderer files. See the
+[migration procedure](operations/migrate-contracts.md) for the breaking changes.
 
 Roles with an `enable` setting use it alone to control their declarations.
 Disabled roles do not retain service or secret declarations; credential storage

@@ -161,10 +161,6 @@ let
         type = types.listOf (types.submodule awgPeerModule);
         default = [ ];
       };
-      peerPublicKeys = lib.mkOption {
-        type = types.attrsOf nonEmptyStr;
-        default = { };
-      };
     };
   };
   protocolMetadataFields = {
@@ -199,7 +195,6 @@ let
       "address"
       "mtu"
       "peers"
-      "peerPublicKeys"
       "generation"
       "profile"
     ];
@@ -281,7 +276,7 @@ let
 
   vpnProviderModule = {
     options = {
-      schemaVersion = mkOption (fixed 1);
+      schemaVersion = mkOption (fixed 2);
       instanceId = mkOption safeIdentityType;
       machine = mkOption safeIdentityType;
       role = mkOption (
@@ -469,13 +464,6 @@ let
       || builtins.isInt (value.serverPersistentKeepalive or null)
     );
 
-  validPeerPublicKeys =
-    value:
-    builtins.isAttrs value
-    && builtins.all (name: isNonEmptyString name && isNonEmptyString (builtins.getAttr name value)) (
-      builtins.attrNames value
-    );
-
   credentialMapExact =
     profileNames: value:
     builtins.isAttrs value
@@ -546,7 +534,6 @@ let
         || !(builtins.isNull (metadata.address or null) || isNonEmptyString (metadata.address or null))
         || !builtins.isList (metadata.peers or [ ])
         || !(builtins.all validAwgPeer (metadata.peers or [ ]))
-        || !validPeerPublicKeys (metadata.peerPublicKeys or { })
         || !(builtins.isNull (metadata.mtu or null) || builtins.isInt (metadata.mtu or null))
         || (metadata.generation or null) != 3
         || !validAwgProfile (metadata.profile or null)
@@ -618,7 +605,7 @@ let
       validShape =
         builtins.isAttrs raw
         && attrsHaveExactly requiredFields raw
-        && raw.schemaVersion == 1
+        && raw.schemaVersion == 2
         && raw.instanceId == providerInstanceId
         && raw.machine == providerMachine
         && raw.role == expectedRole
@@ -651,9 +638,7 @@ let
             let
               peerNames = map (peer: peer.name) (metadata.peers or [ ]);
             in
-            peerNames == raw.profileNames
-            && peerNames == lib.unique peerNames
-            && attrsHaveExactly raw.profileNames (metadata.peerPublicKeys or { })
+            peerNames == raw.profileNames && peerNames == lib.unique peerNames
           )
         )
         && (protocol != "hysteria2" || metadata.userNames == raw.profileNames)

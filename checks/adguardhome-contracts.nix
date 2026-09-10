@@ -15,7 +15,24 @@ let
     dnsproxyPackageFor = _: dnsproxyPackage;
   };
   interface = service.roles.resolver.interface { inherit lib; };
-  baseSettings = fixture.instances.dns-adguardhome.roles.resolver.machines.vpn-fixture.settings;
+  fixtureSettings = fixture.instances.dns-adguardhome.roles.resolver.machines.vpn-fixture.settings;
+  baseSettings =
+    lib.recursiveUpdate
+      (
+        (builtins.removeAttrs fixtureSettings [
+          "acme"
+          "ingress"
+        ])
+        // {
+          ui = builtins.removeAttrs fixtureSettings.ui [ "domain" ];
+        }
+      )
+      {
+        tls = {
+          certificateFile = "/run/certificates/adguardhome/fullchain.pem";
+          privateKeyFile = "/run/certificates/adguardhome/key.pem";
+        };
+      };
   evalSettings =
     rawSettings:
     (lib.evalModules {
@@ -35,15 +52,15 @@ let
         instanceName = "dns-adguardhome";
         machine.name = "vpn-fixture";
       };
+      module = instance.nixosModule { inherit config lib pkgs; };
     in
-    instance.nixosModule { inherit config lib pkgs; };
+    module.config // { inherit (module) options; };
   placeholderConfig = {
     sops.placeholder.${baseSettings.auth.passwordSecretName} =
       "<SOPS:fixture-adguard-bcrypt:PLACEHOLDER>";
   };
   baselineModule = moduleFor baseSettings placeholderConfig;
   baselineConfig = lib.recursiveUpdate placeholderConfig {
-    inherit (baselineModule) networkCore;
     services = {
       inherit (baselineModule.services) adguardhome dnsproxy;
     };
@@ -57,9 +74,18 @@ let
     message: rawSettings: !(assertionFor message rawSettings placeholderConfig).assertion;
   active = (import ./lib/consumer.nix { inherit inputs root self; }) {
     instanceNames = [ "dns-adguardhome" ];
-    includeNetwork = true;
+    includeNetwork = false;
   };
   disabledModule = moduleFor (baseSettings // { enable = false; }) { };
+  disabledIntegration =
+    (lib.evalModules {
+      modules = [
+        {
+          options.clanwright.dns.adguardhome.integration =
+            disabledModule.options.clanwright.dns.adguardhome.integration;
+        }
+      ];
+    }).config.clanwright.dns.adguardhome.integration;
   customRulesAccepted = effective.user_rules == baseSettings.filtering.userRules;
   settingOverrideResults = [
     (rejectsSetting "adguardhome: dns.upstream must contain one 127.0.0.1:<port> Unbound endpoint." (
@@ -172,7 +198,14 @@ let
     )
     && !(schemaAccepts (baseSettings // { lifecycle = "enabled"; }))
     && !(schemaAccepts (lib.recursiveUpdate baseSettings { auth.enable = true; }))
-    && !(schemaAccepts (lib.recursiveUpdate baseSettings { tls.dotPort = 0; }));
+    && !(schemaAccepts (lib.recursiveUpdate baseSettings { tls.dotPort = 0; }))
+    && !(schemaAccepts (baseSettings // { ingress = { }; }))
+    && !(schemaAccepts (baseSettings // { acme.certName = "example.invalid"; }))
+    && !(schemaAccepts (lib.recursiveUpdate baseSettings { ui.domain = "adguard.example.invalid"; }))
+    && !(schemaAccepts (
+      lib.recursiveUpdate baseSettings { tls.certificateFile = "relative/cert.pem"; }
+    ))
+    && !(schemaAccepts (lib.recursiveUpdate baseSettings { tls.privateKeyFile = "relative/key.pem"; }));
   effectiveContract =
     builtins.all (entry: entry.assertion) machine.assertions
     && machine.services.adguardhome.enable
@@ -203,6 +236,8 @@ let
     && effective.querylog.interval == "168h"
     && effective.statistics.interval == "2160h"
     && !effective.dns.anonymize_client_ip
+    && effective.tls.certificate_path == baseSettings.tls.certificateFile
+    && effective.tls.private_key_path == baseSettings.tls.privateKeyFile
     &&
       effective.users == [
         {
@@ -260,17 +295,39 @@ let
       ]
     && builtins.elem "dnsproxy.service" adguardUnit.wants
     && builtins.elem "dnsproxy.service" adguardUnit.after
+    && !(builtins.elem "tailscaled.service" adguardUnit.wants)
+    && !(builtins.elem "tailscaled.service" adguardUnit.after)
+    && !(builtins.elem "tailscaled-autoconnect.service" adguardUnit.wants)
+    && !(builtins.elem "tailscaled-autoconnect.service" adguardUnit.after)
     &&
       builtins.elem "sops-install-secrets.service" adguardUnit.after == machine.sops.useSystemdActivation
     &&
       builtins.elem "sops-install-secrets.service" adguardUnit.wants == machine.sops.useSystemdActivation
-    && !(lib.hasInfix "tls_insecure_skip_verify"
-      machine.networkCore.caddy.effectiveFragments."dns-adguardhome-doh".extraConfig
-    );
+    && !(adguardUnit.serviceConfig ? SupplementaryGroups);
+  integrationContract =
+    !(baselineModule ? networkCore)
+    && baselineModule.options.clanwright.dns.adguardhome.integration.readOnly
+    && disabledIntegration == null
+    && ((baselineModule.networking or { }).firewall or { }) == { }
+    &&
+      machine.clanwright.dns.adguardhome.integration == {
+        schemaVersion = 1;
+        uiBackend = {
+          host = baseSettings.ui.host;
+          port = baseSettings.ui.port;
+        };
+        dohBackend = {
+          host = baseSettings.ui.host;
+          port = baseSettings.tls.httpsPort;
+          serverName = baseSettings.tls.serverName;
+        };
+        reloadUnits = [ "adguardhome.service" ];
+      };
   lifecycleContract =
     (disabledModule.services or { }) == { }
     && (disabledModule.systemd or { }) == { }
-    && (disabledModule.networkCore or { }) == { }
+    && !(disabledModule ? networkCore)
+    && disabledIntegration == null
     && ((disabledModule.sops or { }).templates or { }) == { }
     && ((disabledModule.sops or { }).secrets or { }) == { }
     && (disabledModule.clan or { }) == { };
@@ -285,6 +342,7 @@ let
     && effectiveContract
     && cascadeContract
     && credentialContract
+    && integrationContract
     && lifecycleContract
     && negativeContract;
 in
@@ -295,6 +353,7 @@ if !contract then
         cascadeContract
         credentialContract
         effectiveContract
+        integrationContract
         lifecycleContract
         negativeContract
         schemaContract
@@ -308,6 +367,7 @@ else
       cascadeContract
       credentialContract
       effectiveContract
+      integrationContract
       lifecycleContract
       negativeContract
       schemaContract

@@ -10,7 +10,6 @@ let
     enable = true;
     path = "/config-links/";
     title = "VPN client profiles";
-    tailnetOnly = true;
   };
   providerNamespace =
     provider:
@@ -72,10 +71,6 @@ let
       title = lib.mkOption {
         type = lib.types.str;
         default = linksPageDefaults.title;
-      };
-      tailnetOnly = lib.mkOption {
-        type = lib.types.bool;
-        default = linksPageDefaults.tailnetOnly;
       };
     };
   });

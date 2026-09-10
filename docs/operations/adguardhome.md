@@ -66,9 +66,11 @@ The evaluated configuration must show these source properties:
    `settings=null`, `LoadCredential`, direct `install -m 600` and the exact
    package's `--check-config` command. The native ExecStart, DynamicUser,
    StateDirectory and sandbox remain owned by the NixOS module.
-6. Plain DNS includes loopback and only private addresses. UI and DoH Caddy
-   fragments bind explicit addresses, check destination address and port 443,
-   and Caddy verifies the HTTPS backend certificate with the configured SNI.
+6. Plain DNS includes loopback and only private addresses. The role exposes typed
+   UI/DoH backend metadata and consumes explicit certificate file bindings. It
+   declares no Network claims, firewall exposure, ACME or Tailscale dependencies.
+   The consumer integration fixture binds explicit frontend addresses and verifies
+   the HTTPS backend certificate with the exported SNI.
 7. Query log is 7 days, statistics 90 days, IP anonymization is off, Safe
    Browsing is off, parental control and Safe Search remain on, and consumer
    `filtering.userRules` survive declarative rendering.

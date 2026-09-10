@@ -106,25 +106,6 @@
       lib = {
         inherit vpnExports;
         awgValidation = { lib }: import ./clanServices/amneziawg/validation.nix { inherit lib; };
-        clientProfiles =
-          {
-            config,
-            lib,
-            pkgs,
-            settings,
-            providers,
-          }:
-          import ./clanServices/vpn-client-profiles/client-profiles.nix {
-            appsPkgs = self.packages.${pkgs.system};
-            mihomoPackage = self.packages.${pkgs.system}.mihomo;
-            inherit
-              config
-              lib
-              pkgs
-              settings
-              providers
-              ;
-          };
         inherit exportInterfaces;
       };
 

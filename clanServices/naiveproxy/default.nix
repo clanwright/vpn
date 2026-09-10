@@ -149,7 +149,7 @@ in
       {
         exports = lib.optionalAttrs active (mkExports {
           vpnProvider = {
-            schemaVersion = 1;
+            schemaVersion = 2;
             instanceId = instanceName;
             machine = providerMachine;
             role = "addon";
