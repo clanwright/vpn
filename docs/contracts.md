@@ -12,8 +12,8 @@ The stable service surface is `clan.modules`, with exactly seven module IDs:
 | `@clanwright/dns-adguardhome` | DNS/DoH front end |
 | `@clanwright/dns-unbound` | recursive DNS backend |
 
-Consumers select these IDs through their catalog and pass only documented Clan
-role settings. Module identities remain stable; the September candidate changes
+Consumers select these IDs through their catalog and pass documented Clan
+role settings and explicitly documented NixOS inputs. Module identities remain stable; the September candidate changes
 settings and exports together where the new protocol contract requires it.
 Consumer migration must use this candidate's documented schema.
 
@@ -55,6 +55,14 @@ reserve remains separate.
 Xray, Hysteria and AWG scoped ingress requires the consumer's enabled nftables
 firewall. These roles assert the selected backend; they do not silently change
 the consumer's firewall implementation.
+
+Hysteria accepts the consumer's static content through the NixOS option
+`clanwright.vpn.hysteria2.masqueradeRoot`, a required absolute Nix store
+directory path when the service is active. It renders a native `file://`
+masquerade without selecting, copying or fetching a site. The consumer owns
+the path and public contents; VPN does not depend on a site module or a web
+server. The former role setting `masqueradeUrl` is removed. See the
+[module settings](../clanServices/mihomo-hysteria2/README.md#settings).
 
 The Naive add-on accepts an identity-to-secret-name map; the former
 `ibelyasov`, `bsv`, `probe` keys remain valid. `probeUserName` identifies the

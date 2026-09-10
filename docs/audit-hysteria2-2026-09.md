@@ -53,7 +53,7 @@ MetaCubeX/sing-quic `38b0e9295f51` от 26 июля; 1.19.29 — `68e10a6afdc3` 
 | Порты | Один destination-scoped UDP endpoint | Hopping отсутствует |
 | MTU/windows | Не переопределены | Используются defaults Mihomo/sing-quic |
 | Runtime | `mihomo-hysteria2.service`, отдельный non-root user и SOPS JSON template | Low port получает только `CAP_NET_BIND_SERVICE`; Realm/Mimic/ECH отсутствуют |
-| Masquerade backend | Stock Mihomo отключает certificate verification для исходящего HTTPS cover request | Не влияет на client→listener TLS verification, но cover response не аутентифицирует upstream |
+| Masquerade | Встроенный `file://` handler раздаёт публичный статический каталог, заданный consumer через NixOS option `clanwright.vpn.hysteria2.masqueradeRoot` | Исходящего HTTPS cover request больше нет; выбор и содержимое каталога принадлежат consumer |
 | Placement | Один active instance на `x86_64-linux`, конкретный `listenIPv4`, включенный nftables firewall | Wildcard `0.0.0.0`, второй active instance и другой backend отклоняются assertions |
 
 **Gecko поддерживается симметрично:** outbound есть уже в Mihomo 1.19.29;
@@ -76,6 +76,11 @@ Hysteria `disableChromeParrot`/`disableStatelessReset` нельзя копиро
 3. Server использует Gecko 512–1200; Salamander compatibility path удален.
 4. Сохранены TLS verification, ALPN h3, отсутствие bandwidth caps и штатные
    flow-control/MTU. Port hopping, Realm, Mimic и ECH не добавлены.
+   В доработке от 9 сентября удалён внешний HTTPS masquerade с отключённой
+   upstream TLS verification в stock Mihomo. Вместо него принят общий входной
+   путь к статическому каталогу в Nix store; VPN не знает о сайте consumer.
+   Файловый handler доступен только после снятия Gecko обфускации и не делает
+   UDP endpoint обычным браузерным HTTP/3 сайтом.
 5. Осталась live-приемка: новое подключение, TCP и UDP relay, длительная передача,
    idle/reconnect на трех пользовательских сетях. HEAD delay test недостаточен.
 

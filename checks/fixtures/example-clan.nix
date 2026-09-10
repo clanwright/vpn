@@ -25,6 +25,24 @@ let
 in
 rec {
   machine = {
+    imports = [
+      (
+        { lib, options, ... }:
+        {
+          config =
+            lib.optionalAttrs
+              (lib.hasAttrByPath [
+                "clanwright"
+                "vpn"
+                "hysteria2"
+                "masqueradeRoot"
+              ] options)
+              {
+                clanwright.vpn.hysteria2.masqueradeRoot = "/nix/store/00000000000000000000000000000000-hysteria-static-cover/share/hysteria";
+              };
+        }
+      )
+    ];
     nixpkgs.hostPlatform = "x86_64-linux";
     boot.isContainer = true;
     networking.nftables.enable = true;
@@ -94,7 +112,6 @@ rec {
           passwordSecretName = "fixture-hysteria-password";
         }
       ];
-      masqueradeUrl = "https://cover.example.invalid";
       acmeCertName = "fixture";
       obfsPasswordSecretName = "fixture-hysteria-obfs-password";
     };

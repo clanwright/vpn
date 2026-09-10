@@ -12,11 +12,25 @@ protocols. Stable module ID — `@clanwright/vpn-mihomo-hysteria2`, systemd unit
 ## Settings
 
 Параметры: `lifecycle`, `enable`, обязательные `listenIPv4`, `serverName`,
-`acmeCertName`, `masqueradeUrl`, список per-device `users` с `name` и
+`acmeCertName`, список per-device `users` с `name` и
 `passwordSecretName`, а также `port` и `obfsPasswordSecretName`.
 `listenIPv4` должен быть конкретным адресом; wildcard `0.0.0.0` запрещен.
 На одной машине может быть активен только один instance, поскольку unit и
 закрытый SOPS template имеют стабильные имена.
+
+Consumer задаёт NixOS option
+`clanwright.vpn.hysteria2.masqueradeRoot`: абсолютный путь к публичному
+статическому каталогу в Nix store. Например, для своего пакета сайта:
+
+```nix
+clanwright.vpn.hysteria2.masqueradeRoot = "${publicSite}/share/site";
+```
+
+`publicSite` здесь — определённый потребителем пакет. VPN не выбирает сайт,
+не копирует его и не зависит от его реализации. Consumer отвечает за наличие
+каталога, доступность файлов service user и отсутствие приватного содержимого.
+URL, пути вне Nix store и неоднозначные URL/path-компоненты отклоняются.
+Прежний role setting `masqueradeUrl` удалён.
 
 Consumer создаёт и привязывает каждый SOPS secret. Пароли пользователей и Gecko
 должны быть непустыми unpadded base64url strings (`A-Z`, `a-z`, `0-9`, `_`, `-`),
@@ -37,9 +51,13 @@ Server и экспортированный client contract фиксируют:
 Gecko obfuscation несовместима с обычным внешним HTTP/3 и не гарантирует
 проходимость UDP или работу в конкретной сети.
 
-Stock Mihomo 1.19.30 отключает проверку TLS certificate для отдельного HTTPS
-backend, указанного в `masqueradeUrl`. Это ограничение достоверности cover response;
-оно не отключает TLS verification между Hysteria client и этим listener.
+Stock Mihomo раздаёт указанный каталог встроенным `file://` handler при
+обычном HTTP-запросе или неуспешной Hysteria-аутентификации после снятия Gecko
+обфускации. Внешнего backend-запроса, отдельного web service и зависимости от
+Caddy нет. Без Gecko-пароля обычный браузер не достигает этого handler.
+HTTP redirects, headers и error pages другого web server не наследуются:
+Mihomo использует стандартное файловое обслуживание, включая directory listing
+для каталога без index. Consumer должен передавать только публичное содержимое.
 
 ## Exports and dependencies
 

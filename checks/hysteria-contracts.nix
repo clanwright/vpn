@@ -13,6 +13,8 @@ let
     mihomoPackageFor = _: mihomoPackage;
   };
   interface = service.roles.gateway.interface { inherit lib; };
+  staticMasqueradeOutput = "/nix/store/00000000000000000000000000000000-hysteria-static-cover";
+  staticMasqueradeRoot = "${staticMasqueradeOutput}/share/hysteria";
   baseSettings = {
     enable = true;
     lifecycle = "enabled";
@@ -29,7 +31,6 @@ let
         passwordSecretName = "fixture/hysteria-macbook-password";
       }
     ];
-    masqueradeUrl = "https://cover.example.invalid";
     acmeCertName = "fixture";
     obfsPasswordSecretName = "fixture/hysteria-gecko-password";
   };
@@ -58,6 +59,7 @@ let
       activeInstances ? [ "fixture--hysteria2" ],
       firewallEnable ? true,
       firewallBackend ? "nftables",
+      masqueradeRoot ? staticMasqueradeRoot,
     }:
     let
       settings = evalSettings rawSettings;
@@ -74,7 +76,18 @@ let
           enable = firewallEnable;
           backend = firewallBackend;
         };
-        clanwright.vpn.hysteria2 = { inherit activeInstances; };
+        clanwright =
+          (lib.evalModules {
+            modules = [
+              { inherit (definition) options; }
+              {
+                config.clanwright.vpn.hysteria2 = {
+                  inherit activeInstances;
+                }
+                // lib.optionalAttrs (masqueradeRoot != null) { inherit masqueradeRoot; };
+              }
+            ];
+          }).config.clanwright;
       };
       instance = service.roles.gateway.perInstance {
         inherit settings;
@@ -87,7 +100,7 @@ let
       };
       module = definition.config;
       template = unwrap module.sops.templates."mihomo-hysteria2.json";
-      rendered = builtins.fromJSON template.content;
+      rendered = if template == null then null else builtins.fromJSON template.content;
       unit = unwrap module.systemd.services.mihomo-hysteria2;
     in
     {
@@ -99,11 +112,42 @@ let
         template
         unit
         ;
+      inherit (definition) options;
       assertionsPass = builtins.all (entry: entry.assertion) module.assertions;
     };
   evaluate =
     rawSettings: useSystemdActivation: evaluateWith { inherit rawSettings useSystemdActivation; };
   enabled = evaluate baseSettings true;
+  inactiveMissingRoot = evaluateWith {
+    rawSettings = baseSettings // {
+      enable = false;
+    };
+    useSystemdActivation = true;
+    activeInstances = [ ];
+    masqueradeRoot = null;
+  };
+  activeMissingRootRejected =
+    !(builtins.tryEval (
+      builtins.deepSeq
+        (evaluateWith {
+          rawSettings = baseSettings;
+          useSystemdActivation = true;
+          masqueradeRoot = null;
+        }).rendered
+        true
+    )).success;
+  # Use the already available filtered source, never a fake store dependency
+  # whose context could require realization during string operations.
+  contextualMasqueradeRoot = builtins.appendContext "${toString ../.}/checks/fixtures" {
+    ${toString ../.} = {
+      path = true;
+    };
+  };
+  contextualRoot = evaluateWith {
+    rawSettings = baseSettings;
+    useSystemdActivation = true;
+    masqueradeRoot = contextualMasqueradeRoot;
+  };
   activationScriptMode = evaluate baseSettings false;
   duplicateUsers = evaluate (
     baseSettings
@@ -150,6 +194,19 @@ let
   listener = builtins.head enabled.rendered.listeners;
   metadata = enabled.instance.exports.vpnProvider.transportMetadata;
   serviceConfig = enabled.unit.serviceConfig;
+  masqueradeRootOption = enabled.options.clanwright.vpn.hysteria2.masqueradeRoot;
+  rootSchemaAccepts =
+    value:
+    (builtins.tryEval (
+      builtins.deepSeq
+        (lib.evalModules {
+          modules = [
+            { options.clanwright.vpn.hysteria2.masqueradeRoot = masqueradeRootOption; }
+            { config.clanwright.vpn.hysteria2.masqueradeRoot = value; }
+          ];
+        }).config.clanwright.vpn.hysteria2.masqueradeRoot
+        true
+    )).success;
   mergedConsumer = (import ./lib/consumer.nix { inherit inputs root self; }) {
     instanceNames = [ "vpn-mihomo-hysteria2" ];
   };
@@ -159,11 +216,28 @@ let
   mergedListener = builtins.head (builtins.fromJSON mergedTemplate.content).listeners;
   schemaContract =
     schemaAccepts baseSettings
+    && !(masqueradeRootOption ? default)
+    && activeMissingRootRejected
+    && inactiveMissingRoot.template == null
+    && inactiveMissingRoot.unit == null
+    && builtins.hasContext contextualRoot.template.content
     && !(schemaAccepts (baseSettings // { listenIPv4 = "0.0.0.0"; }))
     && !(schemaAccepts (baseSettings // { listenIPv4 = "0.0.0.0/0"; }))
     && !(schemaAccepts (baseSettings // { listenIPv4 = "192.0.2.999"; }))
     && !(schemaAccepts (baseSettings // { serverName = "invalid domain"; }))
-    && !(schemaAccepts (baseSettings // { masqueradeUrl = "http://cover.example.invalid"; }))
+    && !(schemaAccepts (baseSettings // { masqueradeUrl = "https://cover.example.invalid"; }))
+    && rootSchemaAccepts staticMasqueradeOutput
+    && rootSchemaAccepts staticMasqueradeRoot
+    && !(rootSchemaAccepts "https://cover.example.invalid")
+    && !(rootSchemaAccepts "http://cover.example.invalid")
+    && !(rootSchemaAccepts "/srv/hysteria-static-cover")
+    && !(rootSchemaAccepts "/nix/store")
+    && !(rootSchemaAccepts "${staticMasqueradeOutput}/share/bad path")
+    && !(rootSchemaAccepts "${staticMasqueradeOutput}/share?query")
+    && !(rootSchemaAccepts "${staticMasqueradeOutput}/share#fragment")
+    && !(rootSchemaAccepts "${staticMasqueradeOutput}/share%20encoded")
+    && !(rootSchemaAccepts "${staticMasqueradeOutput}/share/../secret")
+    && !(rootSchemaAccepts "${staticMasqueradeOutput}/share/./site")
     && !(schemaAccepts (
       baseSettings
       // {
@@ -192,6 +266,7 @@ let
     && listener.type == "hysteria2"
     && listener.listen == baseSettings.listenIPv4
     && listener.port == 443
+    && listener.masquerade == "file://${staticMasqueradeRoot}"
     && listener.alpn == [ "h3" ]
     && listener.obfs == "gecko"
     && listener."obfs-min-packet-size" == 512
@@ -315,6 +390,7 @@ let
     gecko = mergedListener.obfs == "gecko";
     geckoMin = mergedListener."obfs-min-packet-size" == 512;
     geckoMax = mergedListener."obfs-max-packet-size" == 1200;
+    masquerade = mergedListener.masquerade == "file://${staticMasqueradeRoot}";
     acmeRestart = builtins.elem "mihomo-hysteria2.service" mergedMachine.security.acme.certs.fixture.reloadServices;
     noSharedRuntime = !(mergedMachine.systemd.services ? mihomo-gateway);
   };

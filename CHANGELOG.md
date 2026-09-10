@@ -2,6 +2,10 @@
 
 ## Unreleased — September 2026 audits
 
+- Replace Hysteria's external HTTPS masquerade with native static file serving
+  from the consumer-defined NixOS `clanwright.vpn.hysteria2.masqueradeRoot`.
+  Remove the former `masqueradeUrl` role setting.
+
 - Use stock cached application packages; retain only the approved existing
   Network Caddy plugin recipe as an exception.
 - Separate Xray VLESS/REALITY/XHTTP and Gecko Hysteria services; implement

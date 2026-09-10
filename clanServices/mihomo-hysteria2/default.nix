@@ -28,7 +28,14 @@ let
     value != ""
     && builtins.match "[A-Za-z0-9]([A-Za-z0-9.-]*[A-Za-z0-9])?" value != null
     && lib.hasInfix "." value;
-  validHttpsUrl = value: builtins.match "https://[^[:space:]]+" value != null;
+  validMasqueradeRoot =
+    value:
+    let
+      segments = lib.splitString "/" value;
+    in
+    builtins.match "/nix/store/[0-9abcdfghijklmnpqrsvwxyz]{32}-[A-Za-z0-9._~+-]+(/[A-Za-z0-9._~+-]+)*" value
+    != null
+    && builtins.all (segment: segment != "." && segment != "..") segments;
 in
 {
   _class = "clan.service";
@@ -84,10 +91,6 @@ in
               })
             );
             default = [ ];
-          };
-          masqueradeUrl = lib.mkOption {
-            type = lib.types.addCheck lib.types.str validHttpsUrl;
-            description = "HTTPS fallback URL used by Mihomo for authenticated Hysteria2 requests.";
           };
           acmeCertName = lib.mkOption {
             type = lib.types.addCheck lib.types.str validIdentity;
@@ -195,7 +198,7 @@ in
               listen = settings.listenIPv4;
               inherit (settings) port;
               inherit users;
-              masquerade = settings.masqueradeUrl;
+              masquerade = "file://${config.clanwright.vpn.hysteria2.masqueradeRoot}";
               "ignore-client-bandwidth" = true;
               alpn = [ "h3" ];
               certificate = certificatePath;
@@ -217,11 +220,17 @@ in
             activeInstances = config.clanwright.vpn.hysteria2.activeInstances;
           in
           {
-            options.clanwright.vpn.hysteria2.activeInstances = lib.mkOption {
-              type = lib.types.listOf lib.types.str;
-              default = [ ];
-              internal = true;
-              description = "Active Hysteria2 instances claiming the stable unit and template names.";
+            options.clanwright.vpn.hysteria2 = {
+              activeInstances = lib.mkOption {
+                type = lib.types.listOf lib.types.str;
+                default = [ ];
+                internal = true;
+                description = "Active Hysteria2 instances claiming the stable unit and template names.";
+              };
+              masqueradeRoot = lib.mkOption {
+                type = lib.types.addCheck lib.types.str validMasqueradeRoot;
+                description = "Consumer-owned static site root in the Nix store used for Hysteria2 masquerading.";
+              };
             };
 
             config = {
