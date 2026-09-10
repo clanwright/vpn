@@ -1,9 +1,9 @@
-# Review a VLESS/REALITY/XHTTP candidate
+# Verify the VLESS/REALITY/XHTTP source contract
 
 Run the complete repository gate and retain its generated summary and logs:
 
 ```bash
-scripts/verify.sh
+nix develop --offline --max-jobs 0 --builders '' --command scripts/verify.sh
 ```
 
 The source checks force Xray 26.3.27 package identity, the closed Clan schema,
@@ -17,13 +17,14 @@ probes or tests on real/VM machines. It does not read credentials or contact
 the REALITY target. Actual TLS negotiation, UUID/key consistency, relay and
 Russian-network reachability remain unverified.
 
-For a future separately approved consumer migration, the contract requires
-one explicit external TLS 1.3/HTTP2 target on port 443 whose certificate covers
-the configured server names. No guessed fallback is provided. Each device has
-a distinct UUID secret and short ID. REALITY private key and UUID values belong
-to consumer SOPS; do not print them during repository review.
+The consumer contract requires one explicit external TLS 1.3/HTTP2 target on
+port 443 whose certificate covers the configured server names. No guessed
+fallback is provided. Each device has a distinct UUID secret and short ID.
+REALITY private key and UUID values belong to consumer SOPS; do not print them
+during repository verification.
 
 Release, consumer adoption and deployment remain separate owner actions.
 Machine facts, operational diagnostics and monitoring belong in the consumer.
-The previous input revision and configuration remain the basis for its recovery
-procedure; this repository adds no shared rollback coordinator or state cleanup.
+Retain the currently deployed input revision and configuration as the consumer's
+rollback reference; this repository adds no shared rollback coordinator or
+state cleanup.

@@ -2,12 +2,13 @@
 
 ## Purpose and role
 
-The stable historical module ID provides one independent stock Xray
+The stable module ID `@clanwright/vpn-mihomo-vless-xhttp` provides one independent stock Xray
 VLESS/REALITY/XHTTP gateway. It does not share process, configuration, package,
 or restart state with Hysteria2.
 
 ## Settings
 
+The exact schema and defaults are defined in [`default.nix`](default.nix).
 The consumer supplies an exact `bindIPv4`, endpoint `domain`, per-device
 `profiles`, and client publication metadata. Each profile has its own SOPS UUID
 secret name and REALITY short ID. The REALITY target is explicit: a hostname on

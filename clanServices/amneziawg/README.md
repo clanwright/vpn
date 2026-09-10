@@ -8,6 +8,7 @@ AmneziaWG 3.1 interface и публикует typed metadata для клиент
 
 ## Settings and fixed profile
 
+Точная схема и defaults определены в [`default.nix`](default.nix).
 Обязательны `listenIPv4`, `endpointDomain`, `address`,
 `privateKeySecretName`, `headerProtectionKeySecretName`, `serverPublicKey` и
 непустой список `peers`. При `enableNat = true` обязательны `egressIPv4` и
@@ -68,6 +69,6 @@ metadata, но убирает interface, packages, firewall, forwarding, NAT и 
 валидацию, точные AWG3 options, supervised userspace command, отсутствие kernel
 backend и server keepalive/J/I/timers, destination-scoped ingress, загрузку
 ключей до link-up и failure cleanup. Реальный handshake, transfer,
-MTU/fragmentation и cookie behavior source-only проверкой не установлены; такие
-наблюдения относятся к отдельным consumer-owned operations и не являются
-release gate этого модуля.
+MTU/fragmentation и cookie behavior source-only проверкой не установлены.
+Полная репозиторная процедура описана в
+[verification runbook](../../docs/operations/verify.md).

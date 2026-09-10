@@ -1,4 +1,4 @@
-# Review an Unbound candidate
+# Verify the Unbound source contract
 
 Run the repository [verification gate](verify.md) and retain its logs and
 summary. Acceptance covers forced Nix assertions for the stock systemd-enabled
@@ -14,11 +14,11 @@ unbound-checkconf, DNS probes, readiness listeners or synthetic DNS servers as
 repository acceptance. The gate does not establish real `READY=1`, successful
 trust-anchor refresh, DNSSEC response behavior or Internet recursion.
 
-All eight audits precede release and consumer adoption. Those are separate
-owner actions. The consumer owns addresses, credentials, exposure, monitoring
-and operational procedures. No deployment, resolver disruption, state deletion,
-backup or restore is part of this review.
+Complete repository verification before release or consumer adoption. Those are
+separate owner actions. The consumer owns addresses, credentials, exposure,
+monitoring and operational procedures. No deployment, resolver disruption,
+state deletion, backup or restore is part of this verification.
 
-Retain the previous input revision when preparing a separately authorized
-consumer migration. Configuration rollback does not restore or delete DNS state;
-there is no custom rollback coordinator.
+Retain the currently deployed input revision as the rollback reference before a
+separately authorized consumer update. Configuration rollback does not restore
+or delete DNS state; there is no custom rollback coordinator.

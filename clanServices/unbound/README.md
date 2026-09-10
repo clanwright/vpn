@@ -11,6 +11,7 @@ consumer.
 
 ## Settings
 
+Точная схема и defaults определены в [`default.nix`](default.nix).
 `listen.hosts` принимает `null` либо непустой список loopback IP literals.
 Разрешены IPv4 из `127.0.0.0/8` и `::1`; hostnames, wildcard и public addresses
 отклоняются. `listen.port` принимает `1..65535`. Privacy flags:
@@ -20,7 +21,7 @@ consumer.
 ## Defaults and resolver policy
 
 При `listen.hosts = null` effective listener — `127.0.0.1` и, только если host
-IPv6 включён, `::1`. Явные legacy lists сохраняются; явный `::1` на IPv4-only
+IPv6 включён, `::1`. Явный список сохраняется; `::1` на IPv4-only
 host отклоняется. Порт — `5335`, `resolveLocalQueries = false`.
 Inbound listener/ACL не управляет исходящей рекурсией: IPv4 recursion включена,
 а IPv6 recursion следует общей `networking.enableIPv6` host policy.
@@ -48,8 +49,8 @@ upstream определяет его как использование builtin a
 update. Status `0` означает как отсутствие нужного обновления/RFC5011 success,
 так и ошибку; поэтому status сам по себе не различает сетевую ошибку при
 сохранённом usable anchor. Роль не заменяет native preStart ненадёжной проверкой
-и не отключает DNSSEC. Реальный refresh и журнал проверяются при последующей
-machine acceptance.
+и не отключает DNSSEC. Pure evaluation не подтверждает фактический refresh или
+содержимое runtime-журнала.
 
 ## State and secrets
 
@@ -63,6 +64,8 @@ effective override assertions и generated native configuration средства
 Application parser/CLI, runtime tests, VM и тесты на реальных машинах запрещены.
 Реальный `READY=1`, DNS responses, trust-anchor refresh и фактический AdGuard
 fallback не проверяются и не объявляются доказанными.
+Проверки и runtime acceptance описаны в
+[runbook Unbound](../../docs/operations/unbound.md).
 
 Freeform `include`, `include-toplevel` и server-level `include` отклоняются:
 они могли бы добавить listeners или ослабить DNSSEC после проверки typed attrs,
@@ -70,4 +73,4 @@ Freeform `include`, `include-toplevel` и server-level `include` отклоня�
 Набор effective directives закрыт штатными полями закреплённого NixOS-модуля
 и полями роли. Forward/stub/auth zones, local-data, RPZ и другие freeform
 расширения отклоняются; remote control выключен. Это исключает замену
-согласованной рекурсии синтезированными ответами или другим источником.
+рекурсии синтезированными ответами или другим источником.

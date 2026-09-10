@@ -1,53 +1,43 @@
 # Clanwright VPN
 
-Public VPN and DNS domain for an author-operated `x86_64-linux` Clan/NixOS
-stack. The first release preserves seven independently selected service IDs:
+Seven VPN and DNS modules for Clan/NixOS on `x86_64-linux`.
 
-- `@clanwright/vpn-mihomo-vless-xhttp`
-- `@clanwright/vpn-mihomo-hysteria2`
-- `@clanwright/vpn-amneziawg`
-- `@clanwright/vpn-naiveproxy`
-- `@clanwright/vpn-client-profiles`
-- `@clanwright/dns-adguardhome`
-- `@clanwright/dns-unbound`
+| Module | Implementation |
+| --- | --- |
+| [VLESS/XHTTP](clanServices/mihomo-vless-xhttp/README.md) | Xray with REALITY |
+| [Hysteria2](clanServices/mihomo-hysteria2/README.md) | Mihomo with Gecko obfuscation |
+| [AmneziaWG](clanServices/amneziawg/README.md) | Userspace AmneziaWG 3 |
+| [NaiveProxy](clanServices/naiveproxy/README.md) | Caddy forward proxy |
+| [Client profiles](clanServices/vpn-client-profiles/README.md) | Mihomo and sing-box profile publisher |
+| [AdGuard Home](clanServices/adguardhome/README.md) | DNS/DoH front end and dnsproxy reserve |
+| [Unbound](clanServices/unbound/README.md) | Loopback recursive DNS backend |
 
-The domain owns their implementation, defaults, public contracts, exact
-application packages and checks. Consumers own composition, machine facts,
-secret values and bindings, exposure policy, operator entrypoints, monitoring
-and cross-domain integration.
+The repository owns module implementations, defaults, typed contracts, exact
+application packages and checks. Consumers own machine composition, secret
+bindings, exposure policy, monitoring and deployment.
 
-The September candidate separates Xray VLESS/XHTTP from Mihomo Hysteria2,
-updates the AmneziaWG contract to generation 3, and retains Naive through
-Caddy and sing-box. Consumer adoption and release are separate owner actions.
+## Documentation
 
-See [architecture](docs/architecture.md), [contracts](docs/contracts.md),
-[package authority](docs/package-authority.md), and the
-[verification procedure](docs/operations/verify.md).
+- [Architecture](docs/architecture.md): service layout and ownership.
+- [Public contracts](docs/contracts.md): module IDs, exports and consumer integration.
+- [Package authority](docs/package-authority.md): package sources and selection.
+- [Verification](docs/operations/verify.md): local checks and retained artifacts.
+- [Release](docs/operations/release.md): release procedure.
 
-The [September 2026 audit](docs/audit-2026-09.md) records the observed baseline,
-agreed requirements, recommendations and unresolved questions. Recommendations
-are not implemented configuration or authorization to deploy.
+Module pages document settings and link to their operating procedures.
+Documentation describes the checked-in implementation; it does not establish
+which version a consumer has deployed.
 
-## Support
+## Support and verification
 
-Runtime modules and packages support `x86_64-linux`. Darwin outputs are limited
-to developer and evaluation tooling required by the repository checks. The
-repository has no hosted CI or automatic merging.
+Runtime support is `x86_64-linux`. Other flake system outputs support developer
+and evaluation tooling only. There is no hosted CI or automatic merging.
 
-## Verification
-
-Follow the [verification procedure](docs/operations/verify.md). It retains
-stage logs, durations and a summary under the ignored `.work/verification/`
-directory. A passing gate is source evidence, not deployment or live endpoint
-evidence.
-
-This project does not use virtual machines. VM configurations and tests that
-create or boot VMs are prohibited. Tests on real machines, application parser
-execution and service-starting tests are also excluded. Verification forces
-pure Nix configuration and contract assertions and runs static source hygiene,
-with builders and build jobs disabled. Configuration and checks are defined in
-Nix; Python scripts and test harnesses are prohibited.
+Verification uses pure Nix evaluation and static source checks with builders
+and build jobs disabled. Application execution, runtime tests, virtual machines,
+Linux builds and tests on deployed machines are outside repository verification.
+Python code and test harnesses are prohibited.
 
 ## License
 
-Licensed under the terms in [LICENSE](LICENSE).
+See [LICENSE](LICENSE).

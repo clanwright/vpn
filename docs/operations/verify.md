@@ -1,4 +1,4 @@
-# Verify a candidate
+# Verify the repository
 
 Repository acceptance is limited to pure Nix evaluation and static source
 hygiene. The gate does not build packages or checks and does not execute VPN,
@@ -43,14 +43,14 @@ top-level `all` value is asserted only after `builtins.deepSeq` forces every
 result.
 
 Each run creates a unique ignored `.work/verification/<UTC-run-id>.<suffix>/`
-directory. `scope.txt` records `full` or the selected test name so a focused
+directory. `scope.txt` records `full` or `test:<name>` so a focused
 pass cannot be mistaken for the complete gate. Read `summary.tsv` for stage
 status, duration and log paths. The adjacent logs contain the complete readable
 output. Preserve that directory with review evidence.
 
 A passing gate proves that the evaluated Nix contracts and static source checks
-accepted the candidate. It does not prove that application configuration
+accepted the revision. It does not prove that application configuration
 parsers accept generated files, packages can be built on Linux, systemd units
 start, DNS answers or fallback behave at runtime, VPN authentication or relay
 works, or any consumer machine adopted the change. Those runtime properties
-remain unverified under the accepted test boundary.
+remain unverified under the defined test boundary.

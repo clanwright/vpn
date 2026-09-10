@@ -14,6 +14,7 @@ Cloudflare Standard, Quad9 без threat blocking и Google Public DNS по DoH,
 
 ## Settings
 
+Точная схема и defaults определены в [`default.nix`](default.nix).
 Основные входы роли: `ui.host`, `ui.port`, `ui.domain`, `ingress.publicIPv4`,
 `ingress.caddyBindIPv4`, `ingress.tailnetIPv4`, `dns.bindHosts`,
 `dns.port`, `dns.upstream`, `dns.fallbackPort`,

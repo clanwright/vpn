@@ -10,6 +10,8 @@ typed non-secret metadata VPN providers, генерирует профили и 
 
 ## Settings
 
+Точная схема и defaults определены в [`default.nix`](default.nix), а типы
+профилей, provider refs и links page — в [`types.nix`](types.nix).
 Входы: `lifecycle`, `enable`, `localMachineName`,
 `configGatewayDomain`, `publicIPv4`, `caddyBindIPv4`, `tailnetIPv4`,
 `edgeDomain`, `acmeCertName`, `secretPrefix`,
@@ -33,13 +35,15 @@ exports и `clanLib.selectExports`: `naiveproxy` требует addon, а
 disabled, неоднозначный или несоответствующий provider блокирует
 генерацию.
 
-Mihomo и Sing-box передаются роли из `apps-nixpkgs`; сама
-роль не выбирает package stream и не собирает сторонние клиенты локально.
+Mihomo поступает из `apps-nixpkgs`, а Sing-box — из
+`modern-apps-nixpkgs`; точные revisions и package outputs описаны в
+[package authority](../../docs/package-authority.md). Роль получает выбранные
+пакеты через flake dependency injection и не собирает клиенты локально.
 
 Sing-box профиль сохраняет Naive как отдельный HTTPS/H2 outbound с проверкой
 TLS, `quic = false`, `udp_over_tcp = false` и `insecure_concurrency = 0`.
 UDP, совпавший с защищаемыми rule sets, отклоняется до Naive: TCP-only путь не
-получает скрытый DIRECT fallback. Ранее согласованные прямые исключения для
+получает скрытый DIRECT fallback. Прямые исключения для
 LAN, router, Tailscale и DNS обрабатываются раньше. Native `Rule`/`Global`
 режимы имеют независимые `SELECTIVE`/`FULL` selectors и Auto selections.
 Mihomo публикуется двумя Rule-mode файлами: `mihomo.yaml` заканчивает обычный
@@ -50,20 +54,18 @@ DIRECT не входит в VPN selectors: при отказе выбранно�
 
 Если для публикуемого Sing-box профиля нет eligible Naive provider, renderer
 не публикует `profile.json` и не добавляет ссылку на него. Mihomo-файлы с
-eligible providers других протоколов продолжают публиковаться. Так защищаемый
-трафик нельзя случайно направить в DIRECT через профиль, выглядящий как VPN.
+eligible providers других протоколов продолжают публиковаться.
 
 Selective policy использует только blocked/geoblocked и dependency rule sets.
 Личные домены задаёт consumer через `personalProxyDomains`; библиотека не
-содержит пользовательский список. При миграции прежние строки из
-`rules/personal-proxy-domains.txt` нужно перенести в этот setting как доменные
-суффиксы без `+.`.
+содержит пользовательский список. Значения задаются как доменные суффиксы без
+`+.`.
 
 Sing-box DNS сначала принимает любой ответ основного AdGuardHome, затем при
 transport error гоняет encrypted reserve (Cloudflare Standard, Quad9 `.10`
 без ECS, Google), и только после transport errors — plaintext адреса в том же
 порядке. DNS response, включая NXDOMAIN или SERVFAIL, завершает tier. Mihomo
-по принятому решению использует только основной AdGuardHome, без клиентского DNS
+использует только основной AdGuardHome, без клиентского DNS
 fallback и дополнительного локального resolver. Его DNS fallback filters не
 выражают этот transport-only каскад без изменения семантики. Если
 AdGuardHome недоступен и нет кэшированного ответа, новые DNS-запросы
@@ -95,8 +97,9 @@ listener. Profile page не является публичной WAN admin surfac
 
 ## Verification
 
-Read-only evaluation:
-`nix eval --no-write-lock-file .#nixosConfigurations.<machine>.config.networkCore`.
-Проверить protocol-role mapping, ровно один export на providerRef,
-generated runtime paths, Caddy tailnet policy и список исключённых
-profiles без вывода файлов с credentials.
+`checks/domain-contracts.nix` и `checks/client-render-smoke.nix` проверяют
+protocol-role mapping, единственность export для provider ref, generated runtime
+paths, Caddy tailnet policy и исключённые profiles. Проверки не подтверждают
+работу клиентов, сетевую доступность или содержимое runtime credentials.
+Полная репозиторная процедура описана в
+[verification runbook](../../docs/operations/verify.md).

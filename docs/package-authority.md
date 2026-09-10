@@ -1,58 +1,52 @@
 # Package authority
 
-The domain supplies the exact application packages consumed by its service
-modules and checks. Consumers do not replace them through overlays or internal
-imports.
+The flake selects unmodified stock nixpkgs application packages for modules and
+checks. Consumers cannot substitute packages through overlays or internal
+imports. The package selection is defined in [flake.nix](../flake.nix), with
+exact input revisions in [flake.lock](../flake.lock).
 
-Two named Nixpkgs inputs keep reviewed package families separate:
+## Application inputs
 
-- `apps-nixpkgs` at `c27cdad491a991b11ed731760aa2ef8db0cb0410`
-  supplies Mihomo 1.19.30, Xray 26.3.27, AdGuard Home 0.107.78 built with Go
-  1.26.7, dnsproxy 0.83.2, and Unbound 1.26.0 with systemd support.
-- `modern-apps-nixpkgs` at
-  `f3afd85cd82edf71f2dea9b96dcda2d6a64f26f4` supplies sing-box 1.14.0 with
-  the stock Naive/Cronet feature and the AmneziaWG 3.1 package family:
-  `amneziawg-go` 3.1.20260828 and `amneziawg-tools` 3.1.20260812.
+| Input | Revision | Selected packages |
+| --- | --- | --- |
+| `apps-nixpkgs` | `c27cdad491a991b11ed731760aa2ef8db0cb0410` | Mihomo, Xray, AdGuard Home, dnsproxy, Unbound |
+| `modern-apps-nixpkgs` | `f3afd85cd82edf71f2dea9b96dcda2d6a64f26f4` | sing-box, AmneziaWG Go and tools |
 
-The split is intentional. The newer input contains dnsproxy 0.84.1, while the
-accepted fallback design and source audit target 0.83.2. Importing the whole
-newer package set would change that runtime without review.
+`nixpkgs` supplies platform modules and developer tools. Selecting an application
+from a separate input does not modify its derivation.
 
-For `x86_64-linux`, the public package set contains `mihomo`,
-`xray`, `sing-box`, `amneziawg-go`, `amneziawg-tools`,
-`adguardhome`, `dnsproxy`, and `unbound`. The obsolete Mihomo REALITY keygen
-wrapper is removed; secret generation belongs to the consumer. The unused standalone
-`naiveproxy` package is removed: the Naive server runs in Network's Caddy and
-the client runs in the stock sing-box package.
+## Runtime package set
 
-The exact output paths for all eight application packages are present in
-`cache.nixos.org`:
+The public `packages.x86_64-linux` set contains eight applications:
 
-| Package | Cached output |
-|---|---|
-| AdGuard Home 0.107.78 | `/nix/store/khqalspdwbivh1jxszkas5c19a2133wy-adguardhome-0.107.78` |
-| dnsproxy 0.83.2 | `/nix/store/0dng5ls5qqv13993p28v7448l3h0dpyc-dnsproxy-0.83.2` |
-| Unbound 1.26.0 | `/nix/store/6396ha36mxdl1kilz9539ll06ighaqmd-unbound-1.26.0` |
-| Mihomo 1.19.30 | `/nix/store/06sinlwrggajk6j7x2q01q4z59ind1s0-mihomo-1.19.30` |
-| Xray 26.3.27 | `/nix/store/w9h9zkqpcrqa3h2nhhcd0w0h0hq0p7x6-xray-26.3.27` |
-| AmneziaWG Go 3.1.20260828 | `/nix/store/3n5rkidh23m5x8d6qqzn2mgjcaazk48p-amneziawg-go-3.1.20260828` |
-| AmneziaWG tools 3.1.20260812 | `/nix/store/dd28gg53ykjfa0c9i60x5wnwgi056719-amneziawg-tools-3.1.20260812` |
-| sing-box 1.14.0 | `/nix/store/bcbfbiaxbsvh3qnsglcgnl2ab5wz0y18-sing-box-1.14.0` |
+| Attribute | Version | Selection |
+| --- | --- | --- |
+| `mihomo` | 1.19.30 | Stock `mihomo` |
+| `xray` | 26.3.27 | Stock `xray` |
+| `adguardhome` | 0.107.78 | Stock `adguardhome` |
+| `dnsproxy` | 0.83.2 | Stock `dnsproxy` |
+| `unbound` | 1.26.0 | Stock `unbound-with-systemd` |
+| `sing-box` | 1.14.0 | Stock `sing-box` with Naive/Cronet support |
+| `amneziawg-go` | 3.1.20260828 | Stock `amneziawg-go` |
+| `amneziawg-tools` | 3.1.20260812 | Stock `amneziawg-tools` |
 
-AdGuard Home 0.107.79 was not available as a stock package in the checked
-official revisions. The retained 0.107.78 derivation already uses Go 1.26.7,
-which includes the Go security fixes cited by the 0.107.79 release. DNS-over-QUIC
-and DNS64 are disabled, so the identified remaining 0.107.79 gap is the blocked
-EDNS reply compatibility fix, not an applicable confirmed security issue.
+These outputs must come from the NixOS cache; local overrides and custom binary
+wrappers are prohibited. Cache availability is an external property, not a
+result of the repository's pure evaluation gate.
 
-Network's Caddy 2.11.4 package with forwardproxy commit `d62c80d3dd2c` and the
-ratelimit plugin is the sole approved non-stock application package. It remains
-owned by the pinned Network input. Its exact output
-`/nix/store/1z8ydds26sn7rpjd21q69xlykizhrhsp-caddy-2.11.4` was absent from all
-four configured caches during the audit. Stock Caddy cannot replace it because
-it lacks the required forwardproxy feature. This exception does not authorize a
-VPN-local override, cache publication, or a build during source-only
-verification.
+## Caddy integration
 
-Runtime packages support `x86_64-linux`. Darwin support is limited to developer
-and evaluation tooling used by existing checks.
+NaiveProxy uses the consumer's Network-owned Caddy with forwardproxy and
+ratelimit. The pinned Network input supplies the integration fixture; VPN does
+not export a Caddy package. This is the sole allowed non-stock application
+package. Stock Caddy lacks the required forwardproxy plugin.
+
+The exception does not authorize a VPN-local override, a build or cache
+publication. See [NaiveProxy operations](operations/naiveproxy.md) for integration
+requirements.
+
+## Platforms
+
+Runtime support is `x86_64-linux`. The `aarch64-linux` and `aarch64-darwin` flake
+outputs contain Mihomo, sing-box and developer tooling; their presence does not
+extend runtime support.

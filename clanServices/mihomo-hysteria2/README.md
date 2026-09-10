@@ -11,6 +11,7 @@ protocols. Stable module ID — `@clanwright/vpn-mihomo-hysteria2`, systemd unit
 
 ## Settings
 
+Точная схема и defaults определены в [`default.nix`](default.nix).
 Параметры: `lifecycle`, `enable`, обязательные `listenIPv4`, `serverName`,
 `acmeCertName`, список per-device `users` с `name` и
 `passwordSecretName`, а также `port` и `obfsPasswordSecretName`.
@@ -30,8 +31,6 @@ clanwright.vpn.hysteria2.masqueradeRoot = "${publicSite}/share/site";
 не копирует его и не зависит от его реализации. Consumer отвечает за наличие
 каталога, доступность файлов service user и отсутствие приватного содержимого.
 URL, пути вне Nix store и неоднозначные URL/path-компоненты отклоняются.
-Прежний role setting `masqueradeUrl` удалён.
-
 Consumer создаёт и привязывает каждый SOPS secret. Пароли пользователей и Gecko
 должны быть непустыми unpadded base64url strings (`A-Z`, `a-z`, `0-9`, `_`, `-`),
 чтобы literal SOPS substitution оставляла сгенерированный JSON валидным. Каждый
@@ -87,3 +86,5 @@ Repository acceptance ограничена pure Nix evaluation: schema, export, 
 JSON, package authority, unit sandbox and firewall contract. Она не запускает
 Mihomo и не подтверждает certificate availability, listener bind, handshake,
 TCP/UDP relay, sustained transfer или reachability в сетях пользователя.
+Полная репозиторная процедура описана в
+[verification runbook](../../docs/operations/verify.md).

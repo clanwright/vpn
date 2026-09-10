@@ -9,7 +9,7 @@
 site claim; собственного сайта, домена и сертификата роль не создаёт.
 Effective Caddy address этого claim становится catch-all `:443`, чтобы
 `CONNECT` с произвольным origin host достигал `forward_proxy`; выбранный claim
-по-прежнему владеет bind addresses, TLS certificate и cover site.
+владеет bind addresses, TLS certificate и cover site.
 На именованных vhost с тем же bind ранний `CONNECT` route ограничен методом,
 точным local address и TCP-портом `443`. Claim с отдельным tailnet listener не
 получает forward-proxy route. Выбранный claim обязан иметь ровно один явный
@@ -17,11 +17,11 @@ listener; wildcard и смешанный public/tailnet bind отклоняют�
 
 ## Settings
 
+Точная схема и defaults определены в [`default.nix`](default.nix).
 Параметры: `enable`, `machineName`, `selectedPublicSiteClaim`,
 `selectedPublicSiteEndpoint` с полями `domain`, `publicIPv4`,
 `caddyBindIPv4`, карта `passwordSecretNames` вида `identity = secret-name`,
-`probeUserName` и `additionalDeny`. Прежняя карта с ключами `ibelyasov`, `bsv`,
-`probe` остаётся допустимой. Identity и machine name — ограниченные токены;
+`probeUserName` и `additionalDeny`. Identity и machine name — ограниченные токены;
 secret names допускают namespace через `/`, но не traversal или управляющие
 символы. Endpoint должен совпадать с выбранным claim.
 
@@ -55,15 +55,13 @@ Password value должен быть непустым unpadded base64url token:
 `[A-Za-z0-9_-]+`, без LF, CR, пробелов и padding `=`. Этот формат генерируется
 consumer-side Clan vars и безопасно подставляется `sops-nix` непосредственно в
 Caddyfile token. Модуль не читает и не меняет secret values, не передаёт их
-через argv и не записывает в Nix store, Git или логи. Произвольные legacy
-password strings с Caddy syntax не входят в контракт и требуют отдельно
-согласованной rotation перед применением.
+через argv и не записывает в Nix store, Git или логи. Password strings с Caddy
+syntax не входят в контракт.
 
 Поскольку adapted Caddy config содержит basic-auth material, addon добавляет
 `persist_config off` и требует `services.caddy.resume = false`: новые runtime
-credentials не попадают в autosave. Удаление autosave, созданного прежней
-конфигурацией, остаётся отдельной consumer-side операцией с секретными данными
-и не выполняется модулем автоматически.
+credentials не попадают в autosave. Модуль не удаляет существующий autosave:
+это отдельная consumer-side операция с секретными данными.
 
 ## Network exposure
 
@@ -81,7 +79,7 @@ parser сопоставляет их case-sensitive и раннее domain rule 
 
 ## Verification
 
-Contract checks подтверждают legacy и произвольные identity maps, разделение
+Contract checks подтверждают произвольные identity maps, разделение
 probe, отрицательные assertions, оба sops-nix activation mode, template
 permissions/reload metadata, ACL order и listener isolation. Проверки — pure
 Nix; application parser/CLI, runtime tests, VM и тесты на реальных машинах

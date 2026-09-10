@@ -4,23 +4,12 @@ This runbook covers repository evaluation only. It does not activate a machine,
 read or change a secret, contact a DNS provider, or run AdGuard Home, dnsproxy,
 configuration parsers or a VM.
 
-## Consumer rule migration
+## Consumer filtering policy
 
-Library defaults no longer contain personal filtering policy. When the consumer
-is updated in its separately authorized change, preserve the previous rules in
-the resolver role settings exactly as follows:
-
-```nix
-filtering.userRules = [
-  "||pikabu.ru^"
-  "/(^|\\.)intimcity\\..*$/"
-  "@@||boosty.to^"
-];
-```
-
-The typed input is the canonical owner. Until consumer adoption, the source
-change only records the required migration and does not modify a live
-configuration.
+The library defaults do not contain personal filtering policy. Define required
+rules in the consumer resolver role settings. The typed input is the canonical
+owner. Changing filtering policy or adopting a new repository revision in a
+consumer requires separate authorization.
 
 ## Targeted evaluation
 
@@ -52,15 +41,15 @@ assertion instead of aborting JSON parsing.
 Before any release work, run the common gate:
 
 ```bash
-scripts/verify.sh
+nix develop --offline --max-jobs 0 --builders '' --command scripts/verify.sh
 ```
 
 The gate is defined in [verify.md](verify.md). It performs static hygiene and
 pure Nix evaluation with builders disabled. Preserve the generated
-`.work/verification/<UTC-run-id>/summary.tsv` and referenced logs as the
+`.work/verification/<UTC-run-id>.<suffix>/summary.tsv` and referenced logs as the
 review evidence.
 
-## Review the generated contract
+## Inspect the generated contract
 
 The evaluated configuration must show these source properties:
 
@@ -94,9 +83,5 @@ placeholder is wired into the generated configuration.
 A passing result proves the evaluated Nix data and assertions. It does not
 prove process startup, parser acceptance, DNS answers, fallback timing,
 certificate trust at runtime, network reachability, filtering downloads or
-behavior on any ISP. These are inherent limits of the accepted pure-evaluation
+behavior on any ISP. These are inherent limits of the defined pure-evaluation
 scope and must not be reported as verified.
-
-The stock 0.107.78 selection also retains the accepted EDNS blocked-response
-compatibility gap described in
-[the audit](../audit-adguardhome-2026-09.md#пакеты-и-принятый-пробел-версии).
