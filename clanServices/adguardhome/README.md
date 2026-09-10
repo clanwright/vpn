@@ -19,9 +19,40 @@ Cloudflare Standard, Quad9 без threat blocking и Google Public DNS по DoH,
 `dns.port`, `dns.upstream`, `dns.fallbackPort`,
 `dns.fallbackTimeoutSeconds`, `tls.serverName`,
 `tls.httpsPort`, `tls.certificateFile`, `tls.privateKeyFile`,
-`auth.username`, `auth.passwordSecretName`, `systemResolver.enableLocalStub`
-и `filtering.userRules`. `dns.upstream` содержит ровно
+`auth.username`, `auth.passwordSecretName`, `systemResolver.enableLocalStub`,
+`filtering.enable`, `filtering.userRules`, `dns.privateZones` и `dns.rewrites`.
+`dns.upstream` содержит ровно
 один числовой loopback endpoint Unbound в формате `127.0.0.1:<port>`.
+
+`dns.privateZones` — список непустых групп вида:
+
+```nix
+{
+  domains = [ "internal.example.invalid" ];
+  upstreams = [ { address = "10.20.0.53"; port = 53; } ];
+}
+```
+
+Домены — канонические DNS-суффиксы в lowercase ASCII: до 253 символов, labels
+до 63 символов из `a-z`, `0-9` и внутренних дефисов, без trailing dot.
+Resolver address — частный числовой IPv4-адрес или `::1`; numeric endpoint не
+требует DNS bootstrap. Пустые группы, повторяющиеся zones/domains/resolvers, публичные
+адреса, небезопасный синтаксис и известные петли через собственный DNS, Unbound
+или fallback отклоняются при evaluation.
+
+`dns.rewrites` задаёт точные aliases без wildcard, цепочек, self-reference и
+циклов. Например:
+
+```nix
+{
+  domain = "admin.example.invalid";
+  answer = "node.internal.example.invalid";
+}
+```
+
+Source name и CNAME target должны попадать в объявленные private zones; вместо
+CNAME допускается частный числовой IP. Повторы отклоняются. Для CNAME дальнейшее
+разрешение выполняется по target qname.
 
 ## Defaults
 
@@ -37,6 +68,31 @@ file выключены. Родительский контроль, Safe Search,
 URLHaus включены; удалённый Safe Browsing выключен. Библиотечный default
 `filtering.userRules` пуст, а постоянные личные правила задаёт consumer.
 Query log хранится 7 дней, statistics — 90 дней, IP не анонимизируются.
+
+`filtering.enable = false` — поддерживаемая декларативная пауза защиты: она
+меняет только `protection_enabled`. AdGuard filtering engine и native rewrites
+остаются включены, поэтому typed private rewrites продолжают действовать.
+Императивное выключение engine через UI не является поддерживаемым состоянием.
+`filtering.userRules` остаётся местом для consumer allow/deny rules, но при
+непустых private zones правила с modifiers `dnsrewrite`, `badfilter` или
+`important` запрещены: они могли бы обойти typed validation или отменить
+сгенерированное исключение.
+
+Роль добавляет `@@||<zone>^$important,dnsrewrite`, затем
+`@@||<zone>^$important` перед consumer rules. Native typed rewrites
+применяются до filter rules. Когда обычное zone exception выигрывает, private
+query обходит parental filtering; combined exception защищает DNS rewrite
+closure. Consumer rules не могут отменить эти exclusions. Более специфичное
+`$important` blocking rule из включённого remote filter всё ещё может блокировать
+прямой запрос к private name. Consumer доверяет содержимому и доступности
+выбранных filter feeds; репозиторная evaluation не доказывает отсутствие такого
+конфликта. Он блокирует ответ, но не создаёт выход в public forwarding path.
+Политика обычных public names не меняется. Conditional private routes добавляются и в
+`upstream_dns`, и в `fallback_dns`. Ошибка private resolver повторяется только
+между resolvers этой зоны и может увеличить ожидание; запрос не уходит в
+обычные Unbound/dnsproxy defaults. Consumer обязан настроить сам private
+resolver так, чтобы protected names не рекурсировались и не пересылались в
+public DNS: библиотека не может проверить поведение внешнего сервера.
 
 ## Exports and dependencies
 
@@ -74,6 +130,13 @@ destination address. Это пример композиции, не автома
 При `enable = false` роль не объявляет runtime, state, secrets, template или
 resolver edges.
 
+Для private zones роль генерирует DS guard в `dns.blocked_hosts`, поскольку
+dnsproxy выбирает resolver для DS по parent name. DS over TCP получает REFUSED,
+а over UDP drops; остальные qtypes, включая HTTPS, следуют private routing. DNS privacy
+не является авторизацией: listeners, firewall, client DNS routing и HTTPS
+names/certificates принадлежат consumer. Имена остаются видимы читателям
+конфигурации и query log, а ответы — авторизованным DNS-клиентам.
+
 ## Verification
 
 Репозиторные source-проверки описаны в
@@ -81,3 +144,15 @@ resolver edges.
 typed contract, сгенерированную конфигурацию и отрицательные ограничения
 чистым Nix evaluation, не запуская AdGuard Home, dnsproxy или VM. Реальное
 поведение systemd и сетевых путей этим результатом не доказано.
+
+Route/rewrite semantics сверены с исходниками AdGuard Home 0.107.78:
+[`filtering`](https://github.com/AdguardTeam/AdGuardHome/blob/v0.107.78/internal/filtering/filtering.go),
+[`dnsforward`](https://github.com/AdguardTeam/AdGuardHome/blob/v0.107.78/internal/dnsforward/filter.go),
+[`access`](https://github.com/AdguardTeam/AdGuardHome/blob/v0.107.78/internal/dnsforward/access.go),
+[`middleware`](https://github.com/AdguardTeam/AdGuardHome/blob/v0.107.78/internal/dnsforward/middleware.go)
+и [`fallback setup`](https://github.com/AdguardTeam/AdGuardHome/blob/v0.107.78/internal/dnsforward/dnsforward.go#L678-L699),
+а DS selection — с dnsproxy 0.83.0, встроенным в этот AdGuard Home:
+[`upstreams`](https://github.com/AdguardTeam/dnsproxy/blob/v0.83.0/proxy/upstreams.go)
+и [`proxy`](https://github.com/AdguardTeam/dnsproxy/blob/v0.83.0/proxy/proxy.go).
+Это source evidence, а не runtime-проверка. Отдельный loopback fallback service
+использует stock dnsproxy 0.83.2.

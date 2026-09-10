@@ -59,6 +59,30 @@ its selected public-site claim, matching the declared bind address. The consumer
 supplies AdGuard's Unbound upstream binding and any systemd startup relationship
 between the two services.
 
+AdGuard exposes private DNS through typed `dns.privateZones` and `dns.rewrites`.
+Each zone declares canonical lowercase ASCII suffixes and numeric private
+resolvers; each rewrite source and CNAME target is covered by those zones, or
+the answer is a private numeric address. The schema rejects empty groups,
+duplicates, public endpoints or answers, loops, wildcards,
+rewrite chains and unsafe user-rule overrides. Private routes occur in both
+AdGuard upstream paths: failures may try another resolver in the same zone but
+never fall through to ordinary public resolution.
+
+`filtering.enable` controls AdGuard's `protection_enabled` flag. The filtering
+engine and native rewrites remain enabled so a declarative protection pause
+does not disable private aliases. Consumer `filtering.userRules` remain the
+allow/deny extension point; `dnsrewrite`, `badfilter` and `important` modifiers
+are rejected while private zones are configured because they could bypass or
+out-prioritize the typed closure. After native typed rewrites are considered,
+generated `@@||<zone>^$important,dnsrewrite` followed by
+`@@||<zone>^$important` protect DNS rewrite closure and ordinary zone exceptions
+from consumer rules.
+
+The consumer also trusts the enabled remote filter content. A more-specific
+important block from such a feed can still block a direct private-name query;
+repository evaluation does not assert that current feeds contain no conflict.
+This affects answer availability, not the closed private forwarding route.
+
 AdGuard and the profile publisher do not create Network claims, ACME bindings
 or Tailscale ordering. Their read-only NixOS integration outputs expose runtime
 endpoints and paths for consumer composition:

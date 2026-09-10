@@ -56,6 +56,46 @@
               default = 3;
               description = "Per-stage dnsproxy exchange timeout within AdGuard Home's 10-second budget.";
             };
+            privateZones = lib.mkOption {
+              type = lib.types.listOf (
+                lib.types.submodule {
+                  options = {
+                    domains = lib.mkOption {
+                      type = lib.types.nonEmptyListOf lib.types.str;
+                      description = "Canonical private DNS zone names served by the same upstreams.";
+                    };
+                    upstreams = lib.mkOption {
+                      type = lib.types.nonEmptyListOf (
+                        lib.types.submodule {
+                          options = {
+                            address = lib.mkOption { type = lib.types.str; };
+                            port = lib.mkOption {
+                              type = lib.types.port;
+                              default = 53;
+                            };
+                          };
+                        }
+                      );
+                      description = "Private numeric DNS endpoints for this zone group.";
+                    };
+                  };
+                }
+              );
+              default = [ ];
+              description = "Private zones routed only to their declared resolvers.";
+            };
+            rewrites = lib.mkOption {
+              type = lib.types.listOf (
+                lib.types.submodule {
+                  options = {
+                    domain = lib.mkOption { type = lib.types.str; };
+                    answer = lib.mkOption { type = lib.types.str; };
+                  };
+                }
+              );
+              default = [ ];
+              description = "Exact private DNS A, AAAA, or single-hop CNAME rewrites.";
+            };
           };
 
           tls = {
@@ -82,10 +122,17 @@
             description = "Whether to declare the AdGuard runtime, state, and secrets.";
           };
 
-          filtering.userRules = lib.mkOption {
-            type = lib.types.listOf lib.types.str;
-            default = [ ];
-            description = "Consumer-owned declarative AdGuard allow and deny rules.";
+          filtering = {
+            enable = lib.mkOption {
+              type = lib.types.bool;
+              default = true;
+              description = "Whether normal AdGuard protection is enabled; private routing and rewrites remain configured.";
+            };
+            userRules = lib.mkOption {
+              type = lib.types.listOf lib.types.str;
+              default = [ ];
+              description = "Consumer-owned declarative AdGuard allow and deny rules.";
+            };
           };
 
           auth = {
@@ -172,6 +219,80 @@
                   value = 0;
                 };
             unboundPort = if unboundPortAttempt.success then unboundPortAttempt.value else 0;
+            privateZoneDomains = lib.concatMap (zone: zone.domains) settings.dns.privateZones;
+            privateRewriteSources = map (rewrite: rewrite.domain) settings.dns.rewrites;
+            validDnsLabel =
+              label:
+              builtins.stringLength label <= 63 && builtins.match "[a-z0-9]([a-z0-9-]*[a-z0-9])?" label != null;
+            validDnsName =
+              name:
+              builtins.stringLength name > 0
+              && builtins.stringLength name <= 253
+              && builtins.all validDnsLabel (lib.splitString "." name);
+            isWithinPrivateZone =
+              name: builtins.any (zone: name == zone || lib.hasSuffix ".${zone}" name) privateZoneDomains;
+            looksLikeIpv4 = value: builtins.match "[0-9]+\\.[0-9]+\\.[0-9]+\\.[0-9]+" value != null;
+            isLoopbackHost =
+              host:
+              host == "::1" || builtins.match "127\\.${ipv4Octet}\\.${ipv4Octet}\\.${ipv4Octet}" host != null;
+            conflictsWithLocalDns =
+              upstream:
+              upstream.port == settings.dns.port && builtins.elem upstream.address settings.dns.bindHosts
+              ||
+                isLoopbackHost upstream.address
+                && builtins.elem upstream.port [
+                  settings.dns.port
+                  unboundPort
+                  settings.dns.fallbackPort
+                ];
+            privateUpstreamLines = lib.concatMap (
+              zone:
+              map (
+                upstream:
+                "[/${lib.concatStringsSep "/" zone.domains}/]${
+                  if upstream.address == "::1" then "[::1]" else upstream.address
+                }:${toString upstream.port}"
+              ) zone.upstreams
+            ) settings.dns.privateZones;
+            privateAllowRules = lib.concatMap (domain: [
+              "@@||${domain}^$important,dnsrewrite"
+              "@@||${domain}^$important"
+            ]) privateZoneDomains;
+            privateDsGuards = map (domain: "||${domain}^$dnstype=DS") privateZoneDomains;
+            renderedRewrites = map (rewrite: rewrite // { enabled = true; }) settings.dns.rewrites;
+            forbiddenPrivateRuleModifier =
+              rule:
+              let
+                normalized = lib.toLower rule;
+                lineHasImportantModifier =
+                  line:
+                  builtins.any (
+                    modifierTail:
+                    let
+                      commaSeparated =
+                        lib.replaceStrings
+                          [
+                            " "
+                            "\t"
+                            "\r"
+                          ]
+                          [
+                            ","
+                            ","
+                            ","
+                          ]
+                          modifierTail;
+                      terminated = "${commaSeparated},";
+                    in
+                    lib.hasPrefix "important," terminated
+                    || lib.hasPrefix "important=" terminated
+                    || lib.hasInfix ",important," ",${terminated}"
+                    || lib.hasInfix ",important=" ",${terminated}"
+                  ) (lib.drop 1 (lib.splitString "$" line));
+              in
+              lib.hasInfix "dnsrewrite" normalized
+              || lib.hasInfix "badfilter" normalized
+              || builtins.any lineHasImportantModifier (lib.splitString "\n" normalized);
             encryptedFallbackUpstreams = [
               # DNS stamps pin a numeric connect address while retaining the
               # provider hostname as the certificate identity.
@@ -243,7 +364,7 @@
                     localhostIpv6
                   ];
                   upstream_dns_file = "";
-                  fallback_dns = [ "127.0.0.1:${toString settings.dns.fallbackPort}" ];
+                  fallback_dns = [ "127.0.0.1:${toString settings.dns.fallbackPort}" ] ++ privateUpstreamLines;
                   upstream_mode = "load_balance";
                   fastest_timeout = "1s";
                   allowed_clients = [ ];
@@ -252,7 +373,8 @@
                     "version.bind"
                     "id.server"
                     "hostname.bind"
-                  ];
+                  ]
+                  ++ privateDsGuards;
                   trusted_proxies = [
                     localhostIpv4Cidr
                     localhostIpv6Cidr
@@ -324,7 +446,7 @@
                   }
                 ];
                 whitelist_filters = [ ];
-                user_rules = settings.filtering.userRules;
+                user_rules = privateAllowRules ++ settings.filtering.userRules;
                 dhcp = {
                   enabled = false;
                   interface_name = "";
@@ -356,7 +478,7 @@
                   blocking_mode = "default";
                   parental_block_host = "family-block.dns.adguard.com";
                   safebrowsing_block_host = "standard-block.dns.adguard.com";
-                  rewrites = [ ];
+                  rewrites = renderedRewrites;
                   safe_fs_patterns = [ ];
                   safebrowsing_cache_size = filterCacheSizeBytes;
                   safesearch_cache_size = filterCacheSizeBytes;
@@ -367,7 +489,7 @@
                   rewrites_enabled = true;
                   parental_enabled = true;
                   safebrowsing_enabled = false;
-                  protection_enabled = true;
+                  protection_enabled = settings.filtering.enable;
                   safe_search = {
                     enabled = true;
                     bing = true;
@@ -416,7 +538,7 @@
               dns = {
                 bind_hosts = settings.dns.bindHosts;
                 inherit (settings.dns) port;
-                upstream_dns = settings.dns.upstream;
+                upstream_dns = settings.dns.upstream ++ privateUpstreamLines;
                 bootstrap_dns = [ ];
               };
               tls = {
@@ -538,6 +660,61 @@
                 {
                   assertion = !active || settings.ui.host == "127.0.0.1";
                   message = "adguardhome: UI backend must remain loopback-only.";
+                }
+                {
+                  assertion =
+                    !active
+                    || settings.dns.privateZones == [ ]
+                    ||
+                      builtins.all validDnsName privateZoneDomains
+                      && builtins.length privateZoneDomains == builtins.length (lib.unique privateZoneDomains);
+                  message = "adguardhome: private zone domains must be unique canonical lowercase DNS names without wildcards or trailing dots.";
+                }
+                {
+                  assertion =
+                    !active
+                    || settings.dns.privateZones == [ ]
+                    || builtins.all (
+                      zone:
+                      builtins.length zone.upstreams == builtins.length (lib.unique zone.upstreams)
+                      && builtins.all (
+                        upstream: isPrivateBindHost upstream.address && upstream.port > 0 && !conflictsWithLocalDns upstream
+                      ) zone.upstreams
+                    ) settings.dns.privateZones;
+                  message = "adguardhome: private DNS endpoints must be unique private numeric addresses with nonzero ports and must not loop to local DNS, Unbound, or fallback listeners.";
+                }
+                {
+                  assertion =
+                    !active
+                    || settings.dns.rewrites == [ ]
+                    ||
+                      builtins.length privateRewriteSources == builtins.length (lib.unique privateRewriteSources)
+                      && builtins.all (
+                        rewrite: validDnsName rewrite.domain && isWithinPrivateZone rewrite.domain
+                      ) settings.dns.rewrites;
+                  message = "adguardhome: private rewrite sources must be unique canonical lowercase DNS names within a declared private zone.";
+                }
+                {
+                  assertion =
+                    !active
+                    || settings.dns.rewrites == [ ]
+                    || builtins.all (
+                      rewrite:
+                      isPrivateBindHost rewrite.answer
+                      ||
+                        !looksLikeIpv4 rewrite.answer
+                        && validDnsName rewrite.answer
+                        && isWithinPrivateZone rewrite.answer
+                        && !builtins.elem rewrite.answer privateRewriteSources
+                    ) settings.dns.rewrites;
+                  message = "adguardhome: private rewrite answers must be private numeric IPs or canonical private-zone CNAME targets that are not rewrite sources.";
+                }
+                {
+                  assertion =
+                    !active
+                    || settings.dns.privateZones == [ ]
+                    || !builtins.any forbiddenPrivateRuleModifier settings.filtering.userRules;
+                  message = "adguardhome: userRules must not use dnsrewrite, badfilter, or important modifiers when private zones are configured.";
                 }
                 {
                   assertion =

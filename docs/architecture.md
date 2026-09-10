@@ -53,9 +53,24 @@ loopback dnsproxy reserve: parallel encrypted providers, followed by plaintext
 providers only after encrypted exchange failures. Received NXDOMAIN or SERVFAIL
 does not activate the plaintext tier.
 
+Optional private zones form a closed conditional-routing branch in both
+AdGuard upstream lists. Their numeric private resolvers never fall through to
+Unbound or the public reserve. Native exact rewrites may return a private address
+or a CNAME whose target remains inside the declared zones. Native typed rewrites
+run before generated important and combined important/DNS-rewrite exceptions.
+Consumer rules cannot cancel those exceptions. When the ordinary exception
+wins, parental filtering is skipped; a more-specific important block from an
+enabled remote feed can still block a direct private-name lookup. That bounded
+filter-content trust affects availability, not private forwarding closure.
+Ordinary public policy is unchanged. A DS parent-selection guard prevents
+private-zone DS queries from escaping that branch.
+
 AdGuard exposes typed local UI/DoH backend metadata. The consumer supplies
 certificate file bindings and permissions, ACME reload relationships, Caddy
 publication and firewall exposure. The role does not depend on Network's schema.
+The consumer also owns private-resolver behavior, listeners, client routing and
+name/certificate authorization. Source configuration and query logs still reveal
+names to their readers; private routing is not an access-control boundary.
 
 Mihomo profiles use primary AdGuard DNS only. If AdGuard is unavailable, new
 queries without a usable cached answer fail. The sing-box profile has its own

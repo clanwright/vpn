@@ -26,13 +26,25 @@ The result must contain true values for:
   listeners, primary/fallback paths, TLS, cache, filters and retention;
 - `cascadeContract`: dnsproxy uses the three static-address DoH stamps in
   parallel, then the three plaintext addresses, with no bootstrap or cache;
+- `privateSchemaContract`: the new option types are closed;
+- `privateAssertionContract`: invalid private zones, endpoints, rewrites and
+  conflicting user rules are rejected;
+- `privateDnsContract`: conditional lines occur in both AdGuard upstream lists,
+  native rewrites and DS guards are generated, and user-rule ordering is fixed;
+- `filteringDisabledContract`: a declarative protection pause changes only
+  `protection_enabled`;
+- `privateDisabledContract`: private settings do not weaken disabled-role cleanup;
 - `credentialContract`: the bcrypt placeholder stays in the root-only SOPS
   template and systemd credential wiring preserves the native unit;
 - the disabled-role contract: no service, secret or exposure declarations;
 - `negativeContract`: package substitution and unsafe overrides fail.
 
 Evaluation must also force invalid upstream strings such as missing,
-nonnumeric, zero and out-of-range ports. They must produce a failed module
+nonnumeric, zero and out-of-range ports, and invalid private-zone/rewrite cases:
+empty or duplicate groups and names, public or looping resolvers,
+public answers, uncovered targets, wildcard/chained/cyclic aliases, and
+`dnsrewrite`, `badfilter` or `important` user-rule modifiers. They must produce
+a failed module
 assertion instead of aborting JSON parsing.
 
 ## Complete repository gate
@@ -74,6 +86,14 @@ The evaluated configuration must show these source properties:
 7. Query log is 7 days, statistics 90 days, IP anonymization is off, Safe
    Browsing is off, parental control and Safe Search remain on, and consumer
    `filtering.userRules` survive declarative rendering.
+8. Every private zone has numeric private resolver endpoints in conditional
+   lines in both `upstream_dns` and `fallback_dns`. Generated
+   `@@||<zone>^$important,dnsrewrite` followed by `@@||<zone>^$important`
+   precede consumer rules. Native typed rewrites retain priority and remain enabled, and
+   `filtering.enable` changes only `protection_enabled`.
+9. Private-zone DS names are guarded through `dns.blocked_hosts`; other qtypes,
+   including the HTTPS record type, retain the conditional route. These are
+   generated-data properties, not proof of live protocol responses or resolver behavior.
 
 Do not inspect decrypted SOPS output or place a bcrypt value in an evaluation
 argument or log. The contract test uses a placeholder and proves only that the
@@ -86,3 +106,13 @@ prove process startup, parser acceptance, DNS answers, fallback timing,
 certificate trust at runtime, network reachability, filtering downloads or
 behavior on any ISP. These are inherent limits of the defined pure-evaluation
 scope and must not be reported as verified.
+
+In particular, the checks do not prove that a private resolver avoids public
+recursion, that DS over TCP returns REFUSED or over UDP drops, or that
+timeouts retry exactly as expected. Validate those properties only in the
+consumer's separately authorized runtime acceptance.
+
+The source checks also do not prove that enabled remote filter feeds contain no
+more-specific important block for a private name. Review that consumer-chosen
+content when private-name availability matters; such a block does not cause
+fallback to the public resolver path.

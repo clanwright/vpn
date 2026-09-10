@@ -8,6 +8,7 @@
 let
   lib = inputs.nixpkgs.lib;
   fixture = import ./fixtures/example-clan.nix;
+  privateDnsFixture = import ./fixtures/adguard-private-dns.nix;
   adguardPackage = self.packages.${system}.adguardhome;
   dnsproxyPackage = self.packages.${system}.dnsproxy;
   service = import ../clanServices/adguardhome/default.nix {
@@ -77,6 +78,50 @@ let
     includeNetwork = false;
   };
   disabledModule = moduleFor (baseSettings // { enable = false; }) { };
+  privateSettings = lib.recursiveUpdate baseSettings {
+    dns = privateDnsFixture;
+    filtering.userRules = [
+      "! important note"
+      "||important.example.invalid^"
+      "||telemetry.example.invalid^"
+    ];
+  };
+  privateDeclaredModule = moduleFor privateSettings placeholderConfig;
+  privateConfig = lib.recursiveUpdate placeholderConfig {
+    services = {
+      adguardhome = privateDeclaredModule.services.adguardhome // {
+        package = adguardPackage;
+      };
+      dnsproxy = privateDeclaredModule.services.dnsproxy // {
+        package = dnsproxyPackage;
+      };
+    };
+    sops.templates = privateDeclaredModule.sops.templates;
+  };
+  privateModule = moduleFor privateSettings privateConfig;
+  privateEffective =
+    builtins.fromJSON
+      privateModule.sops.templates."dns-adguardhome-adguardhome.yaml".content;
+  privateFilteringDisabledSettings = lib.recursiveUpdate privateSettings {
+    filtering.enable = false;
+  };
+  privateFilteringDisabledDeclaredModule = moduleFor privateFilteringDisabledSettings placeholderConfig;
+  privateFilteringDisabledConfig = lib.recursiveUpdate placeholderConfig {
+    services = {
+      adguardhome = privateFilteringDisabledDeclaredModule.services.adguardhome // {
+        package = adguardPackage;
+      };
+      dnsproxy = privateFilteringDisabledDeclaredModule.services.dnsproxy // {
+        package = dnsproxyPackage;
+      };
+    };
+    sops.templates = privateFilteringDisabledDeclaredModule.sops.templates;
+  };
+  privateFilteringDisabledModule = moduleFor privateFilteringDisabledSettings privateFilteringDisabledConfig;
+  privateFilteringDisabledEffective =
+    builtins.fromJSON
+      privateFilteringDisabledModule.sops.templates."dns-adguardhome-adguardhome.yaml".content;
+  privateDisabledModule = moduleFor (privateSettings // { enable = false; }) { };
   disabledIntegration =
     (lib.evalModules {
       modules = [
@@ -183,8 +228,41 @@ let
     "9.9.9.10:53"
     "8.8.8.8:53"
   ];
+  expectedPrivateUpstreams = [
+    "[/internal.example.invalid/admin.example.invalid/]10.20.0.53:53"
+    "[/internal.example.invalid/admin.example.invalid/][::1]:5354"
+    "[/services.example.invalid/]192.168.50.53:5353"
+  ];
+  expectedPrivateRewrites = [
+    {
+      answer = "10.20.0.1";
+      domain = "router.internal.example.invalid";
+      enabled = true;
+    }
+    {
+      answer = "router-ui.internal.example.invalid";
+      domain = "control.admin.example.invalid";
+      enabled = true;
+    }
+  ];
+  expectedPrivateRules = [
+    "@@||internal.example.invalid^$important,dnsrewrite"
+    "@@||internal.example.invalid^$important"
+    "@@||admin.example.invalid^$important,dnsrewrite"
+    "@@||admin.example.invalid^$important"
+    "@@||services.example.invalid^$important,dnsrewrite"
+    "@@||services.example.invalid^$important"
+  ];
+  expectedPrivateDsGuards = [
+    "||internal.example.invalid^$dnstype=DS"
+    "||admin.example.invalid^$dnstype=DS"
+    "||services.example.invalid^$dnstype=DS"
+  ];
   schemaContract =
     schemaAccepts baseSettings
+    && (evalSettings baseSettings).dns.privateZones == [ ]
+    && (evalSettings baseSettings).dns.rewrites == [ ]
+    && (evalSettings baseSettings).filtering.enable
     && !(schemaAccepts (baseSettings // { unexpected = true; }))
     && !(schemaAccepts (baseSettings // { dns.port = "53"; }))
     && !(schemaAccepts (baseSettings // { dns.fallbackTimeoutSeconds = 0; }))
@@ -206,6 +284,376 @@ let
       lib.recursiveUpdate baseSettings { tls.certificateFile = "relative/cert.pem"; }
     ))
     && !(schemaAccepts (lib.recursiveUpdate baseSettings { tls.privateKeyFile = "relative/key.pem"; }));
+  privateSchemaResults = {
+    fixtureAccepted = schemaAccepts privateSettings;
+    emptyDomainsRejected =
+      !(schemaAccepts (
+        lib.recursiveUpdate baseSettings {
+          dns.privateZones = [
+            {
+              domains = [ ];
+              upstreams = [ { address = "10.0.0.53"; } ];
+            }
+          ];
+        }
+      ));
+    emptyUpstreamsRejected =
+      !(schemaAccepts (
+        lib.recursiveUpdate baseSettings {
+          dns.privateZones = [
+            {
+              domains = [ "internal.example.invalid" ];
+              upstreams = [ ];
+            }
+          ];
+        }
+      ));
+    closedZoneRejected =
+      !(schemaAccepts (
+        lib.recursiveUpdate privateSettings {
+          dns.privateZones = privateDnsFixture.privateZones ++ [
+            {
+              domains = [ "extra.example.invalid" ];
+              upstreams = [ { address = "10.0.0.53"; } ];
+              unexpected = true;
+            }
+          ];
+        }
+      ));
+    closedUpstreamRejected =
+      !(schemaAccepts (
+        lib.recursiveUpdate privateSettings {
+          dns.privateZones = [
+            {
+              domains = [ "internal.example.invalid" ];
+              upstreams = [
+                {
+                  address = "10.0.0.53";
+                  transport = "udp";
+                }
+              ];
+            }
+          ];
+        }
+      ));
+    closedRewriteRejected =
+      !(schemaAccepts (
+        lib.recursiveUpdate privateSettings {
+          dns.rewrites = [
+            {
+              domain = "router.internal.example.invalid";
+              answer = "10.0.0.1";
+              enabled = false;
+            }
+          ];
+        }
+      ));
+  };
+  privateAssertionResults = {
+    benignImportantTextAccepted =
+      (assertionFor
+        "adguardhome: userRules must not use dnsrewrite, badfilter, or important modifiers when private zones are configured."
+        privateSettings
+        placeholderConfig
+      ).assertion;
+    malformedZoneRejected =
+      rejectsSetting
+        "adguardhome: private zone domains must be unique canonical lowercase DNS names without wildcards or trailing dots."
+        (
+          lib.recursiveUpdate baseSettings {
+            dns.privateZones = [
+              {
+                domains = [ "*.Internal.example.invalid." ];
+                upstreams = [ { address = "10.0.0.53"; } ];
+              }
+            ];
+          }
+        );
+    duplicateZoneRejected =
+      rejectsSetting
+        "adguardhome: private zone domains must be unique canonical lowercase DNS names without wildcards or trailing dots."
+        (
+          lib.recursiveUpdate baseSettings {
+            dns.privateZones = [
+              {
+                domains = [ "internal.example.invalid" ];
+                upstreams = [ { address = "10.0.0.53"; } ];
+              }
+              {
+                domains = [ "internal.example.invalid" ];
+                upstreams = [ { address = "192.168.0.53"; } ];
+              }
+            ];
+          }
+        );
+    publicEndpointRejected =
+      rejectsSetting
+        "adguardhome: private DNS endpoints must be unique private numeric addresses with nonzero ports and must not loop to local DNS, Unbound, or fallback listeners."
+        (
+          lib.recursiveUpdate baseSettings {
+            dns.privateZones = [
+              {
+                domains = [ "internal.example.invalid" ];
+                upstreams = [ { address = "8.8.8.8"; } ];
+              }
+            ];
+          }
+        );
+    hostnameEndpointRejected =
+      rejectsSetting
+        "adguardhome: private DNS endpoints must be unique private numeric addresses with nonzero ports and must not loop to local DNS, Unbound, or fallback listeners."
+        (
+          lib.recursiveUpdate baseSettings {
+            dns.privateZones = [
+              {
+                domains = [ "internal.example.invalid" ];
+                upstreams = [ { address = "resolver.internal.example.invalid"; } ];
+              }
+            ];
+          }
+        );
+    zeroPortRejected =
+      rejectsSetting
+        "adguardhome: private DNS endpoints must be unique private numeric addresses with nonzero ports and must not loop to local DNS, Unbound, or fallback listeners."
+        (
+          lib.recursiveUpdate baseSettings {
+            dns.privateZones = [
+              {
+                domains = [ "internal.example.invalid" ];
+                upstreams = [
+                  {
+                    address = "10.0.0.53";
+                    port = 0;
+                  }
+                ];
+              }
+            ];
+          }
+        );
+    duplicateEndpointRejected =
+      rejectsSetting
+        "adguardhome: private DNS endpoints must be unique private numeric addresses with nonzero ports and must not loop to local DNS, Unbound, or fallback listeners."
+        (
+          lib.recursiveUpdate baseSettings {
+            dns.privateZones = [
+              {
+                domains = [ "internal.example.invalid" ];
+                upstreams = [
+                  { address = "10.0.0.53"; }
+                  { address = "10.0.0.53"; }
+                ];
+              }
+            ];
+          }
+        );
+    ownListenerRejected =
+      rejectsSetting
+        "adguardhome: private DNS endpoints must be unique private numeric addresses with nonzero ports and must not loop to local DNS, Unbound, or fallback listeners."
+        (
+          lib.recursiveUpdate baseSettings {
+            dns = {
+              bindHosts = [
+                "127.0.0.1"
+                "10.0.0.53"
+              ];
+              privateZones = [
+                {
+                  domains = [ "internal.example.invalid" ];
+                  upstreams = [ { address = "10.0.0.53"; } ];
+                }
+              ];
+            };
+          }
+        );
+    unboundLoopRejected =
+      rejectsSetting
+        "adguardhome: private DNS endpoints must be unique private numeric addresses with nonzero ports and must not loop to local DNS, Unbound, or fallback listeners."
+        (
+          lib.recursiveUpdate baseSettings {
+            dns.privateZones = [
+              {
+                domains = [ "internal.example.invalid" ];
+                upstreams = [
+                  {
+                    address = "127.0.0.1";
+                    port = 5335;
+                  }
+                ];
+              }
+            ];
+          }
+        );
+    fallbackLoopRejected =
+      rejectsSetting
+        "adguardhome: private DNS endpoints must be unique private numeric addresses with nonzero ports and must not loop to local DNS, Unbound, or fallback listeners."
+        (
+          lib.recursiveUpdate baseSettings {
+            dns.privateZones = [
+              {
+                domains = [ "internal.example.invalid" ];
+                upstreams = [
+                  {
+                    address = "::1";
+                    port = 5336;
+                  }
+                ];
+              }
+            ];
+          }
+        );
+    outsideSourceRejected =
+      rejectsSetting
+        "adguardhome: private rewrite sources must be unique canonical lowercase DNS names within a declared private zone."
+        (
+          lib.recursiveUpdate privateSettings {
+            dns.rewrites = [
+              {
+                domain = "outside.example.invalid";
+                answer = "10.0.0.1";
+              }
+            ];
+          }
+        );
+    siblingSourceRejected =
+      rejectsSetting
+        "adguardhome: private rewrite sources must be unique canonical lowercase DNS names within a declared private zone."
+        (
+          lib.recursiveUpdate privateSettings {
+            dns.rewrites = [
+              {
+                domain = "evilinternal.example.invalid";
+                answer = "10.0.0.1";
+              }
+            ];
+          }
+        );
+    duplicateSourceRejected =
+      rejectsSetting
+        "adguardhome: private rewrite sources must be unique canonical lowercase DNS names within a declared private zone."
+        (
+          lib.recursiveUpdate privateSettings {
+            dns.rewrites = [
+              {
+                domain = "router.internal.example.invalid";
+                answer = "10.0.0.1";
+              }
+              {
+                domain = "router.internal.example.invalid";
+                answer = "10.0.0.2";
+              }
+            ];
+          }
+        );
+    publicAnswerRejected =
+      rejectsSetting
+        "adguardhome: private rewrite answers must be private numeric IPs or canonical private-zone CNAME targets that are not rewrite sources."
+        (
+          lib.recursiveUpdate privateSettings {
+            dns = {
+              privateZones = privateDnsFixture.privateZones ++ [
+                {
+                  domains = [ "8.8.8.8" ];
+                  upstreams = [ { address = "10.0.0.53"; } ];
+                }
+              ];
+              rewrites = [
+                {
+                  domain = "alias.8.8.8.8";
+                  answer = "8.8.8.8";
+                }
+              ];
+            };
+          }
+        );
+    outsideCnameRejected =
+      rejectsSetting
+        "adguardhome: private rewrite answers must be private numeric IPs or canonical private-zone CNAME targets that are not rewrite sources."
+        (
+          lib.recursiveUpdate privateSettings {
+            dns.rewrites = [
+              {
+                domain = "router.internal.example.invalid";
+                answer = "outside.example.invalid";
+              }
+            ];
+          }
+        );
+    siblingCnameRejected =
+      rejectsSetting
+        "adguardhome: private rewrite answers must be private numeric IPs or canonical private-zone CNAME targets that are not rewrite sources."
+        (
+          lib.recursiveUpdate privateSettings {
+            dns.rewrites = [
+              {
+                domain = "router.internal.example.invalid";
+                answer = "evilinternal.example.invalid";
+              }
+            ];
+          }
+        );
+    selfAliasRejected =
+      rejectsSetting
+        "adguardhome: private rewrite answers must be private numeric IPs or canonical private-zone CNAME targets that are not rewrite sources."
+        (
+          lib.recursiveUpdate privateSettings {
+            dns.rewrites = [
+              {
+                domain = "router.internal.example.invalid";
+                answer = "router.internal.example.invalid";
+              }
+            ];
+          }
+        );
+    aliasChainRejected =
+      rejectsSetting
+        "adguardhome: private rewrite answers must be private numeric IPs or canonical private-zone CNAME targets that are not rewrite sources."
+        (
+          lib.recursiveUpdate privateSettings {
+            dns.rewrites = [
+              {
+                domain = "first.internal.example.invalid";
+                answer = "second.internal.example.invalid";
+              }
+              {
+                domain = "second.internal.example.invalid";
+                answer = "10.0.0.2";
+              }
+            ];
+          }
+        );
+    dnsrewriteRuleRejected =
+      rejectsSetting
+        "adguardhome: userRules must not use dnsrewrite, badfilter, or important modifiers when private zones are configured."
+        (
+          lib.recursiveUpdate privateSettings {
+            filtering.userRules = [ "||router.internal.example.invalid^$dnsrewrite=NOERROR;A;10.0.0.1" ];
+          }
+        );
+    badfilterRuleRejected =
+      rejectsSetting
+        "adguardhome: userRules must not use dnsrewrite, badfilter, or important modifiers when private zones are configured."
+        (
+          lib.recursiveUpdate privateSettings {
+            filtering.userRules = [ "@@||internal.example.invalid^$BADFILTER" ];
+          }
+        );
+    importantRuleRejected =
+      rejectsSetting
+        "adguardhome: userRules must not use dnsrewrite, badfilter, or important modifiers when private zones are configured."
+        (
+          lib.recursiveUpdate privateSettings {
+            filtering.userRules = [ "||router.internal.example.invalid^$ImPoRtAnT" ];
+          }
+        );
+    importantValueRuleRejected =
+      rejectsSetting
+        "adguardhome: userRules must not use dnsrewrite, badfilter, or important modifiers when private zones are configured."
+        (
+          lib.recursiveUpdate privateSettings {
+            filtering.userRules = [ "||router.internal.example.invalid^$important=foo" ];
+          }
+        );
+  };
   effectiveContract =
     builtins.all (entry: entry.assertion) machine.assertions
     && machine.services.adguardhome.enable
@@ -231,6 +679,11 @@ let
     && !effective.dns.hostsfile_enabled
     && effective.dns.ratelimit == 0
     && effective.filtering.parental_enabled
+    && effective.filtering.filtering_enabled
+    && effective.filtering.rewrites_enabled
+    && effective.filtering.protection_enabled
+    && effective.filtering.rewrites == [ ]
+    && effective.user_rules == baseSettings.filtering.userRules
     && effective.filtering.safe_search.enabled
     && !effective.filtering.safebrowsing_enabled
     && effective.querylog.interval == "168h"
@@ -245,6 +698,37 @@ let
           password = placeholder;
         }
       ];
+  privateDnsContract =
+    builtins.all (entry: entry.assertion) privateModule.assertions
+    && privateEffective.dns.upstream_dns == [ "127.0.0.1:5335" ] ++ expectedPrivateUpstreams
+    && privateEffective.dns.fallback_dns == [ "127.0.0.1:5336" ] ++ expectedPrivateUpstreams
+    &&
+      privateEffective.dns.blocked_hosts == [
+        "version.bind"
+        "id.server"
+        "hostname.bind"
+      ]
+      ++ expectedPrivateDsGuards
+    && privateEffective.user_rules == expectedPrivateRules ++ privateSettings.filtering.userRules
+    && privateEffective.filtering.rewrites == expectedPrivateRewrites
+    && privateEffective.filtering.filtering_enabled
+    && privateEffective.filtering.rewrites_enabled
+    && privateEffective.filtering.protection_enabled
+    && privateModule.services.dnsproxy.settings == baselineModule.services.dnsproxy.settings
+    && privateModule.services.dnsproxy.flags == baselineModule.services.dnsproxy.flags;
+  filteringDisabledContract =
+    builtins.all (entry: entry.assertion) privateFilteringDisabledModule.assertions
+    && privateFilteringDisabledEffective.filtering.filtering_enabled
+    && privateFilteringDisabledEffective.filtering.rewrites_enabled
+    && !privateFilteringDisabledEffective.filtering.protection_enabled
+    && privateFilteringDisabledEffective.filtering.rewrites == expectedPrivateRewrites
+    && privateFilteringDisabledEffective.dns.upstream_dns == privateEffective.dns.upstream_dns
+    && privateFilteringDisabledEffective.dns.fallback_dns == privateEffective.dns.fallback_dns
+    && privateFilteringDisabledEffective.dns.blocked_hosts == privateEffective.dns.blocked_hosts
+    && privateFilteringDisabledEffective.user_rules == privateEffective.user_rules
+    &&
+      builtins.removeAttrs privateFilteringDisabledEffective.filtering [ "protection_enabled" ]
+      == builtins.removeAttrs privateEffective.filtering [ "protection_enabled" ];
   cascadeContract =
     dnsproxySettings.listen-addrs == [ "127.0.0.1" ]
     && dnsproxySettings.listen-ports == [ 5336 ]
@@ -331,6 +815,17 @@ let
     && ((disabledModule.sops or { }).templates or { }) == { }
     && ((disabledModule.sops or { }).secrets or { }) == { }
     && (disabledModule.clan or { }) == { };
+  privateDisabledContract =
+    (privateDisabledModule.services or { }) == { }
+    && (privateDisabledModule.systemd or { }) == { }
+    && !(privateDisabledModule ? networkCore)
+    && ((privateDisabledModule.sops or { }).templates or { }) == { }
+    && ((privateDisabledModule.sops or { }).secrets or { }) == { }
+    && (privateDisabledModule.clan or { }) == { };
+  privateSchemaContract = builtins.all (value: value) (builtins.attrValues privateSchemaResults);
+  privateAssertionContract = builtins.all (value: value) (
+    builtins.attrValues privateAssertionResults
+  );
   negativeContract =
     customRulesAccepted
     && templateOverrideRejected
@@ -342,9 +837,14 @@ let
     && effectiveContract
     && cascadeContract
     && credentialContract
+    && filteringDisabledContract
     && integrationContract
     && lifecycleContract
-    && negativeContract;
+    && negativeContract
+    && privateAssertionContract
+    && privateDisabledContract
+    && privateDnsContract
+    && privateSchemaContract;
 in
 if !contract then
   throw "AdGuard Home contract failed: ${
@@ -353,9 +853,16 @@ if !contract then
         cascadeContract
         credentialContract
         effectiveContract
+        filteringDisabledContract
         integrationContract
         lifecycleContract
         negativeContract
+        privateAssertionContract
+        privateAssertionResults
+        privateDisabledContract
+        privateDnsContract
+        privateSchemaContract
+        privateSchemaResults
         schemaContract
         ;
     }
@@ -367,9 +874,16 @@ else
       cascadeContract
       credentialContract
       effectiveContract
+      filteringDisabledContract
       integrationContract
       lifecycleContract
       negativeContract
+      privateAssertionContract
+      privateAssertionResults
+      privateDisabledContract
+      privateDnsContract
+      privateSchemaContract
+      privateSchemaResults
       schemaContract
       ;
   }

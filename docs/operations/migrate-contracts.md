@@ -29,6 +29,46 @@ The repository's [consumer fixture](../../checks/fixtures/example-clan.nix)
 demonstrates composition with Network. It is evaluation data, not an operator
 entrypoint or a module to import into production.
 
+Move conditional private upstream entries and native AdGuard rewrite settings
+into `dns.privateZones` and `dns.rewrites`. Preserve the consumer's actual names,
+addresses and friendly CNAME targets only in the consumer. A minimal fictional
+shape is:
+
+```nix
+dns.privateZones = [
+  {
+    domains = [ "admin.example.invalid" "internal.example.invalid" ];
+    upstreams = [ { address = "10.20.0.53"; port = 53; } ];
+  }
+];
+dns.rewrites = [
+  {
+    domain = "admin.example.invalid";
+    answer = "node.internal.example.invalid";
+  }
+];
+```
+
+Remove rules using `dnsrewrite`, `badfilter` or `important` modifiers from
+`filtering.userRules` when private zones are enabled; keep ordinary consumer
+allow/deny rules there. Move supported exact DNS aliases into typed
+`dns.rewrites`; native rewrites retain priority over the generated zone
+exemptions.
+
+Review enabled remote filter feeds for more-specific important blocks of direct
+private names. The module-owned exceptions prevent consumer rules from canceling
+the closure, but cannot assert the current content of downloaded feeds. A feed
+conflict affects the answer, not the private-only forwarding route.
+Replace any imperative protection toggle with `filtering.enable`. Do not migrate
+an imperative `filtering_enabled = false` state: disabling the engine also
+disables rewrites and is outside this contract.
+
+Before adoption, ensure every private resolver handles the protected suffixes
+without forwarding them to public DNS. Confirm consumer-owned listeners,
+firewall, client DNS routes, and HTTPS names and certificates separately. A
+repository evaluation cannot inspect the external resolver or prove runtime
+failure routing.
+
 ## Profile publication
 
 Remove publisher `caddyBindIPv4`, `tailnetIPv4`, `acmeCertName` and links-page
