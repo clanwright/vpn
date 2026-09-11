@@ -220,9 +220,180 @@ let
   dnsproxySettings = machine.services.dnsproxy.settings;
   expectedEncrypted = [
     "sdns://AgEAAAAAAAAABzEuMS4xLjEAEmNsb3VkZmxhcmUtZG5zLmNvbQovZG5zLXF1ZXJ5"
-    "sdns://AgEAAAAAAAAACDkuOS45LjEwABRkbnMxMC5xdWFkOS5uZXQ6NDQzCi9kbnMtcXVlcnk"
+    "sdns://AgEAAAAAAAAACDkuOS45LjEwABNkbnMxMC5xdWFkOS5uZXQ6NDQzCi9kbnMtcXVlcnk"
     "sdns://AgEAAAAAAAAABzguOC44LjgACmRucy5nb29nbGUKL2Rucy1xdWVyeQ"
   ];
+  malformedQuad9Stamp = "sdns://AgEAAAAAAAAACDkuOS45LjEwABRkbnMxMC5xdWFkOS5uZXQ6NDQzCi9kbnMtcXVlcnk";
+  stampExpectations = [
+    {
+      address = "1.1.1.1";
+      hostname = "cloudflare-dns.com";
+    }
+    {
+      address = "9.9.9.10";
+      hostname = "dns10.quad9.net:443";
+    }
+    {
+      address = "8.8.8.8";
+      hostname = "dns.google";
+    }
+  ];
+  base64UrlValues = builtins.listToAttrs (
+    lib.imap0 (value: name: { inherit name value; }) (
+      lib.stringToCharacters "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_"
+    )
+  );
+  modulo = dividend: divisor: dividend - builtins.div dividend divisor * divisor;
+  decodeBase64Url =
+    encoded:
+    let
+      characters = lib.stringToCharacters encoded;
+      count = builtins.length characters;
+      remainder = modulo count 4;
+      characterAt =
+        offset:
+        assert offset >= 0 && offset < count;
+        builtins.elemAt characters offset;
+      valueAt = offset: base64UrlValues.${characterAt offset};
+      decodeGroup =
+        offset:
+        if offset >= count then
+          [ ]
+        else
+          let
+            remaining = count - offset;
+            first = valueAt offset;
+            second = valueAt (offset + 1);
+            third = if remaining > 2 then valueAt (offset + 2) else 0;
+            fourth = if remaining > 3 then valueAt (offset + 3) else 0;
+          in
+          [ (first * 4 + builtins.div second 16) ]
+          ++ lib.optional (remaining > 2) (modulo second 16 * 16 + builtins.div third 4)
+          ++ lib.optional (remaining > 3) (modulo third 4 * 64 + fourth)
+          ++ decodeGroup (offset + 4);
+    in
+    assert remainder != 1;
+    decodeGroup 0;
+  characterIndex =
+    wanted: characters:
+    let
+      find = index: if builtins.elemAt characters index == wanted then index else find (index + 1);
+    in
+    find 0;
+  asciiByte =
+    character:
+    let
+      digits = lib.stringToCharacters "0123456789";
+      lowercase = lib.stringToCharacters "abcdefghijklmnopqrstuvwxyz";
+    in
+    if builtins.elem character digits then
+      48 + characterIndex character digits
+    else if builtins.elem character lowercase then
+      97 + characterIndex character lowercase
+    else
+      {
+        "." = 46;
+        "/" = 47;
+        ":" = 58;
+        "-" = 45;
+      }
+      .${character};
+  asciiBytes = value: map asciiByte (lib.stringToCharacters value);
+  parseDohStamp =
+    stamp:
+    let
+      encoded = lib.removePrefix "sdns://" stamp;
+      bytes = decodeBase64Url encoded;
+      byteCount = builtins.length bytes;
+      byteAt =
+        offset:
+        assert offset >= 0 && offset < byteCount;
+        builtins.elemAt bytes offset;
+      slice =
+        offset: length:
+        assert offset >= 0 && length >= 0 && offset + length <= byteCount;
+        builtins.genList (index: byteAt (offset + index)) length;
+      parseLengthPrefixed =
+        offset:
+        let
+          length = byteAt offset;
+        in
+        {
+          next = offset + 1 + length;
+          value = slice (offset + 1) length;
+        };
+      parseVariableLengthPrefixed =
+        offset:
+        let
+          encodedLength = byteAt offset;
+          length = modulo encodedLength 128;
+          value = slice (offset + 1) length;
+          next = offset + 1 + length;
+        in
+        if encodedLength < 128 then
+          {
+            inherit next;
+            values = [ value ];
+          }
+        else
+          let
+            rest = parseVariableLengthPrefixed next;
+          in
+          {
+            inherit (rest) next;
+            values = [ value ] ++ rest.values;
+          };
+      address = parseLengthPrefixed 9;
+      hashes = parseVariableLengthPrefixed address.next;
+      hostname = parseLengthPrefixed hashes.next;
+      path = parseLengthPrefixed hostname.next;
+      bootstrap =
+        if path.next == byteCount then
+          {
+            inherit (path) next;
+            values = [ ];
+          }
+        else
+          parseVariableLengthPrefixed path.next;
+    in
+    assert lib.hasPrefix "sdns://" stamp;
+    {
+      protocol = byteAt 0;
+      properties = slice 1 8;
+      addressBytes = address.value;
+      hashes = hashes.values;
+      hostnameBytes = hostname.value;
+      pathBytes = path.value;
+      bootstraps = bootstrap.values;
+      complete = bootstrap.next == byteCount;
+    };
+  validDohStamp =
+    expectation: stamp:
+    let
+      attempt = builtins.tryEval (builtins.deepSeq (parseDohStamp stamp) (parseDohStamp stamp));
+    in
+    attempt.success
+    && attempt.value.protocol == 2
+    &&
+      attempt.value.properties == [
+        1
+        0
+        0
+        0
+        0
+        0
+        0
+        0
+      ]
+    && attempt.value.addressBytes == asciiBytes expectation.address
+    && attempt.value.hashes == [ [ ] ]
+    && attempt.value.hostnameBytes == asciiBytes expectation.hostname
+    && attempt.value.pathBytes == asciiBytes "/dns-query"
+    && attempt.value.bootstraps == [ ]
+    && attempt.value.complete;
+  validQuad9Stamp = builtins.elemAt expectedEncrypted 1;
+  truncatedQuad9Stamp = lib.removeSuffix "k" validQuad9Stamp;
+  appendedQuad9Stamp = "${validQuad9Stamp}AAA";
   expectedPlaintext = [
     "1.1.1.1:53"
     "9.9.9.10:53"
@@ -753,6 +924,19 @@ let
         "AF_INET"
         "AF_INET6"
       ];
+  stampStructureContract =
+    builtins.length dnsproxySettings.upstream == builtins.length stampExpectations
+    && builtins.all (value: value) (
+      lib.zipListsWith validDohStamp stampExpectations dnsproxySettings.upstream
+    )
+    && builtins.all (value: value) (builtins.attrValues stampNegativeResults);
+  stampNegativeResults = {
+    malformedLengthRejected =
+      !(validDohStamp (builtins.elemAt stampExpectations 1) malformedQuad9Stamp);
+    truncatedPayloadRejected =
+      !(validDohStamp (builtins.elemAt stampExpectations 1) truncatedQuad9Stamp);
+    appendedPayloadRejected = !(validDohStamp (builtins.elemAt stampExpectations 1) appendedQuad9Stamp);
+  };
   credentialContract =
     builtins.length templateNames == 1
     && template.owner == "root"
@@ -844,7 +1028,8 @@ let
     && privateAssertionContract
     && privateDisabledContract
     && privateDnsContract
-    && privateSchemaContract;
+    && privateSchemaContract
+    && stampStructureContract;
 in
 if !contract then
   throw "AdGuard Home contract failed: ${
@@ -864,6 +1049,8 @@ if !contract then
         privateSchemaContract
         privateSchemaResults
         schemaContract
+        stampNegativeResults
+        stampStructureContract
         ;
     }
   }"
@@ -885,5 +1072,7 @@ else
       privateSchemaContract
       privateSchemaResults
       schemaContract
+      stampNegativeResults
+      stampStructureContract
       ;
   }

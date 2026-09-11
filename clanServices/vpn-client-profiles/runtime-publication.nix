@@ -9,6 +9,7 @@
   profileRoot,
   readerGroup,
   publicationService,
+  refreshUnit,
   requiredAssetPaths,
   localAssetSyncScript,
 }:
@@ -153,11 +154,17 @@ let
         else
           lib.concatStringsSep "\n            | " profileJsonFilters;
       profileJsonCase = lib.optionalString profile.publishProfileJson ''
+        failure_stage=credential-loading
+        failure_reason=credential-invalid-or-unavailable
         ${profileJsonDecls}
+        failure_stage=profile-rendering
+        failure_reason=render-failed
         jq \
           ${profileJsonArgs} \
           '${profileJsonFilter}' \
           ${lib.escapeShellArg profile.profileJsonTemplatePath} > "$profile_json_tmp"
+        failure_stage=file-installation
+        failure_reason=install-failed
         install -o root -g ${lib.escapeShellArg readerGroup} -m 0440 "$profile_json_tmp" "$profile_dir/profile.json"
       '';
       matchingLinks = builtins.filter (link: link.name == profile.name) settings.profileLinks;
@@ -173,12 +180,18 @@ let
       '';
     in
     ''
+      failure_stage=credential-loading
+      failure_reason=credential-invalid-or-unavailable
       path_token="$(read_path_token ${
         lib.escapeShellArg config.sops.secrets.${profile.pathTokenSecret}.path
       })"
+      failure_stage=file-installation
+      failure_reason=install-failed
       profile_dir="$stage/profiles/$path_token"
       test ! -e "$profile_dir"
       install -d -o root -g ${lib.escapeShellArg readerGroup} -m 0750 "$profile_dir"
+      failure_stage=preparation
+      failure_reason=temporary-file-failed
       json_tmp="$(mktemp "$runtime_base/.mihomo.XXXXXX.json")"
       yaml_tmp="$(mktemp "$runtime_base/.mihomo.XXXXXX.yaml")"
       full_json_tmp="$(mktemp "$runtime_base/.mihomo-full.XXXXXX.json")"
@@ -186,18 +199,36 @@ let
       profile_json_tmp="$(mktemp "$runtime_base/.profile.XXXXXX.json")"
       private_tmp_files+=("$json_tmp" "$yaml_tmp" "$full_json_tmp" "$full_yaml_tmp" "$profile_json_tmp")
 
+      failure_stage=credential-loading
+      failure_reason=credential-invalid-or-unavailable
       ${jqSecretFileDecls}
+      failure_stage=profile-rendering
+      failure_reason=render-failed
       jq ${jqArgs} '${jqFilter}' ${lib.escapeShellArg profile.templatePath} > "$json_tmp"
       yq -P -o=yaml '.' "$json_tmp" > "$yaml_tmp"
+      failure_stage=mihomo-validation
+      failure_reason=config-rejected
       mihomo -t -f "$yaml_tmp"
+      failure_stage=file-installation
+      failure_reason=install-failed
       install -o root -g ${lib.escapeShellArg readerGroup} -m 0440 "$yaml_tmp" "$profile_dir/mihomo.yaml"
 
+      failure_stage=profile-rendering
+      failure_reason=render-failed
       jq ${jqArgs} '${jqFilter}' ${lib.escapeShellArg profile.fullTemplatePath} > "$full_json_tmp"
       yq -P -o=yaml '.' "$full_json_tmp" > "$full_yaml_tmp"
+      failure_stage=mihomo-validation
+      failure_reason=config-rejected
       mihomo -t -f "$full_yaml_tmp"
+      failure_stage=file-installation
+      failure_reason=install-failed
       install -o root -g ${lib.escapeShellArg readerGroup} -m 0440 "$full_yaml_tmp" "$profile_dir/mihomo-full.yaml"
       ${profileJsonCase}
+      failure_stage=file-installation
+      failure_reason=install-failed
       ${linkCase}
+      failure_stage=cleanup
+      failure_reason=temporary-file-cleanup-failed
       rm -f "$json_tmp" "$yaml_tmp" "$full_json_tmp" "$full_yaml_tmp" "$profile_json_tmp"
     '';
 
@@ -215,8 +246,14 @@ in
     services.${publicationService} = {
       description = "Atomically publish VPN client profiles for ${localMachineName}";
       wantedBy = [ "multi-user.target" ];
-      after = [ "network-online.target" ];
-      wants = [ "network-online.target" ];
+      after = [
+        "network-online.target"
+        refreshUnit
+      ];
+      wants = [
+        "network-online.target"
+        refreshUnit
+      ];
       serviceConfig = {
         Type = "oneshot";
         RemainAfterExit = true;
@@ -251,26 +288,34 @@ in
         runtime_base=${lib.escapeShellArg runtimeBase}
         stage=""
         generation=""
+        failure_stage=preparation
+        failure_reason=unexpected-failure
         private_tmp_files=()
           cleanup() {
           rc="$?"
+          set +e
           if [ -n "$stage" ]; then rm -rf -- "$stage"; fi
           if [ -n "$generation" ]; then rm -rf -- "$generation"; fi
             if [ "''${#private_tmp_files[@]}" -ne 0 ]; then rm -f -- "''${private_tmp_files[@]}"; fi
             if [ "$rc" -ne 0 ]; then
               rm -f -- ${lib.escapeShellArg profileRoot}
-              printf 'VPN client profile publication failed; endpoint remains unpublished\n' >&3
+              printf 'VPN client profile publication failed: stage=%s reason=%s; endpoint remains unpublished\n' \
+                "$failure_stage" "$failure_reason" >&3
             fi
             exit "$rc"
           }
         trap cleanup EXIT
 
         find "$runtime_base/generations" -mindepth 1 -maxdepth 1 -exec rm -rf -- {} +
+        failure_stage=assets-readiness
+        failure_reason=required-assets-missing-or-empty
         ${localAssetSyncScript}
           ${lib.concatMapStringsSep "\n" (path: ''
             test -s ${lib.escapeShellArg path}
           '') requiredAssetPaths}
 
+          failure_stage=file-installation
+          failure_reason=install-failed
           stage="$(mktemp -d ${lib.escapeShellArg "${runtimeBase}/generations/.staging.XXXXXX"})"
           install -d -o root -g ${lib.escapeShellArg readerGroup} -m 0750 "$stage/profiles"
           html_escape() { printf '%s' "$1" | jq -sRr @html; }
@@ -308,6 +353,8 @@ in
           }
 
           ${lib.concatStringsSep "\n" (map profileCase generatedProfiles)}
+          failure_stage=file-installation
+          failure_reason=install-failed
           ${lib.optionalString settings.linksPage.enable ''
             printf '</ul></body></html>\n' >> "$links_tmp"
             chown root:${lib.escapeShellArg readerGroup} "$links_tmp"
@@ -325,6 +372,8 @@ in
           link_tmp="$runtime_base/published/.current.$$"
           ln -s -- "$generation" "$link_tmp"
           mv -Tf -- "$link_tmp" ${lib.escapeShellArg profileRoot}
+        failure_stage=cleanup
+        failure_reason=generation-cleanup-failed
         find "$runtime_base/generations" -mindepth 1 -maxdepth 1 ! -path "$generation" -exec rm -rf -- {} +
           if [ "''${#private_tmp_files[@]}" -ne 0 ]; then rm -f -- "''${private_tmp_files[@]}"; fi
         private_tmp_files=()

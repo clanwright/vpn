@@ -22,15 +22,16 @@ let
     profile: profile.mihomoSelectiveTemplate."rule-providers" ? personal_proxy_domains
   ) generatedProfiles;
 
-  mihomoAssetPaths = lib.optionals hasProfiles (
+  mihomoRemoteAssetPaths = lib.optionals hasProfiles (
     [ "${assetRoot}/secure-dns.txt" ]
     ++ map (ruleSet: "${assetRoot}/${ruleSet.tag}.mrs") mihomoMrsUpstream
-    ++ lib.optional hasPersonalDomains "${assetRoot}/segments.txt"
   );
   singBoxAssetPaths = lib.optionals needsSingBoxAssets (
     [ "${assetRoot}/filters.srs" ] ++ map (ruleSet: "${assetRoot}/${ruleSet.tag}.srs") upstreamRuleSets
   );
-  requiredAssetPaths = mihomoAssetPaths ++ singBoxAssetPaths;
+  requiredRemoteAssetPaths = mihomoRemoteAssetPaths ++ singBoxAssetPaths;
+  requiredAssetPaths =
+    requiredRemoteAssetPaths ++ lib.optional hasPersonalDomains "${assetRoot}/segments.txt";
 
   refreshSrs = ruleSet: ''
     refresh_download srs ${lib.escapeShellArg "${ruleSet.tag}.srs"} ${lib.escapeShellArg ruleSet.url}
@@ -153,7 +154,7 @@ in
 
         ${lib.optionalString hasProfiles ''
           refresh_download nonempty secure-dns.txt \
-            https://raw.githubusercontent.com/hagezi/dns-blocklists/main/domains/doh.txt
+            https://raw.githubusercontent.com/hagezi/dns-blocklists/main/wildcard/doh-onlydomains.txt
           ${lib.concatMapStrings refreshMrs mihomoMrsUpstream}
         ''}
 
@@ -191,7 +192,7 @@ in
             printf 'required public asset is missing or empty: %s\n' ${lib.escapeShellArg path} >&2
             missing=1
           fi
-        '') requiredAssetPaths}
+        '') requiredRemoteAssetPaths}
         exit "$missing"
       '';
     };

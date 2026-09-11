@@ -228,6 +228,7 @@ in
                 profileRoot
                 readerGroup
                 publicationService
+                refreshUnit
                 ;
               settings = publisher;
               inherit (publicAssets) requiredAssetPaths localAssetSyncScript;

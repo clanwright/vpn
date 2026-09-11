@@ -284,6 +284,7 @@ rec {
       secretPrefix = "fixture";
       excludedProfileNames = [ ];
       tailnetAdminDomains = [ "admin.example.invalid" ];
+      personalProxyDomains = [ "personal.example.invalid" ];
       profiles = [
         {
           name = "cHJvYmU";

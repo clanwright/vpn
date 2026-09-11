@@ -47,6 +47,11 @@ public answers, uncovered targets, wildcard/chained/cyclic aliases, and
 a failed module
 assertion instead of aborting JSON parsing.
 
+The stamp checks decode the configured base64url payloads and check their
+length-prefixed fields and complete consumption. They also reject the malformed
+Quad9 hostname length that previously escaped string-equality checks. These
+checks do not execute dnsproxy or establish fallback availability at runtime.
+
 ## Complete repository gate
 
 Before any release work, run the common gate:

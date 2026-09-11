@@ -153,9 +153,19 @@ revocation остаётся операцией consumer. Publisher добавл�
 publication unit как restart target; другие роли могут объявлять собственные
 restart targets для тех же bindings.
 
+При отказе журнал содержит только фиксированные `stage` и `reason`: в частности,
+`assets-readiness` / `required-assets-missing-or-empty`, `mihomo-validation` /
+`config-rejected`, `file-installation` / `install-failed`. Чтение credentials,
+рендеринг и очистка имеют отдельные этапы. Содержимое профилей, credentials,
+ссылки с токенами и необработанный вывод валидаторов остаются скрытыми.
+
 Публичные rule assets сохраняются в
-`/var/lib/vpn-client-profiles/<machine>/assets`. Первый запуск ждёт необходимых
-списков с автоматическими повторами. Ошибка обновления сохраняет последнюю
+`/var/lib/vpn-client-profiles/<machine>/assets`. Publisher запускает refresh unit
+через `Wants` и ждёт завершения попытки через `After`. Затем он синхронизирует
+локальный список и проверяет полный набор обязательных файлов. Неуспешный
+refresh не запрещает публикацию при наличии полного кеша; отсутствующий или
+пустой обязательный файл блокирует публикацию. Оба сервиса повторяют неудачные
+попытки автоматически. Ошибка обновления сохраняет последнюю
 принятую копию без жёсткого срока; возраст и ошибки доступны через несекретный
 `statusPath` для consumer monitoring. Это не гарантирует актуальность selective
 rules при длительной недоступности upstream.
@@ -170,6 +180,13 @@ consumer также учитывает результат refresh unit. Лока
 текстовых upstream-списков принятие ограничено успешным HTTP-ответом и
 непустым файлом. Cache не является доказательством корректности всех rule sets
 для реального клиента.
+
+`secure-dns.txt` загружается из официального HaGeZi
+[`wildcard/doh-onlydomains.txt`](https://raw.githubusercontent.com/hagezi/dns-blocklists/main/wildcard/doh-onlydomains.txt)
+как текстовый список доменов. Отдельный `adblock/doh.txt` остаётся источником
+для `filters.srs`. Проверка содержимого списка точной версией Mihomo из
+[package authority](../../docs/package-authority.md) относится к приёмке
+consumer; чистая Nix evaluation её не заменяет.
 
 ## Network exposure
 

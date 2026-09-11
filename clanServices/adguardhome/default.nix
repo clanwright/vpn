@@ -297,7 +297,7 @@
               # DNS stamps pin a numeric connect address while retaining the
               # provider hostname as the certificate identity.
               "sdns://AgEAAAAAAAAABzEuMS4xLjEAEmNsb3VkZmxhcmUtZG5zLmNvbQovZG5zLXF1ZXJ5"
-              "sdns://AgEAAAAAAAAACDkuOS45LjEwABRkbnMxMC5xdWFkOS5uZXQ6NDQzCi9kbnMtcXVlcnk"
+              "sdns://AgEAAAAAAAAACDkuOS45LjEwABNkbnMxMC5xdWFkOS5uZXQ6NDQzCi9kbnMtcXVlcnk"
               "sdns://AgEAAAAAAAAABzguOC44LjgACmRucy5nb29nbGUKL2Rucy1xdWVyeQ"
             ];
             plaintextFallbackUpstreams = [

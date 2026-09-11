@@ -35,6 +35,46 @@ let
   pathTokenSecret = machine.sops.secrets."mihomo-client-fixture-cHJvYmU-path-token";
   tmpfilesRules = machine.systemd.tmpfiles.rules;
   afterFinalPrivateReset = lib.last (lib.splitString "private_tmp_files=()" publicationUnit.script);
+  afterLocalAssetSync = lib.last (lib.splitString "local_asset_tmp=" publicationUnit.script);
+  remoteRuleSetNames = [
+    "ru_blocked_and_geoblocked_domains"
+    "ru_blocked_asn_ips"
+    "refilter_blocked_domains"
+    "refilter_blocked_ips"
+  ];
+  requiredFixtureAssetNames = [
+    "secure-dns.txt"
+    "segments.txt"
+    "filters.srs"
+  ]
+  ++ map (name: "${name}.mrs") remoteRuleSetNames
+  ++ map (name: "${name}.srs") remoteRuleSetNames;
+  refreshPreservesCache =
+    !(lib.hasInfix "rm -f ${publisherIntegration.assetRoot}/" refreshUnit.script)
+    && lib.hasInfix ''publish_file "$tmp" "$name"'' refreshUnit.script
+    && lib.hasInfix ''record_status "$name" failed download_failed'' refreshUnit.script;
+  publisherChecksCompleteAssetsAfterRefresh =
+    builtins.elem publisherIntegration.refreshUnit (lib.toList publicationUnit.after)
+    && builtins.elem publisherIntegration.refreshUnit (lib.toList publicationUnit.wants)
+    && !(builtins.elem publisherIntegration.refreshUnit (lib.toList (publicationUnit.requires or [ ])))
+    && builtins.all (
+      name: lib.hasInfix "test -s ${publisherIntegration.assetRoot}/${name}" afterLocalAssetSync
+    ) requiredFixtureAssetNames
+    && !(lib.hasInfix "segments.txt" refreshUnit.script);
+  assetLifecycleResults = {
+    emptyDirectoryFailsClosed =
+      publisherChecksCompleteAssetsAfterRefresh
+      && lib.hasInfix "exit \"$missing\"" refreshUnit.script
+      && lib.hasInfix "failure_reason=required-assets-missing-or-empty" publicationUnit.script;
+    unavailableSourceWithoutCacheFailsClosed =
+      publisherChecksCompleteAssetsAfterRefresh
+      && lib.hasInfix ''record_status "$name" failed download_failed'' refreshUnit.script;
+    unavailableSourceWithCompleteCachePublishes =
+      refreshPreservesCache && publisherChecksCompleteAssetsAfterRefresh;
+    recoveryRetriesBothStages =
+      refreshUnit.serviceConfig.Restart == "on-failure"
+      && publicationUnit.serviceConfig.Restart == "on-failure";
+  };
   unitDoesNotReference =
     referenced: unit:
     builtins.all (field: !(builtins.elem referenced (lib.toList (unit.${field} or [ ])))) [
@@ -164,12 +204,24 @@ let
     && lib.hasInfix ''rm -f -- "''${private_tmp_files[@]}"'' publicationUnit.script
     && lib.hasInfix "trap - EXIT" afterFinalPrivateReset
     && lib.hasInfix "test -s ${publisherIntegration.assetRoot}/" publicationUnit.script
-    && !(builtins.elem publisherIntegration.refreshUnit (lib.toList (publicationUnit.after or [ ])))
-    && !(builtins.elem publisherIntegration.refreshUnit (lib.toList (publicationUnit.wants or [ ])))
+    && builtins.elem publisherIntegration.refreshUnit (lib.toList publicationUnit.after)
+    && builtins.elem publisherIntegration.refreshUnit (lib.toList publicationUnit.wants)
+    && !(builtins.elem publisherIntegration.refreshUnit (lib.toList (publicationUnit.requires or [ ])))
+    && lib.hasInfix "failure_stage=assets-readiness" publicationUnit.script
+    && lib.hasInfix "failure_reason=required-assets-missing-or-empty" publicationUnit.script
+    && lib.hasInfix "failure_stage=mihomo-validation" publicationUnit.script
+    && lib.hasInfix "failure_reason=config-rejected" publicationUnit.script
+    && lib.hasInfix "failure_stage=file-installation" publicationUnit.script
+    && lib.hasInfix "failure_reason=install-failed" publicationUnit.script
+    && publisherChecksCompleteAssetsAfterRefresh
+    && builtins.all (value: value) (builtins.attrValues assetLifecycleResults)
     && refreshUnit.serviceConfig.Restart == "on-failure"
     && machine.systemd.timers.${refreshUnitName}.timerConfig.Persistent
     && lib.hasInfix ''record_status "$name" failed download_failed'' refreshUnit.script
-    && !(lib.hasInfix "rm -f ${publisherIntegration.assetRoot}/" refreshUnit.script)
+    && lib.hasInfix "main/wildcard/doh-onlydomains.txt" refreshUnit.script
+    && !(lib.hasInfix "main/domains/doh.txt" refreshUnit.script)
+    && lib.hasInfix "main/adblock/doh.txt" refreshUnit.script
+    && refreshPreservesCache
     && lib.hasInfix publisherIntegration.statusPath refreshUnit.script
     && pathTokenSecret.restartUnits == [ publisherIntegration.publicationUnit ]
     && machine.services.dnsproxy.settings.listen-addrs == [ "127.0.0.1" ]
@@ -181,5 +233,5 @@ if !contract then
 else
   {
     all = true;
-    inherit contract;
+    inherit assetLifecycleResults contract;
   }

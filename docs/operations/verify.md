@@ -42,6 +42,11 @@ combined Clan composition. Publisher checks cover static log suppression,
 publication cleanup/retry declarations, public-cache paths and readiness,
 secret restart targets and consumer-owned integration. These are generated
 configuration and script contracts, not execution of the runtime scripts.
+The asset contracts check refresh-before-publication ordering, the complete
+required-file guard after local asset synchronization, retention of cached
+downloads on failure and retry declarations for recovery. Empty-cache and
+upstream-outage behavior still require separate consumer runtime acceptance,
+as does parsing the HaGeZi domain list with the pinned Mihomo version.
 Each named test forces all its nested results and
 rejects false booleans or non-boolean leaves before returning JSON. Focused and
 full evaluation use that same success condition; the top-level `all` value
