@@ -187,11 +187,22 @@ in
               else
                 builtins.currentSystem;
             appsPkgs = appsPkgsFor system;
-            peerSetArguments = lib.concatMapStringsSep " " (peer: ''
-              peer ${lib.escapeShellArg peer.publicKey} allowed-ips ${
+            peerSetArguments = lib.concatMapStringsSep " " (
+              peer:
+              "peer ${lib.escapeShellArg peer.publicKey} allowed-ips ${
                 lib.escapeShellArg (if peer.allowedIPs == [ ] then "" else builtins.head peer.allowedIPs)
-              }
-            '') settings.peers;
+              }"
+            ) settings.peers;
+            expectedPeers = lib.concatStringsSep "\n" (
+              lib.sort builtins.lessThan (map (peer: peer.publicKey) settings.peers)
+            );
+            expectedPeerAllowedIPs = lib.concatStringsSep "\n" (
+              lib.sort builtins.lessThan (
+                map (
+                  peer: "${peer.publicKey}\t${if peer.allowedIPs == [ ] then "" else builtins.head peer.allowedIPs}"
+                ) settings.peers
+              )
+            );
             peerRouteCommands = lib.concatMapStringsSep "\n" (peer: ''
               ${pkgs.iproute2}/bin/ip route replace ${
                 lib.escapeShellArg (if peer.allowedIPs == [ ] then "" else builtins.head peer.allowedIPs)
@@ -316,6 +327,7 @@ in
                 ExecStart = "${appsPkgs.amneziawg-go}/bin/amneziawg-go -f ${interfaceNameArgument}";
                 Restart = "on-failure";
                 RestartSec = "5s";
+                TimeoutStartSec = "20s";
                 AmbientCapabilities = requiredCapabilities;
                 CapabilityBoundingSet = requiredCapabilities;
                 DeviceAllow = [ "/dev/net/tun rw" ];
@@ -337,36 +349,36 @@ in
                 UMask = "0077";
               };
               postStart = ''
-                configured=0
                 attempts=0
-                while [ "$attempts" -lt 100 ]; do
-                  if [ -S ${socketPath} ] && ${appsPkgs.amneziawg-tools}/bin/awg set ${interfaceNameArgument} \
-                    private-key ${lib.escapeShellArg config.sops.secrets.${settings.privateKeySecretName}.path} \
-                    listen-port ${lib.escapeShellArg (toString settings.listenPort)} \
-                    content-padding-addition ${
-                      lib.escapeShellArg validation.interfaceExtraOptions."Content-Padding-Addition"
-                    } \
-                    disable-cookies ${lib.escapeShellArg validation.interfaceExtraOptions."Disable-Cookies"} \
-                    h1 ${lib.escapeShellArg (toString validation.interfaceExtraOptions.H1)} \
-                    h2 ${lib.escapeShellArg (toString validation.interfaceExtraOptions.H2)} \
-                    h3 ${lib.escapeShellArg (toString validation.interfaceExtraOptions.H3)} \
-                    h4 ${lib.escapeShellArg (toString validation.interfaceExtraOptions.H4)} \
-                    header-protection-key ${
-                      lib.escapeShellArg config.sops.secrets.${settings.headerProtectionKeySecretName}.path
-                    } \
-                    random-trailers ${lib.escapeShellArg validation.interfaceExtraOptions."Random-Trailers"} \
-                    s1 ${lib.escapeShellArg (toString validation.interfaceExtraOptions.S1)} \
-                    s2 ${lib.escapeShellArg (toString validation.interfaceExtraOptions.S2)} \
-                    s3 ${lib.escapeShellArg (toString validation.interfaceExtraOptions.S3)} \
-                    s4 ${lib.escapeShellArg (toString validation.interfaceExtraOptions.S4)} \
-                    ${peerSetArguments} >/dev/null 2>&1; then
-                    configured=1
-                    break
-                  fi
+                while [ ! -S ${socketPath} ] && [ "$attempts" -lt 100 ]; do
                   attempts=$((attempts + 1))
                   ${pkgs.coreutils}/bin/sleep 0.1
                 done
-                if [ "$configured" -ne 1 ]; then
+                if [ ! -S ${socketPath} ]; then
+                  echo "amneziawg: userspace interface socket did not become ready" >&2
+                  exit 1
+                fi
+
+                if ! ${appsPkgs.amneziawg-tools}/bin/awg set ${interfaceNameArgument} \
+                  private-key ${lib.escapeShellArg config.sops.secrets.${settings.privateKeySecretName}.path} \
+                  listen-port ${lib.escapeShellArg (toString settings.listenPort)} \
+                  content-padding-addition ${
+                    lib.escapeShellArg validation.interfaceExtraOptions."Content-Padding-Addition"
+                  } \
+                  disable-cookies ${lib.escapeShellArg validation.interfaceExtraOptions."Disable-Cookies"} \
+                  h1 ${lib.escapeShellArg (toString validation.interfaceExtraOptions.H1)} \
+                  h2 ${lib.escapeShellArg (toString validation.interfaceExtraOptions.H2)} \
+                  h3 ${lib.escapeShellArg (toString validation.interfaceExtraOptions.H3)} \
+                  h4 ${lib.escapeShellArg (toString validation.interfaceExtraOptions.H4)} \
+                  header-protection-key ${
+                    lib.escapeShellArg config.sops.secrets.${settings.headerProtectionKeySecretName}.path
+                  } \
+                  random-trailers ${lib.escapeShellArg validation.interfaceExtraOptions."Random-Trailers"} \
+                  s1 ${lib.escapeShellArg (toString validation.interfaceExtraOptions.S1)} \
+                  s2 ${lib.escapeShellArg (toString validation.interfaceExtraOptions.S2)} \
+                  s3 ${lib.escapeShellArg (toString validation.interfaceExtraOptions.S3)} \
+                  s4 ${lib.escapeShellArg (toString validation.interfaceExtraOptions.S4)} \
+                  ${peerSetArguments} >/dev/null 2>&1; then
                   echo "amneziawg: userspace interface configuration failed" >&2
                   exit 1
                 fi
@@ -375,6 +387,65 @@ in
                 ${pkgs.iproute2}/bin/ip link set dev ${interfaceNameArgument} mtu 1280
                 ${pkgs.iproute2}/bin/ip link set up dev ${interfaceNameArgument}
                 ${peerRouteCommands}
+
+                link_state="$(${pkgs.iproute2}/bin/ip -o link show dev ${interfaceNameArgument} up 2>/dev/null)" || {
+                  echo "amneziawg: interface link readiness query failed" >&2
+                  exit 1
+                }
+                if [ -z "$link_state" ]; then
+                  echo "amneziawg: expected interface link is not up" >&2
+                  exit 1
+                fi
+
+                interfaces="$(${appsPkgs.amneziawg-tools}/bin/awg show interfaces 2>/dev/null)" || {
+                  echo "amneziawg: interface readiness query failed" >&2
+                  exit 1
+                }
+                interface_found=0
+                for interface in $interfaces; do
+                  if [ "$interface" = ${interfaceNameArgument} ]; then
+                    interface_found=1
+                  fi
+                done
+                if [ "$interface_found" -ne 1 ]; then
+                  echo "amneziawg: expected interface is not ready" >&2
+                  exit 1
+                fi
+
+                actual_listen_port="$(${appsPkgs.amneziawg-tools}/bin/awg show ${interfaceNameArgument} listen-port 2>/dev/null)" || {
+                  echo "amneziawg: listen-port readiness query failed" >&2
+                  exit 1
+                }
+                if [ "$actual_listen_port" != ${lib.escapeShellArg (toString settings.listenPort)} ]; then
+                  echo "amneziawg: listen port readiness check failed" >&2
+                  exit 1
+                fi
+
+                actual_peers_raw="$(${appsPkgs.amneziawg-tools}/bin/awg show ${interfaceNameArgument} peers 2>/dev/null)" || {
+                  echo "amneziawg: peer readiness query failed" >&2
+                  exit 1
+                }
+                actual_peers="$(${pkgs.coreutils}/bin/printf '%s\n' "$actual_peers_raw" | LC_ALL=C ${pkgs.coreutils}/bin/sort)" || {
+                  echo "amneziawg: peer readiness normalization failed" >&2
+                  exit 1
+                }
+                if [ "$actual_peers" != ${lib.escapeShellArg expectedPeers} ]; then
+                  echo "amneziawg: peer readiness check failed" >&2
+                  exit 1
+                fi
+
+                actual_peer_allowed_ips_raw="$(${appsPkgs.amneziawg-tools}/bin/awg show ${interfaceNameArgument} allowed-ips 2>/dev/null)" || {
+                  echo "amneziawg: allowed-ips readiness query failed" >&2
+                  exit 1
+                }
+                actual_peer_allowed_ips="$(${pkgs.coreutils}/bin/printf '%s\n' "$actual_peer_allowed_ips_raw" | LC_ALL=C ${pkgs.coreutils}/bin/sort)" || {
+                  echo "amneziawg: allowed-ips readiness normalization failed" >&2
+                  exit 1
+                }
+                if [ "$actual_peer_allowed_ips" != ${lib.escapeShellArg expectedPeerAllowedIPs} ]; then
+                  echo "amneziawg: allowed-ips readiness check failed" >&2
+                  exit 1
+                fi
               '';
               postStop = ''
                 ${pkgs.iproute2}/bin/ip link delete dev ${interfaceNameArgument} >/dev/null 2>&1 || true

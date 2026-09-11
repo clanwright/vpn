@@ -117,6 +117,13 @@ let
   evaluate =
     rawSettings: useSystemdActivation: evaluateWith { inherit rawSettings useSystemdActivation; };
   enabled = evaluate baseSettings true;
+  paddedEndpoint = evaluate (
+    baseSettings
+    // {
+      listenIPv4 = "1.2.16.255";
+      port = 5;
+    }
+  ) true;
   inactiveMissingRoot = evaluateWith {
     rawSettings = baseSettings // {
       enable = false;
@@ -193,6 +200,7 @@ let
   listener = builtins.head enabled.rendered.listeners;
   metadata = enabled.instance.exports.vpnProvider.transportMetadata;
   serviceConfig = enabled.unit.serviceConfig;
+  postStart = enabled.unit.postStart;
   masqueradeRootOption = enabled.options.clanwright.vpn.hysteria2.masqueradeRoot;
   rootSchemaAccepts =
     value:
@@ -224,6 +232,34 @@ let
     acmeCerts = inactiveMissingRoot.module.security.acme.certs == { };
   };
   disabledContract = builtins.all (value: value) (builtins.attrValues disabledResults);
+  readinessResults = {
+    credentialDirectoryLinked =
+      builtins.dirOf listener.certificate == builtins.dirOf listener."private-key"
+      && serviceConfig.Environment == "SAFE_PATHS=${builtins.dirOf listener.certificate}";
+    exactEndpoint = lib.hasInfix "expected_local=0B0200C0:01BB" postStart;
+    paddedEndpoint = lib.hasInfix "expected_local=FF100201:0005" paddedEndpoint.unit.postStart;
+    mainPidTable = lib.hasInfix ''/proc/"$MAINPID"/net/udp'' postStart;
+    mainPidFds = lib.hasInfix ''/proc/"$MAINPID"/fd/*'' postStart;
+    socketOwnership = lib.hasInfix ''"socket:[$inode]"'' postStart;
+    localAddressMatch = lib.hasInfix "$local_address" postStart;
+    unconnectedRemote = lib.hasInfix ''"$remote_address" != "00000000:0000"'' postStart;
+    udpState = lib.hasInfix ''"$state" != "07"'' postStart;
+    missingMainPid = lib.hasInfix ''-z "''${MAINPID:-}"'' postStart;
+    safeInspectionFailure =
+      lib.hasInfix "main process inspection unavailable" postStart
+      && lib.hasInfix "2>/dev/null" postStart;
+    boundedAttempts =
+      lib.hasInfix "seq 1 15" postStart
+      && lib.hasInfix "sleep 1" postStart
+      && serviceConfig.TimeoutStartSec == "20s";
+    failingActivation = lib.hasInfix "exit 1" postStart;
+    noSocketUtility = !(lib.hasInfix "/bin/ss " postStart) && !(lib.hasInfix "iproute2" postStart);
+    noSensitiveDiagnostics =
+      !(lib.hasInfix "certificate.pem" postStart)
+      && !(lib.hasInfix "private-key.pem" postStart)
+      && !(lib.hasInfix "<SOPS:" postStart);
+  };
+  readinessContract = builtins.all (value: value) (builtins.attrValues readinessResults);
   schemaContract =
     schemaAccepts baseSettings
     && !(masqueradeRootOption ? default)
@@ -358,6 +394,7 @@ let
       ]
     && lib.hasPrefix (lib.getExe mihomoPackage) serviceConfig.ExecStart
     && lib.hasInfix "-f /run/secrets-rendered/mihomo-hysteria2.json" serviceConfig.ExecStart
+    && readinessContract
     &&
       enabled.unit.after == [
         "network-online.target"
@@ -394,6 +431,14 @@ let
         "certificate.pem:/var/lib/acme/fixture/fullchain.pem"
         "private-key.pem:/var/lib/acme/fixture/key.pem"
       ];
+    safePaths =
+      builtins.dirOf mergedListener.certificate == builtins.dirOf mergedListener."private-key"
+      &&
+        mergedUnit.serviceConfig.Environment == "SAFE_PATHS=${builtins.dirOf mergedListener.certificate}";
+    readinessEndpoint = lib.hasInfix "expected_local=0B0200C0:01BB" mergedUnit.postStart;
+    readinessProcTable = lib.hasInfix ''/proc/"$MAINPID"/net/udp'' mergedUnit.postStart;
+    readinessProcFds = lib.hasInfix ''/proc/"$MAINPID"/fd/*'' mergedUnit.postStart;
+    readinessTimeout = mergedUnit.serviceConfig.TimeoutStartSec == "20s";
     groups = mergedMachine.users.users.mihomo-hysteria2.extraGroups == [ ];
     templateOwner = mergedTemplate.owner == "mihomo-hysteria2";
     templateRestart = mergedTemplate.restartUnits == [ "mihomo-hysteria2.service" ];
@@ -424,6 +469,8 @@ if !contract then
         firewallContract
         mergedUnitContract
         mergedUnitResults
+        readinessContract
+        readinessResults
         sandboxContract
         schemaContract
         ;
@@ -437,6 +484,7 @@ else
       exportContract
       firewallContract
       mergedUnitContract
+      readinessContract
       sandboxContract
       schemaContract
       ;

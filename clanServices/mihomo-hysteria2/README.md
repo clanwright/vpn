@@ -80,6 +80,14 @@ systemd credential directory, system protection read-only, address families
 `listenIPv4:port/udp` destination-scoped правилом. Другие TCP/UDP ports модуль не
 открывает.
 
+`SAFE_PATHS` разрешает точный systemd credential directory, используемый путями
+certificate/key в JSON. Проверка путей Mihomo остаётся включённой.
+`ExecStartPost` ожидает до 15 секунд появления UDP listener на точном
+`listenIPv4:port` и сверяет принадлежность socket inode основному процессу через
+`/proc`. Отсутствие listener завершает активацию ошибкой с безопасной причиной;
+`Restart=on-failure` запускает новый lifecycle. Это проверка локальной готовности
+при старте, а не постоянный мониторинг или подтверждение внешней доступности.
+
 ## Verification boundary
 
 Repository acceptance ограничена pure Nix evaluation: schema, export, generated
@@ -88,3 +96,5 @@ Mihomo и не подтверждает certificate availability, listener bind,
 TCP/UDP relay, sustained transfer или reachability в сетях пользователя.
 Полная репозиторная процедура описана в
 [verification runbook](../../docs/operations/verify.md).
+Отрицательные runtime-сценарии и внешняя consumer-приёмка описаны в
+[readiness runbook](../../docs/operations/vpn-readiness.md).

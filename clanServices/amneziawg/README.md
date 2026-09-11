@@ -60,6 +60,11 @@ interface и добавляет peer routes. В tools 3.1.20260812 command parse
 останавливает supervised daemon, а idempotent `ExecStopPost` удаляет interface
 и UAPI socket. `Restart=on-failure` перезапускает весь lifecycle.
 
+До завершения активации модуль сверяет наличие интерфейса, listen port и точные
+наборы public peers и AllowedIPs через выборочные поля `awg show`. Неполная
+установка peers при успешном `awg set` также считается ошибкой. Диагностика
+сообщает этап отказа без вывода ключей или исходного ответа команды.
+
 ## Network exposure
 
 Активная роль принимает UDP только на `listenIPv4:listenPort`; nftables rule
@@ -80,3 +85,5 @@ backend и server keepalive/J/I/timers, destination-scoped ingress, загруз
 MTU/fragmentation и cookie behavior source-only проверкой не установлены.
 Полная репозиторная процедура описана в
 [verification runbook](../../docs/operations/verify.md).
+Отрицательные runtime-сценарии и внешняя consumer-приёмка описаны в
+[readiness runbook](../../docs/operations/vpn-readiness.md).

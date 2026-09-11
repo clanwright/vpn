@@ -55,6 +55,32 @@ let
     egressIPv4 = "192.0.2.13";
     clientSubnetIPv4 = "10.78.0.0/24";
   };
+  fourPeerSettings = baseSettings // {
+    peers = [
+      (builtins.head baseSettings.peers)
+      {
+        name = "second";
+        publicKey = "DCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCA=";
+        clientPrivateKeySecretName = "consumer/second-private-key";
+        allowedIPs = [ "10.77.0.3/32" ];
+        clientPersistentKeepalive = null;
+      }
+      {
+        name = "third";
+        publicKey = "ECCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCA=";
+        clientPrivateKeySecretName = "consumer/third-private-key";
+        allowedIPs = [ "10.77.0.4/32" ];
+        clientPersistentKeepalive = null;
+      }
+      {
+        name = "fourth";
+        publicKey = "FCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCA=";
+        clientPrivateKeySecretName = "consumer/fourth-private-key";
+        allowedIPs = [ "10.77.0.5/32" ];
+        clientPersistentKeepalive = null;
+      }
+    ];
+  };
   evalSettings =
     value:
     (lib.evalModules {
@@ -109,6 +135,8 @@ let
     )).success;
   secondMachine = extraInstanceMachine secondSettings "fixture--amneziawg-second";
   secondUnit = secondMachine.systemd.services."wireguard-awg-second";
+  fourPeerMachine = isolatedMachine fourPeerSettings "fixture--amneziawg-four-peers";
+  fourPeerPostStart = fourPeerMachine.systemd.services."wireguard-awg-fixture".postStart;
   noNatMachine = isolatedMachine (baseSettings // { enableNat = false; }) "fixture--amneziawg-no-nat";
   disabledMachine = isolatedMachine (
     baseSettings // { enable = false; }
@@ -291,6 +319,22 @@ let
         ];
       }
     ))
+    && !(assertionsPass (
+      baseSettings
+      // {
+        peers = [
+          ((builtins.head baseSettings.peers) // { allowedIPs = [ "010.77.0.2/32" ]; })
+        ];
+      }
+    ))
+    && !(assertionsPass (
+      baseSettings
+      // {
+        peers = [
+          ((builtins.head baseSettings.peers) // { allowedIPs = [ "10.77.0.2/032" ]; })
+        ];
+      }
+    ))
     && !(schemaAccepts (baseSettings // { mtu = 1280; }))
     && !(schemaAccepts (
       baseSettings
@@ -340,6 +384,7 @@ let
       == "${self.packages.${system}.amneziawg-go}/bin/amneziawg-go -f awg-fixture"
     && unit.serviceConfig.Restart == "on-failure"
     && unit.serviceConfig.RestartSec == "5s"
+    && unit.serviceConfig.TimeoutStartSec == "20s"
     &&
       unit.serviceConfig.AmbientCapabilities == [
         "CAP_NET_ADMIN"
@@ -391,6 +436,22 @@ let
     && lib.hasInfix "disable-cookies off" beforeLinkUp
     && lib.hasInfix "ip address add 10.77.0.1/24 dev awg-fixture" postStart
     && lib.hasInfix "ip route replace 10.77.0.2/32 dev awg-fixture" postStart
+    && lib.hasInfix "ip -o link show dev awg-fixture up 2>/dev/null" postStart
+    && lib.hasInfix "awg show interfaces" postStart
+    && lib.hasInfix "awg show awg-fixture listen-port" postStart
+    && lib.hasInfix "awg show awg-fixture peers" postStart
+    && lib.hasInfix "awg show awg-fixture allowed-ips" postStart
+    && builtins.all (unsafe: !(lib.hasInfix unsafe postStart)) [
+      "awg show awg-fixture dump"
+      "awg showconf awg-fixture"
+      "awg show awg-fixture private-key"
+      "WG_HIDE_KEYS=never"
+    ]
+    && lib.hasInfix "interface readiness query failed\" >&2\n  exit 1" postStart
+    && lib.hasInfix "listen-port readiness query failed\" >&2\n  exit 1" postStart
+    && lib.hasInfix "peer readiness query failed\" >&2\n  exit 1" postStart
+    && lib.hasInfix "allowed-ips readiness query failed\" >&2\n  exit 1" postStart
+    && lib.hasInfix "LC_ALL=C" postStart
     && !(lib.hasInfix "modprobe amneziawg" postStart)
     && !(lib.hasInfix "link add dev" postStart)
     && builtins.length (lib.toList unit.serviceConfig.ExecStopPost) == 1
@@ -413,6 +474,27 @@ let
     && secretConfig.fixture-awg-server-private-key.restartUnits == [ "wireguard-awg-fixture.service" ]
     &&
       secretConfig.fixture-awg-header-protection-key.restartUnits == [ "wireguard-awg-fixture.service" ];
+
+  fourPeerRuntimeContract =
+    assertionsPass fourPeerSettings
+    && builtins.all (fragment: lib.hasInfix fragment fourPeerPostStart) [
+      "peer 'CCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCA=' allowed-ips 10.77.0.2/32"
+      "peer 'DCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCA=' allowed-ips 10.77.0.3/32"
+      "peer 'ECCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCA=' allowed-ips 10.77.0.4/32"
+      "peer 'FCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCA=' allowed-ips 10.77.0.5/32"
+    ]
+    && !(lib.hasInfix "allowed-ips 10.77.0.2/32\n" fourPeerPostStart)
+    && lib.hasInfix "10.77.0.2/32 peer 'DCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCA='" fourPeerPostStart
+    && lib.hasInfix "CCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCA=\nDCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCA=" fourPeerPostStart
+    && lib.hasInfix "CCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCA=\t10.77.0.2/32" fourPeerPostStart
+    && lib.hasInfix "while [ ! -S /run/amneziawg/awg-fixture.sock ] && [ \"$attempts\" -lt 100 ]; do" fourPeerPostStart
+    && lib.hasInfix "if [ ! -S /run/amneziawg/awg-fixture.sock ]; then" fourPeerPostStart
+    && lib.hasInfix "userspace interface socket did not become ready\" >&2\n  exit 1" fourPeerPostStart
+    && lib.hasInfix "if ! /nix/store/" fourPeerPostStart
+    && lib.hasInfix "/bin/awg set awg-fixture" fourPeerPostStart
+    && builtins.length (lib.splitString "/bin/awg set " fourPeerPostStart) == 2
+    && lib.hasInfix ">/dev/null 2>&1; then\n  echo \"amneziawg: userspace interface configuration failed" fourPeerPostStart
+    && lib.hasInfix "amneziawg: userspace interface configuration failed\" >&2\n  exit 1" fourPeerPostStart;
 
   firewallContract =
     lib.hasInfix "ip daddr 192.0.2.12 udp dport 443 accept" machine.networking.firewall.extraInputRules
@@ -448,11 +530,12 @@ let
     invalidContracts
     && exportContract
     && runtimeConfigContract
+    && fourPeerRuntimeContract
     && firewallContract
     && interfaceClaimContract
     && disabledContract;
 in
 if !contract then
-  throw "AWG3 validation, export, pre-up secret loading, cleanup, or firewall contract failed"
+  throw "AWG3 validation, export, fail-closed readiness, cleanup, or firewall contract failed"
 else
   { all = true; }

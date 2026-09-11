@@ -178,6 +178,15 @@ in
             credentialDirectory = "/run/credentials/${serviceUnit}";
             certificatePath = "${credentialDirectory}/certificate.pem";
             privateKeyPath = "${credentialDirectory}/private-key.pem";
+            socketIPv4Hex = lib.concatStrings (
+              lib.reverseList (
+                map (octet: lib.fixedWidthString 2 "0" (lib.toHexString (builtins.fromJSON octet))) (
+                  lib.splitString "." settings.listenIPv4
+                )
+              )
+            );
+            socketPortHex = lib.fixedWidthString 4 "0" (lib.toHexString settings.port);
+            expectedUdpLocal = "${socketIPv4Hex}:${socketPortHex}";
             bindCapability = lib.optional (settings.port < 1024) "CAP_NET_BIND_SERVICE";
             users = lib.listToAttrs (
               map (user: {
@@ -292,13 +301,50 @@ in
                   wants = [ "network-online.target" ] ++ sopsUnits;
                   wantedBy = [ "multi-user.target" ];
                   restartTriggers = [ mihomoPackage ];
+                  postStart = ''
+                    set -euo pipefail
+
+                    expected_local=${lib.escapeShellArg expectedUdpLocal}
+                    for attempt in $(${pkgs.coreutils}/bin/seq 1 15); do
+                      if [ -z "''${MAINPID:-}" ]; then
+                        echo "mihomo-hysteria2: main process inspection unavailable during UDP listener readiness" >&2
+                        exit 1
+                      fi
+                      udp_table="$(${pkgs.coreutils}/bin/cat /proc/"$MAINPID"/net/udp 2>/dev/null)" || {
+                        echo "mihomo-hysteria2: main process inspection unavailable during UDP listener readiness" >&2
+                        exit 1
+                      }
+
+                      while read -r slot local_address remote_address state queues timers retransmits uid timeout inode remainder; do
+                        if [ "$local_address" != "$expected_local" ] \
+                          || [ "$remote_address" != "00000000:0000" ] \
+                          || [ "$state" != "07" ]; then
+                          continue
+                        fi
+
+                        for fd in /proc/"$MAINPID"/fd/*; do
+                          target="$(${pkgs.coreutils}/bin/readlink "$fd" 2>/dev/null || true)"
+                          if [ "$target" = "socket:[$inode]" ]; then
+                            exit 0
+                          fi
+                        done
+                      done <<< "$udp_table"
+
+                      ${pkgs.coreutils}/bin/sleep 1
+                    done
+
+                    echo "mihomo-hysteria2: main process did not own the configured UDP listener within 15 seconds" >&2
+                    exit 1
+                  '';
                   serviceConfig = {
                     Type = "exec";
                     User = serviceName;
                     Group = serviceName;
                     ExecStart = "${lib.getExe mihomoPackage} -d /var/lib/${serviceName} -f ${configPath}";
+                    Environment = "SAFE_PATHS=${credentialDirectory}";
                     Restart = "on-failure";
                     RestartSec = "2s";
+                    TimeoutStartSec = "20s";
                     StateDirectory = serviceName;
                     StateDirectoryMode = "0750";
                     UMask = "0077";

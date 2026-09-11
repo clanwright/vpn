@@ -64,3 +64,8 @@ parsers accept generated files, packages can be built on Linux, systemd units
 start, DNS answers or fallback behave at runtime, VPN authentication or relay
 works, or any consumer machine adopted the change. Those runtime properties
 remain unverified under the defined test boundary.
+
+AWG and Hysteria2 startup guard failure scenarios and external acceptance are
+listed in [VPN readiness](vpn-readiness.md). Their pure Nix contracts inspect
+the generated guards; passing those contracts does not prove that the guards
+execute correctly under systemd.
