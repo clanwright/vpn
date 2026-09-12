@@ -81,6 +81,10 @@
             inherit lib;
             mieruPackageFor = system: self.packages.${system}.mieru;
           };
+          "@clanwright/vpn-anytls" = service ./clanServices/anytls/default.nix {
+            inherit lib;
+            singBoxPackageFor = system: self.packages.${system}.sing-box;
+          };
           "@clanwright/vpn-amneziawg" = service ./clanServices/amneziawg/default.nix {
             inherit lib;
             appsPkgsFor = system: self.packages.${system};

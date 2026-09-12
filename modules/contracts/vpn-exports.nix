@@ -129,6 +129,10 @@ let
           type = policyType "tlsVerify" (types.nullOr types.bool);
           default = null;
         };
+        tlsMinVersion = lib.mkOption {
+          type = policyType "tlsMinVersion" nullableNonEmptyStr;
+          default = null;
+        };
         credentialEncoding = lib.mkOption {
           type = policyType "credentialEncoding" nullableNonEmptyStr;
           default = null;
@@ -203,6 +207,14 @@ let
       "userNames"
       "credentialEncoding"
     ];
+    anytls = [
+      "protocol"
+      "tlsServerName"
+      "userNames"
+      "tlsVerify"
+      "tlsMinVersion"
+      "credentialEncoding"
+    ];
   };
   validMetadataShape =
     value:
@@ -260,6 +272,7 @@ let
       "headerProtectionKey"
     ];
     mieru = [ "users" ];
+    anytls = [ "users" ];
   };
   validSecretNamesShape =
     value:
@@ -274,7 +287,15 @@ let
     mkSubmodule {
       domain = mkOption (if protocol == "mieru" then fixed null else nonEmptyStr);
       ipv4 = mkOption (
-        if protocol == "mieru" then types.addCheck nonEmptyStr validIPv4 else nullableNonEmptyStr
+        if
+          builtins.elem protocol [
+            "mieru"
+            "anytls"
+          ]
+        then
+          types.addCheck nonEmptyStr validIPv4
+        else
+          nullableNonEmptyStr
       );
       port = mkOption types.port;
       transport = mkOption (fixed protocolTransports.${protocol});
@@ -295,6 +316,7 @@ let
             "hysteria2"
             "amneziawg"
             "mieru"
+            "anytls"
           ]
         );
         enabled = mkOption (fixed true);
@@ -539,6 +561,17 @@ let
       )
     then
       fail context "Mieru public transport metadata is incomplete"
+    else if
+      protocol == "anytls"
+      && (
+        !isNonEmptyString (metadata.tlsServerName or null)
+        || !allSafeIdentities (metadata.userNames or [ ])
+        || (metadata.tlsVerify or null) != fixedPolicy.tlsVerify
+        || (metadata.tlsMinVersion or null) != fixedPolicy.tlsMinVersion
+        || (metadata.credentialEncoding or null) != fixedPolicy.credentialEncoding
+      )
+    then
+      fail context "AnyTLS public transport metadata is incomplete"
     else
       metadata;
 
@@ -600,6 +633,8 @@ let
             && safeSecretName (secretNames.headerProtectionKey or null)
           else if protocol == "mieru" then
             credentialMapExact metadata.userNames secretNames.users
+          else if protocol == "anytls" then
+            credentialMapExact metadata.userNames secretNames.users
           else
             false
         );
@@ -617,6 +652,8 @@ let
         && (
           if protocol == "mieru" then
             builtins.isNull endpoint.domain && validIPv4 endpoint.ipv4
+          else if protocol == "anytls" then
+            isNonEmptyString endpoint.domain && validIPv4 endpoint.ipv4
           else
             isNonEmptyString endpoint.domain
             && (builtins.isNull endpoint.ipv4 || isNonEmptyString endpoint.ipv4)
@@ -639,6 +676,8 @@ let
         )
         && (protocol != "hysteria2" || metadata.userNames == raw.profileNames)
         && (protocol != "mieru" || metadata.userNames == raw.profileNames)
+        && (protocol != "anytls" || metadata.userNames == raw.profileNames)
+        && (protocol != "anytls" || metadata.tlsServerName == endpoint.domain)
         && (
           protocol != "naiveproxy"
           || (

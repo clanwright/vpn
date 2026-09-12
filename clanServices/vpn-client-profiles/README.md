@@ -33,7 +33,7 @@ Publisher `enable = false`, `secretPrefix` и gateway address fields пусты
 
 Role экспортирует `vpnPublisher` и выбирает providers через raw Clan
 exports и `clanLib.selectExports`: `naiveproxy` требует addon, а
-`vless-xhttp`, `hysteria2`, `amneziawg`, `mieru` — gateway. Отсутствующий,
+`vless-xhttp`, `hysteria2`, `amneziawg`, `mieru`, `anytls` — gateway. Отсутствующий,
 выключенный, неоднозначный или несоответствующий provider блокирует
 генерацию. Renderer принимает выбранные typed `vpnProvider` exports напрямую;
 `providerRefs.profileNames` сужает их `profileNames` без промежуточных
@@ -63,6 +63,15 @@ Mieru credentials выбираются по имени device profile из `secr
 переводов строк. Publisher проверяет raw bytes до подстановки, не обрезая их;
 невалидный пароль блокирует публикацию. Это совпадает с серверным контрактом.
 
+AnyTLS экспортируется в оба формата. Mihomo 1.19.30 получает `udp = true`,
+что включает встроенный UoT v2, SNI и обязательную проверку сертификата; этот
+core не имеет полей ограничения версии TLS для AnyTLS. Sing-box 1.14.0 также
+использует встроенный UoT v2, проверяет сертификат и явно ограничивает TLS
+значениями `min_version = "1.3"` и `max_version = "1.3"`. Пароль устройства
+берётся из точного `secretNames.users` map и подставляется через generic manifest
+binding с `base64url`. Custom padding, session metadata, idle-session overrides,
+ciphers, ALPN, TFO и client fingerprint не добавляются.
+
 Имена proxies включают полный canonical machine ID и instance ID. Компоненты
 кодируются с длиной, поэтому разные пары machine/instance не могут дать одно
 имя. Compatibility aliases для прежних имён без `-grosbeak` не создаются.
@@ -89,9 +98,9 @@ Mihomo поступает из `apps-nixpkgs`, а Sing-box — из
 
 Sing-box профиль сохраняет Naive как отдельный HTTPS/H2 outbound с проверкой
 TLS, `quic = false`, `udp_over_tcp = false` и `insecure_concurrency = 0`.
-Hysteria2 с существующим Gecko добавляется в sing-box как TCP/UDP outbound;
+Hysteria2 с существующим Gecko и AnyTLS добавляются в sing-box как TCP/UDP outbounds;
 требуется core 1.14.0 или новее. TCP и UDP имеют отдельные selectors. Защищённый
-UDP направляется через Hysteria2, а при его отсутствии отклоняется без DIRECT
+UDP направляется через Hysteria2 или AnyTLS, а при отсутствии обоих отклоняется без DIRECT
 fallback. Прямые исключения для
 LAN, router, Tailscale и DNS обрабатываются раньше. Native `Rule`/`Global`
 режимы имеют независимые `SELECTIVE`/`FULL` selectors и Auto selections.
@@ -101,7 +110,7 @@ DIRECT не входит в VPN selectors: при отказе выбранно�
 не переключается автоматически, а отключение VPN остаётся явным действием
 пользователя в клиенте.
 
-Если для публикуемого Sing-box профиля нет eligible Naive или Hysteria2 provider, renderer
+Если для публикуемого Sing-box профиля нет eligible Naive, Hysteria2 или AnyTLS provider, renderer
 не публикует `profile.json` и не добавляет ссылку на него. Mihomo-файлы с
 eligible providers других протоколов продолжают публиковаться. При наличии
 только Naive публикуется sing-box, а несовместимые Mihomo-файлы и ссылки на них
@@ -111,7 +120,7 @@ eligible providers других протоколов продолжают пуб
 выбора и фоновых URL-проб. Default включает все поддерживаемые протоколы;
 `[]` оставляет ручные selectors без Auto-групп. Например, consumer может задать
 для каждого профиля
-`[ "vless-xhttp" "hysteria2" "naiveproxy" "mieru" ]`, сохранив AWG вручную.
+`[ "vless-xhttp" "hysteria2" "naiveproxy" "mieru" "anytls" ]`, сохранив AWG вручную.
 Для исключённого AWG отключается также persistent keepalive. При отсутствии
 кандидатов Auto соответствующая группа не создаётся; DIRECT в защищённые
 selectors не добавляется. В полностью ручном режиме по умолчанию выбран
@@ -120,7 +129,7 @@ selectors не добавляется. В полностью ручном реж
 ```nix
 profiles = map (name: {
   inherit name;
-  autoProtocols = [ "vless-xhttp" "hysteria2" "naiveproxy" "mieru" ];
+  autoProtocols = [ "vless-xhttp" "hysteria2" "naiveproxy" "mieru" "anytls" ];
 }) [ "device-a" "device-b" ];
 ```
 

@@ -233,6 +233,26 @@ rec {
       dnsResolverIPv4s = [ "127.0.0.1" ];
     };
 
+    vpn-anytls = vpnInstance "vpn-anytls" "gateway" {
+      enable = true;
+      bindIPv4 = "192.0.2.14";
+      domain = "anytls.example.invalid";
+      port = 9443;
+      acmeCertName = "fixture";
+      users = [
+        {
+          name = "cHJvYmU";
+          passwordSecretName = "fixture-anytls-password";
+        }
+      ];
+      dnsEndpoint = {
+        domain = "dns.example.invalid";
+        ipv4 = "93.184.216.34";
+        port = 443;
+        path = "/dns-query";
+      };
+    };
+
     vpn-amneziawg = vpnInstance "vpn-amneziawg" "gateway" {
       enable = true;
       interfaceName = "awg-fixture";
@@ -331,6 +351,12 @@ rec {
           instanceId = "vpn-mieru";
           machine = machineName;
           protocol = "mieru";
+          profileNames = [ "cHJvYmU" ];
+        }
+        {
+          instanceId = "vpn-anytls";
+          machine = machineName;
+          protocol = "anytls";
           profileNames = [ "cHJvYmU" ];
         }
         {

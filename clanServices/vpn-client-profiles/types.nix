@@ -42,6 +42,7 @@ let
     "hysteria2"
     "amneziawg"
     "mieru"
+    "anytls"
   ];
   autoProtocolsType = lib.types.addCheck (lib.types.listOf (lib.types.enum protocolValues)) (
     protocols: protocols == lib.unique protocols

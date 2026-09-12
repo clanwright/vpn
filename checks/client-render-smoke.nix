@@ -568,6 +568,7 @@ let
   naiveOutbounds = builtins.filter (outbound: outbound.type == "naive") profile.outbounds;
   naive = builtins.head naiveOutbounds;
   singBoxHysteria = selector hysteria.name profile;
+  singBoxAnytls = selector anytls.name profile;
   vless = builtins.head (
     builtins.filter (proxy: proxy.type == "vless") rendered.mihomoSelectiveTemplate.proxies
   );
@@ -579,6 +580,9 @@ let
   );
   mieru = builtins.head (
     builtins.filter (proxy: proxy.type == "mieru") rendered.mihomoSelectiveTemplate.proxies
+  );
+  anytls = builtins.head (
+    builtins.filter (proxy: proxy.type == "anytls") rendered.mihomoSelectiveTemplate.proxies
   );
   selector =
     tag: config: builtins.head (builtins.filter (outbound: outbound.tag == tag) config.outbounds);
@@ -677,8 +681,6 @@ let
       server = endpoint.ipv4;
       server_port = endpoint.port;
       inherit (endpoint) path;
-      headers.Host =
-        if endpoint.port == 443 then endpoint.domain else "${endpoint.domain}:${toString endpoint.port}";
       tls = {
         enabled = true;
         server_name = endpoint.domain;
@@ -715,6 +717,7 @@ let
   expectedSingBoxDohServers = singBoxDohServersFor clientDnsEndpoints;
   expectedSingBoxDohRules = singBoxDohRulesFor clientDnsEndpoints;
   actualSingBoxDohServers = builtins.filter (server: server.type == "https") profile.dns.servers;
+  customPortSingBoxDoh = builtins.elemAt actualSingBoxDohServers 2;
   fakeIpDnsRule = builtins.head profile.dns.rules;
   dnsRulesAfterFakeIp = builtins.tail profile.dns.rules;
   renderedDnsShapeFor =
@@ -790,6 +793,7 @@ let
       "hysteria2"
       "wireguard"
       "mieru"
+      "anytls"
     ]
     &&
       selectiveGroups == [
@@ -817,6 +821,12 @@ let
       fullManual
       fullAuto
     ]
+    && builtins.all (group: builtins.elem anytls.name group.proxies) [
+      selectiveManual
+      selectiveAuto
+      fullManual
+      fullAuto
+    ]
     && lib.last rendered.mihomoSelectiveTemplate.rules == "MATCH,DIRECT"
     && lib.last rendered.mihomoFullTemplate.rules == "MATCH,FULL"
     && vless.uuid == "__MIHOMO_VLESS_UUID_11-vpn-fixture-22-vpn-mihomo-vless-xhttp__"
@@ -836,6 +846,20 @@ let
     && !(mieru ? "traffic-pattern")
     && !(mieru ? tls)
     && !(mieru ? sni)
+    && anytls.name == "11-vpn-fixture-10-vpn-anytls-cHJvYmU-anytls"
+    && anytls.server == "anytls.example.invalid"
+    && anytls.port == 9443
+    && anytls.password == "__MIHOMO_ANYTLS_PASSWORD_11-vpn-fixture-10-vpn-anytls_cHJvYmU__"
+    && anytls.udp
+    && anytls.sni == "anytls.example.invalid"
+    && !anytls."skip-cert-verify"
+    && !(anytls ? username)
+    && !(anytls ? tls)
+    && !(anytls ? "client-fingerprint")
+    && !(anytls ? "client-metadata")
+    && !(anytls ? "idle-session-check-interval")
+    && !(anytls ? "idle-session-timeout")
+    && !(anytls ? "min-idle-session")
     && awg."private-key" == "__MIHOMO_AMNEZIAWG_PRIVATE_KEY_11-vpn-fixture-13-vpn-amneziawg__"
     && awg."amnezia-wg-option".version == 3
     &&
@@ -871,12 +895,31 @@ let
     && singBoxHysteria.obfs.max_packet_size == 1200
     && singBoxHysteria.tls.enabled
     && !singBoxHysteria.tls.insecure
+    && singBoxAnytls.type == "anytls"
+    && singBoxAnytls.server == "192.0.2.14"
+    && singBoxAnytls.server_port == 9443
+    && singBoxAnytls.password == "__PROFILE_ANYTLS_PASSWORD_11-vpn-fixture-10-vpn-anytls_cHJvYmU__"
+    &&
+      singBoxAnytls.tls == {
+        enabled = true;
+        server_name = "anytls.example.invalid";
+        insecure = false;
+        min_version = "1.3";
+        max_version = "1.3";
+      }
+    && !(singBoxAnytls ? username)
+    && !(singBoxAnytls ? udp_over_tcp)
+    && !(singBoxAnytls ? client_metadata)
+    && !(singBoxAnytls ? idle_session_check_interval)
+    && !(singBoxAnytls ? idle_session_timeout)
+    && !(singBoxAnytls ? min_idle_session)
     && (selector "SELECTIVE" profile).default == "SELECTIVE-AUTO"
     &&
       (selector "SELECTIVE" profile).outbounds == [
         "SELECTIVE-AUTO"
         naive.tag
         hysteria.name
+        anytls.name
       ]
     && (selector "FULL" profile).default == "FULL-AUTO"
     &&
@@ -884,6 +927,7 @@ let
         "FULL-AUTO"
         naive.tag
         hysteria.name
+        anytls.name
       ]
     && builtins.length (urlTests profile) == 3
     && !(builtins.elem "DIRECT" (selector "SELECTIVE" profile).outbounds)
@@ -892,18 +936,25 @@ let
       (selector "SELECTIVE-AUTO" profile).outbounds == [
         naive.tag
         hysteria.name
+        anytls.name
       ]
     &&
       (selector "FULL-AUTO" profile).outbounds == [
         naive.tag
         hysteria.name
+        anytls.name
       ]
     &&
       (selector "UDP" profile).outbounds == [
         "UDP-AUTO"
         hysteria.name
+        anytls.name
       ]
-    && (selector "UDP-AUTO" profile).outbounds == [ hysteria.name ]
+    &&
+      (selector "UDP-AUTO" profile).outbounds == [
+        hysteria.name
+        anytls.name
+      ]
     && builtins.all (
       ruleSet:
       !(ruleSet ? download_detour)
@@ -937,6 +988,11 @@ let
     && builtins.all (rule: !(rule ? port)) (udpRejects profile);
   dnsContract =
     actualSingBoxDohServers == expectedSingBoxDohServers
+    && customPortSingBoxDoh.server == "203.0.113.53"
+    && customPortSingBoxDoh.server_port == 8443
+    && customPortSingBoxDoh.path == "/fixture-dns-query"
+    && customPortSingBoxDoh.tls.server_name == "dns-c.example.invalid"
+    && !(customPortSingBoxDoh ? headers)
     && builtins.length profile.dns.servers == builtins.length expectedSingBoxDohServers + 2
     &&
       builtins.elemAt profile.dns.servers (builtins.length expectedSingBoxDohServers) == {
@@ -1004,6 +1060,13 @@ let
         "${publicationUnitName}.service"
       ]
       && lib.hasInfix consumerMachine.sops.secrets."fixture-mieru-password".path publicationScript;
+    explicitAnytlsCredentialBinding =
+      lib.sort builtins.lessThan consumerMachine.sops.secrets."fixture-anytls-password".restartUnits
+      == lib.sort builtins.lessThan [
+        "anytls.service"
+        "${publicationUnitName}.service"
+      ]
+      && lib.hasInfix consumerMachine.sops.secrets."fixture-anytls-password".path publicationScript;
     explicitAwgClientKeyBinding =
       consumerMachine.sops.secrets."fixture-awg-client-private-key".restartUnits
       == [ "${publicationUnitName}.service" ]

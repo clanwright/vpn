@@ -1,6 +1,6 @@
 # Architecture
 
-The eight modules are independently selectable and share one versioned flake.
+The nine modules are independently selectable and share one versioned flake.
 Their public entrypoints are listed in [contracts](contracts.md).
 
 ## Ownership
@@ -37,6 +37,16 @@ The flake does not import a consumer checkout. TCP tuning belongs to the consume
   Mieru is selectable in both Mihomo profiles, including their ordinary Auto
   groups when permitted by the profile's `autoProtocols`. It is not exported
   to sing-box.
+- AnyTLS runs stock sing-box in its own service and Unix identity, accepting
+  TCP on the consumer-selected IPv4 endpoint with TLS 1.3 only. Each device has
+  its own runtime password. Default padding and session reuse are preserved;
+  UDP uses UoT v2 inside TCP. Process-scoped network rules restrict new egress
+  to public IPv4 destinations without private DNS exceptions. DNS uses only
+  the consumer's own public DoH endpoint, pinned by IPv4 with verified hostname;
+  it has no system or third-party resolver fallback. Consumer owns this endpoint,
+  the certificate and placement; host DNS configuration stays independent. Both
+  Mihomo and sing-box profiles include AnyTLS in ordinary manual and Auto
+  selection when permitted by the consumer's existing policy.
 
 Provider modules construct their common export envelope through the shared
 contract implementation. Protocol-specific transport data remains owned by
@@ -45,11 +55,11 @@ each provider; consumers select those exports through the public helpers.
 The profile publisher normalizes its settings and passes selected typed
 provider exports and per-device bindings to its renderer.
 It renders Mihomo selective/full profiles and publishes a sing-box profile
-for devices with an eligible Naive or Hysteria2 provider. Personal proxy domain additions
+for devices with an eligible Naive, Hysteria2 or AnyTLS provider. Personal proxy domain additions
 come from the consumer.
 
 The publisher separates manual availability from automatic protocol selection.
-Sing-box uses independent TCP and UDP selectors; protected UDP uses Hysteria2
+Sing-box uses independent TCP and UDP selectors; protected UDP uses Hysteria2 or AnyTLS
 or is rejected when no compatible provider exists. Both formats capture and
 reject external IPv6 while preserving local IPv6 and Tailscale access.
 

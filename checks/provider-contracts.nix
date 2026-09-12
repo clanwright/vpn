@@ -70,6 +70,22 @@ let
     profileNames = [ "device.one" ];
     secretNames.users."device.one" = "fixture/device.one-mieru-password";
   };
+  validAnytls = providerEnvelope.mkProvider {
+    protocol = "anytls";
+    instanceId = "fixture.anytls";
+    machine = "fixture.machine";
+    endpoint = {
+      domain = "anytls.example.invalid";
+      ipv4 = "192.0.2.14";
+      port = 443;
+    };
+    transportMetadata = {
+      tlsServerName = "anytls.example.invalid";
+      userNames = [ "device.one" ];
+    };
+    profileNames = [ "device.one" ];
+    secretNames.users."device.one" = "fixture/device.one-anytls-password";
+  };
   validAwg = providerEnvelope.mkProvider {
     protocol = "amneziawg";
     instanceId = "fixture.awg";
@@ -192,6 +208,21 @@ let
       value = lib.recursiveUpdate validMieru { transportMetadata.credentialEncoding = "plain"; };
     }
     {
+      name = "anytlsTlsVerify";
+      protocol = "anytls";
+      value = lib.recursiveUpdate validAnytls { transportMetadata.tlsVerify = false; };
+    }
+    {
+      name = "anytlsTlsMinVersion";
+      protocol = "anytls";
+      value = lib.recursiveUpdate validAnytls { transportMetadata.tlsMinVersion = "1.2"; };
+    }
+    {
+      name = "anytlsCredentialEncoding";
+      protocol = "anytls";
+      value = lib.recursiveUpdate validAnytls { transportMetadata.credentialEncoding = "plain"; };
+    }
+    {
       name = "awgGeneration";
       protocol = "amneziawg";
       value = lib.recursiveUpdate validAwg { transportMetadata.generation = 2; };
@@ -236,6 +267,11 @@ let
     role, service, and transport decision in the public contract check.
   */
   expectedCatalog = {
+    anytls = {
+      role = "gateway";
+      service = "@clanwright/vpn-anytls";
+      transport = "tcp";
+    };
     amneziawg = {
       role = "gateway";
       service = "@clanwright/vpn-amneziawg";
@@ -285,9 +321,20 @@ let
     && canonicalizedMieru.endpoint.transport == "tcp"
     && canonicalizedMieru.transportMetadata.protocol == "mieru"
     && canonicalizedMieru.transportMetadata.credentialEncoding == "base64url"
+    && validAnytls.endpoint.transport == "tcp"
+    &&
+      validAnytls.transportMetadata == {
+        protocol = "anytls";
+        tlsServerName = "anytls.example.invalid";
+        userNames = [ "device.one" ];
+        tlsVerify = true;
+        tlsMinVersion = "1.3";
+        credentialEncoding = "base64url";
+      }
     && !unsupportedConstructor.success;
   typeResults = {
     valid = typeAccepts validProvider;
+    validAnytls = typeAccepts validAnytls;
     wrongMode = !(typeAccepts wrongMode);
     wrongRole = !(typeAccepts wrongRole);
     wrongTransport = !(typeAccepts wrongTransport);
@@ -299,7 +346,36 @@ let
     validVless = selectorAccepts "vless-xhttp" validProvider;
     validHysteria = selectorAccepts "hysteria2" validHysteria;
     validMieru = selectorAccepts "mieru" validMieru;
+    validAnytls = selectorAccepts "anytls" validAnytls;
     validAwg = selectorAccepts "amneziawg" validAwg;
+    anytlsMissingIpv4 =
+      !(selectorAccepts "anytls" (
+        validAnytls // { endpoint = builtins.removeAttrs validAnytls.endpoint [ "ipv4" ]; }
+      ));
+    anytlsMissingDomain =
+      !(selectorAccepts "anytls" (
+        validAnytls // { endpoint = builtins.removeAttrs validAnytls.endpoint [ "domain" ]; }
+      ));
+    anytlsWrongIpv4 =
+      !(selectorAccepts "anytls" (lib.recursiveUpdate validAnytls { endpoint.ipv4 = "192.0.2.999"; }));
+    anytlsSniMismatch =
+      !(selectorAccepts "anytls" (
+        lib.recursiveUpdate validAnytls { transportMetadata.tlsServerName = "other.example.invalid"; }
+      ));
+    anytlsUdpTransportRejected =
+      !(selectorAccepts "anytls" (lib.recursiveUpdate validAnytls { endpoint.transport = "udp"; }));
+    anytlsUnknownMetadataRejected =
+      !(selectorAccepts "anytls" (
+        lib.recursiveUpdate validAnytls { transportMetadata.alpn = [ "h2" ]; }
+      ));
+    anytlsUsersMismatch =
+      !(selectorAccepts "anytls" (
+        lib.recursiveUpdate validAnytls { transportMetadata.userNames = [ "other" ]; }
+      ));
+    anytlsSecretMapMismatch =
+      !(selectorAccepts "anytls" (
+        lib.recursiveUpdate validAnytls { secretNames.users.other = "fixture/other-anytls-password"; }
+      ));
     dottedIdentity = (selectProvider "vless-xhttp" validProvider).profileNames == [ "device.one" ];
     wrongMode = !(selectorAccepts "vless-xhttp" wrongMode);
     wrongRole = !(selectorAccepts "vless-xhttp" wrongRole);

@@ -13,6 +13,7 @@ let
     vpn-mihomo-vless-xhttp.role = "gateway";
     vpn-mihomo-hysteria2.role = "gateway";
     vpn-mieru.role = "gateway";
+    vpn-anytls.role = "gateway";
     vpn-amneziawg.role = "gateway";
     vpn-naiveproxy.role = "addon";
     vpn-client-profiles.role = "publisher";
@@ -48,6 +49,10 @@ let
     vpn-mieru = {
       role = "gateway";
       protocol = "mieru";
+    };
+    vpn-anytls = {
+      role = "gateway";
+      protocol = "anytls";
     };
     vpn-amneziawg = {
       role = "gateway";
@@ -331,6 +336,7 @@ let
     ))
     (schemaResult "vpn-amneziawg" ((settingsFor "vpn-amneziawg" "gateway") // { peers = "fixture"; }))
     (schemaResult "vpn-mieru" ((settingsFor "vpn-mieru" "gateway") // { port = "8443"; }))
+    (schemaResult "vpn-anytls" ((settingsFor "vpn-anytls" "gateway") // { port = "9443"; }))
     (schemaResult "dns-unbound" (
       (settingsFor "dns-unbound" "recursive-backend")
       // {
@@ -363,6 +369,7 @@ let
         && machine.sops.templates ? "mihomo-hysteria2.json"
         && !((machine.networkCore.mihomo or { }) ? hysteria2);
       vpn-mieru = machine.systemd.services ? mita && machine.sops.templates ? "mita.json";
+      vpn-anytls = machine.systemd.services ? anytls && machine.sops.templates ? "anytls.json";
       vpn-amneziawg =
         machine.systemd.services ? wireguard-awg-fixture
         && !(machine.networking.wireguard.interfaces ? awg-fixture);
@@ -378,13 +385,19 @@ let
         "dns-adguardhome"
         "vpn-naiveproxy"
       ];
-      extraModule = lib.optionalAttrs (name == "vpn-mihomo-hysteria2") {
-        security.acme = {
-          acceptTerms = true;
-          defaults.email = "operator@example.invalid";
-          certs.fixture.webroot = "/var/lib/acme/acme-challenge";
-        };
-      };
+      extraModule =
+        lib.optionalAttrs
+          (builtins.elem name [
+            "vpn-anytls"
+            "vpn-mihomo-hysteria2"
+          ])
+          {
+            security.acme = {
+              acceptTerms = true;
+              defaults.email = "operator@example.invalid";
+              certs.fixture.webroot = "/var/lib/acme/acme-challenge";
+            };
+          };
       supportNames = lib.optionals includeNetwork [
         "edge-wildcard-certificate"
         "network-caddy"

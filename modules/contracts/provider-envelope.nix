@@ -28,6 +28,11 @@ let
       service = "@clanwright/vpn-mieru";
       transport = "tcp";
     };
+    anytls = {
+      role = "gateway";
+      service = "@clanwright/vpn-anytls";
+      transport = "tcp";
+    };
   };
 
   protocolRoles = lib.mapAttrs (_protocol: metadata: metadata.role) protocols;
@@ -67,6 +72,11 @@ let
       profile = awgProfile;
     };
     mieru = {
+      credentialEncoding = "base64url";
+    };
+    anytls = {
+      tlsVerify = true;
+      tlsMinVersion = "1.3";
       credentialEncoding = "base64url";
     };
   };

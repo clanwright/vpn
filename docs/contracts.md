@@ -12,6 +12,7 @@ the settings documented on each module page.
 | `@clanwright/vpn-amneziawg` | [AmneziaWG](../clanServices/amneziawg/README.md) |
 | `@clanwright/vpn-naiveproxy` | [NaiveProxy](../clanServices/naiveproxy/README.md) |
 | `@clanwright/vpn-mieru` | [Mieru](../clanServices/mieru/README.md) |
+| `@clanwright/vpn-anytls` | [AnyTLS](../clanServices/anytls/README.md) |
 | `@clanwright/vpn-client-profiles` | [Client profiles](../clanServices/vpn-client-profiles/README.md) |
 | `@clanwright/dns-adguardhome` | [AdGuard Home](../clanServices/adguardhome/README.md) |
 | `@clanwright/dns-unbound` | [Unbound](../clanServices/unbound/README.md) |
@@ -48,6 +49,22 @@ transport metadata contains `protocol`, `userNames` and
 to consumer-owned secrets. No TLS or arbitrary transport attributes are accepted.
 Clients require an updated publisher to consume the new protocol; existing
 provider exports retain their schema and behavior.
+
+AnyTLS also extends provider version 2, with protocol `anytls` and role
+`gateway`. Its TCP endpoint requires both domain and numeric IPv4. Exact
+transport metadata includes the catalog protocol, `userNames`, `tlsServerName`,
+`tlsVerify = true`, `tlsMinVersion = "1.3"` and
+`credentialEncoding = "base64url"`; `secretNames.users` binds each device to
+its consumer-owned password secret. TLS 1.3 is enforced by the server.
+Both Mihomo and sing-box publishers support this provider, including UDP via
+UoT v2. Consumers must update their publisher before selecting AnyTLS exports.
+
+The AnyTLS gateway requires a consumer-owned `dnsEndpoint` with `domain`,
+public `ipv4`, optional `port` (443) and `path` (`/dns-query`). It uses only
+that own DoH endpoint, retaining its verified hostname while connecting to
+the numeric address. System DNS configuration is independent, with no local
+or third-party resolver fallback. Private/reserved IPv4 endpoints are rejected;
+the process egress guard has no DNS exceptions into internal networks.
 
 Consumers must use public attributes, without importing internal files under
 `modules/`, `packages/`, `checks/` or `clanServices/`. Extending the interface
@@ -141,7 +158,7 @@ settings therefore keep their enabled behavior when this setting is omitted.
 | --- | --- |
 | `/<token>/mihomo.yaml` | Selective routing in Rule mode. |
 | `/<token>/mihomo-full.yaml` | Full routing in Rule mode with private DIRECT exceptions. |
-| `/<token>/profile.json` | sing-box Rule/Global modes with separate TCP/UDP selectors; present with an eligible Naive or Hysteria2 provider. |
+| `/<token>/profile.json` | sing-box Rule/Global modes with separate TCP/UDP selectors; present with an eligible Naive, Hysteria2 or AnyTLS provider. |
 
 These are templates, not live profile URLs. Per-device eligibility, DNS and
 routing policy are documented in [client profiles](../clanServices/vpn-client-profiles/README.md).

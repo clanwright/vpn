@@ -24,6 +24,7 @@ let
   hysteria2Providers = providersFor "hysteria2";
   naiveProviders = providersFor "naiveproxy";
   mieruProviders = providersFor "mieru";
+  anytlsProviders = providersFor "anytls";
   providerId = profileTypes.providerNamespace;
   profilePolicy = profileName: provider: builtins.elem profileName provider.profileNames;
   indexOf =
@@ -438,6 +439,29 @@ let
           or (throw "Mieru password secret name is required for ${machineName}/${profileName}");
     };
 
+  mkAnytlsCredential =
+    profileName: provider:
+    let
+      metadata = provider.transportMetadata;
+      machineName = providerId provider;
+    in
+    {
+      inherit machineName profileName;
+      endpointDomain = provider.endpoint.domain;
+      endpointIPv4 = provider.endpoint.ipv4;
+      port = provider.endpoint.port;
+      inherit (metadata)
+        tlsServerName
+        tlsVerify
+        tlsMinVersion
+        credentialEncoding
+        ;
+      tag = "${machineName}-${profileName}-anytls";
+      passwordSecretName =
+        provider.secretNames.users.${profileName}
+          or (throw "AnyTLS password secret name is required for ${machineName}/${profileName}");
+    };
+
   mkProfile =
     profile:
     let
@@ -459,13 +483,16 @@ let
       profileHysteria2Providers = builtins.filter (profilePolicy profile.name) hysteria2Providers;
       profileNaiveProviders = builtins.filter (profilePolicy profile.name) naiveProviders;
       profileMieruProviders = builtins.filter (profilePolicy profile.name) mieruProviders;
+      profileAnytlsProviders = builtins.filter (profilePolicy profile.name) anytlsProviders;
       upstreamCredentials = map (mkVlessCredential profile.name) profileVlessProviders;
       amneziawgCredentials = map (mkAmneziawgCredential profile.name) profileAmneziawgProviders;
       hysteria2Credentials = map (mkHysteria2Credential profile.name) profileHysteria2Providers;
       naiveCredentials = map (mkNaiveCredential profile.name) profileNaiveProviders;
       mieruCredentials = map (mkMieruCredential profile.name) profileMieruProviders;
+      anytlsCredentials = map (mkAnytlsCredential profile.name) profileAnytlsProviders;
       publishProfileJson =
-        profileJsonRequested && (naiveCredentials != [ ] || hysteria2Credentials != [ ]);
+        profileJsonRequested
+        && (naiveCredentials != [ ] || hysteria2Credentials != [ ] || anytlsCredentials != [ ]);
 
       mkVlessProxy = cred: {
         name = cred.vlessTag;
@@ -557,32 +584,56 @@ let
         udp = true;
       };
 
+      mkAnytlsProxy = cred: {
+        name = cred.tag;
+        type = "anytls";
+        server = cred.endpointDomain;
+        inherit (cred) port;
+        password = "__MIHOMO_ANYTLS_PASSWORD_${cred.machineName}_${cred.profileName}__";
+        udp = true;
+        sni = cred.tlsServerName;
+        "skip-cert-verify" = !cred.tlsVerify;
+      };
+
       unorderedProxies =
         (map mkVlessProxy upstreamCredentials)
         ++ (map mkHysteria2Proxy hysteria2Credentials)
         ++ (map mkMieruProxy mieruCredentials)
+        ++ (map mkAnytlsProxy anytlsCredentials)
         ++ (map mkAmneziawgProxy amneziawgCredentials);
 
       vlessProxyNames = map (cred: cred.vlessTag) upstreamCredentials;
       hysteria2ProxyNames = map (cred: cred.tag) hysteria2Credentials;
       mieruProxyNames = map (cred: cred.tag) mieruCredentials;
+      anytlsProxyNames = map (cred: cred.tag) anytlsCredentials;
       amneziawgProxyNames = map (cred: cred.amneziawgTag) amneziawgCredentials;
       autoProxyNames =
         lib.optionals (autoProtocolEnabled "vless-xhttp") vlessProxyNames
         ++ lib.optionals (autoProtocolEnabled "hysteria2") hysteria2ProxyNames
         ++ lib.optionals (autoProtocolEnabled "mieru") mieruProxyNames
+        ++ lib.optionals (autoProtocolEnabled "anytls") anytlsProxyNames
         ++ lib.optionals (autoProtocolEnabled "amneziawg") amneziawgProxyNames;
-      udpProxyNames = vlessProxyNames ++ hysteria2ProxyNames ++ mieruProxyNames ++ amneziawgProxyNames;
+      udpProxyNames =
+        vlessProxyNames
+        ++ hysteria2ProxyNames
+        ++ mieruProxyNames
+        ++ anytlsProxyNames
+        ++ amneziawgProxyNames;
       autoUdpProxyNames =
         lib.optionals (autoProtocolEnabled "vless-xhttp") vlessProxyNames
         ++ lib.optionals (autoProtocolEnabled "hysteria2") hysteria2ProxyNames
         ++ lib.optionals (autoProtocolEnabled "mieru") mieruProxyNames
+        ++ lib.optionals (autoProtocolEnabled "anytls") anytlsProxyNames
         ++ lib.optionals (autoProtocolEnabled "amneziawg") amneziawgProxyNames;
       orderedProxyNames =
         if isRouterProfile then
-          hysteria2ProxyNames ++ mieruProxyNames ++ amneziawgProxyNames ++ vlessProxyNames
+          hysteria2ProxyNames ++ mieruProxyNames ++ anytlsProxyNames ++ amneziawgProxyNames ++ vlessProxyNames
         else
-          vlessProxyNames ++ hysteria2ProxyNames ++ mieruProxyNames ++ amneziawgProxyNames;
+          vlessProxyNames
+          ++ hysteria2ProxyNames
+          ++ mieruProxyNames
+          ++ anytlsProxyNames
+          ++ amneziawgProxyNames;
       proxyByName = builtins.listToAttrs (
         map (proxy: {
           inherit (proxy) name;
@@ -632,7 +683,7 @@ let
           name = cred.endpointDomain;
           value = cred.endpointIPv4;
         }
-      ) (hysteria2Credentials ++ amneziawgCredentials);
+      ) (hysteria2Credentials ++ anytlsCredentials ++ amneziawgCredentials);
       pinnedHostEntries = map (entry: entry // { name = lib.toLower entry.name; }) rawPinnedHostEntries;
       pinnedHostEntriesByDomain = lib.groupBy (entry: entry.name) pinnedHostEntries;
       conflictingPinnedHostDomains = builtins.filter (
@@ -820,7 +871,14 @@ let
             (proxyIndex cred.tag)
             "password"
           ] "__MIHOMO_MIERU_PASSWORD_${cred.machineName}_${cred.profileName}__")
-        ]) mieruCredentials;
+        ]) mieruCredentials
+        ++ lib.concatMap (cred: [
+          (mkBinding cred.passwordSecretName cred.credentialEncoding [
+            "proxies"
+            (proxyIndex cred.tag)
+            "password"
+          ] "__MIHOMO_ANYTLS_PASSWORD_${cred.machineName}_${cred.profileName}__")
+        ]) anytlsCredentials;
       mihomoAssetRefs = [
         "secure-dns-domains"
       ]
@@ -865,25 +923,42 @@ let
           inherit (cred) alpn;
         };
       };
+      mkSingBoxAnytlsOutbound = cred: {
+        type = "anytls";
+        inherit (cred) tag;
+        server = cred.endpointIPv4;
+        server_port = cred.port;
+        password = "__PROFILE_ANYTLS_PASSWORD_${cred.machineName}_${cred.profileName}__";
+        tls = {
+          enabled = true;
+          server_name = cred.tlsServerName;
+          insecure = !cred.tlsVerify;
+          min_version = cred.tlsMinVersion;
+          max_version = "1.3";
+        };
+      };
       naiveOutboundTags = map (cred: cred.tag) naiveCredentials;
       singBoxHysteria2OutboundTags = map (cred: cred.tag) hysteria2Credentials;
-      singBoxTcpOutboundTags = naiveOutboundTags ++ singBoxHysteria2OutboundTags;
+      singBoxAnytlsOutboundTags = map (cred: cred.tag) anytlsCredentials;
+      singBoxTcpOutboundTags =
+        naiveOutboundTags ++ singBoxHysteria2OutboundTags ++ singBoxAnytlsOutboundTags;
       singBoxAutoTcpOutboundTags =
         lib.optionals (autoProtocolEnabled "naiveproxy") naiveOutboundTags
-        ++ lib.optionals (autoProtocolEnabled "hysteria2") singBoxHysteria2OutboundTags;
-      singBoxAutoUdpOutboundTags = lib.optionals (autoProtocolEnabled "hysteria2") singBoxHysteria2OutboundTags;
+        ++ lib.optionals (autoProtocolEnabled "hysteria2") singBoxHysteria2OutboundTags
+        ++ lib.optionals (autoProtocolEnabled "anytls") singBoxAnytlsOutboundTags;
+      singBoxUdpOutboundTags = singBoxHysteria2OutboundTags ++ singBoxAnytlsOutboundTags;
+      singBoxAutoUdpOutboundTags =
+        lib.optionals (autoProtocolEnabled "hysteria2") singBoxHysteria2OutboundTags
+        ++ lib.optionals (autoProtocolEnabled "anytls") singBoxAnytlsOutboundTags;
       mkSingBoxUdpPolicyRule =
         rule:
-        rule
-        // (if singBoxHysteria2OutboundTags == [ ] then { action = "reject"; } else { outbound = "UDP"; });
+        rule // (if singBoxUdpOutboundTags == [ ] then { action = "reject"; } else { outbound = "UDP"; });
       singBoxDohServers = lib.imap0 (index: endpoint: {
         tag = "own-doh-${toString index}";
         type = "https";
         server = endpoint.ipv4;
         server_port = endpoint.port;
         inherit (endpoint) path;
-        headers.Host =
-          endpoint.domain + lib.optionalString (endpoint.port != 443) ":${toString endpoint.port}";
         tls = {
           enabled = true;
           server_name = endpoint.domain;
@@ -1021,16 +1096,12 @@ let
             interval = "5m";
           }
         ]
-        ++ lib.optional (singBoxHysteria2OutboundTags != [ ]) {
+        ++ lib.optional (singBoxUdpOutboundTags != [ ]) {
           type = "selector";
           tag = "UDP";
-          outbounds =
-            lib.optional (singBoxAutoUdpOutboundTags != [ ]) "UDP-AUTO" ++ singBoxHysteria2OutboundTags;
+          outbounds = lib.optional (singBoxAutoUdpOutboundTags != [ ]) "UDP-AUTO" ++ singBoxUdpOutboundTags;
           default =
-            if singBoxAutoUdpOutboundTags == [ ] then
-              builtins.head singBoxHysteria2OutboundTags
-            else
-              "UDP-AUTO";
+            if singBoxAutoUdpOutboundTags == [ ] then builtins.head singBoxUdpOutboundTags else "UDP-AUTO";
         }
         ++ lib.optional (singBoxAutoUdpOutboundTags != [ ]) {
           type = "urltest";
@@ -1046,7 +1117,8 @@ let
           }
         ]
         ++ map mkSingBoxNaiveOutbound naiveCredentials
-        ++ map mkSingBoxHysteria2Outbound hysteria2Credentials;
+        ++ map mkSingBoxHysteria2Outbound hysteria2Credentials
+        ++ map mkSingBoxAnytlsOutbound anytlsCredentials;
         route = {
           auto_detect_interface = true;
           default_domain_resolver = {
@@ -1184,7 +1256,20 @@ let
               "password"
             ] "__PROFILE_HY2_OBFS_PASSWORD_${cred.machineName}__")
           ]
-        ) hysteria2Credentials;
+        ) hysteria2Credentials
+        ++ map (
+          cred:
+          let
+            outboundIndex = indexOf (
+              candidate: (candidate.tag or null) == cred.tag
+            ) profileJsonTemplate.outbounds;
+          in
+          mkBinding cred.passwordSecretName cred.credentialEncoding [
+            "outbounds"
+            outboundIndex
+            "password"
+          ] "__PROFILE_ANYTLS_PASSWORD_${cred.machineName}_${cred.profileName}__"
+        ) anytlsCredentials;
       singBoxAssetRefs = [
         "secure-dns-filter"
       ]
@@ -1244,6 +1329,7 @@ let
         hysteria2Credentials
         naiveCredentials
         mieruCredentials
+        anytlsCredentials
         ;
       inherit (profile) name;
       inherit publishProfileJson;

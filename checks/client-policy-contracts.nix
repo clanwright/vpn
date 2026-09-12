@@ -104,6 +104,13 @@ let
           transportMetadata.userNames = profileNames;
           secretNames.users = secretMap "mieru-${machine}" profileNames;
         };
+        anytls = {
+          transportMetadata = {
+            tlsServerName = domain;
+            userNames = profileNames;
+          };
+          secretNames.users = secretMap "anytls-${machine}" profileNames;
+        };
       };
     in
     providerEnvelope.mkProvider (common // protocolData.${protocol});
@@ -178,6 +185,7 @@ let
       "vless-xhttp"
       "hysteria2"
       "mieru"
+      "anytls"
     ];
   };
   matrixRenders = lib.mapAttrs (
@@ -199,6 +207,7 @@ let
           hysteria2 = "hysteria2";
           amneziawg = "amneziawg";
           mieru = "mieru";
+          anytls = "anytls";
         }
         .${provider.protocol};
     in
@@ -220,6 +229,7 @@ let
           builtins.elem outbound.type [
             "naive"
             "hysteria2"
+            "anytls"
           ]
         ) renderedProfile.profileJsonTemplate.outbounds
       )
@@ -253,6 +263,7 @@ let
                 "hysteria2"
                 "amneziawg"
                 "mieru"
+                "anytls"
               ]
             )
           );
@@ -262,6 +273,7 @@ let
               eligible user [
                 "naiveproxy"
                 "hysteria2"
+                "anytls"
               ]
             )
           );
@@ -345,7 +357,12 @@ let
           outputs == [ "profile.json" ]
           && renderedProfile.mihomoSelectiveTemplate == null
           && renderedProfile.mihomoFullTemplate == null
-        else if protocol == "hysteria2" then
+        else if
+          builtins.elem protocol [
+            "hysteria2"
+            "anytls"
+          ]
+        then
           outputs == [
             "mihomo.yaml"
             "mihomo-full.yaml"
@@ -366,6 +383,28 @@ let
           && (rule.action or null) == "reject"
           && !(rule ? outbound)
         ) renderedProfile.profileJsonTemplate.route.rules;
+      anytlsOnlyProtectedUdpUsesTunnel =
+        protocol != "anytls"
+        || (
+          let
+            udpSelector = builtins.head (
+              builtins.filter (
+                outbound: (outbound.tag or null) == "UDP"
+              ) renderedProfile.profileJsonTemplate.outbounds
+            );
+            protectedUdpRules = builtins.filter (
+              rule: (rule.network or null) == "udp" && (rule.rule_set or [ ]) != [ ]
+            ) renderedProfile.profileJsonTemplate.route.rules;
+            anytlsTags = map (outbound: outbound.tag) (
+              builtins.filter (outbound: outbound.type == "anytls") renderedProfile.profileJsonTemplate.outbounds
+            );
+          in
+          protectedUdpRules != [ ]
+          && builtins.all (rule: (rule.outbound or null) == "UDP" && !(rule ? action)) protectedUdpRules
+          && anytlsTags != [ ]
+          && builtins.all (tag: builtins.elem tag udpSelector.outbounds) anytlsTags
+          && !(builtins.elem "DIRECT" udpSelector.outbounds)
+        );
     }
   );
   noAutoRender = render publishers.publisher-a providers [
@@ -387,6 +426,7 @@ let
             "vless-xhttp"
             "hysteria2"
             "mieru"
+            "anytls"
             "amneziawg"
           ]
         );
@@ -408,9 +448,15 @@ let
           eligible "alice" [
             "naiveproxy"
             "hysteria2"
+            "anytls"
           ]
         );
-        expectedUdp = map (providerTag "alice") (eligible "alice" [ "hysteria2" ]);
+        expectedUdp = map (providerTag "alice") (
+          eligible "alice" [
+            "hysteria2"
+            "anytls"
+          ]
+        );
         selective = builtins.head (
           builtins.filter (outbound: (outbound.tag or null) == "SELECTIVE") noAutoSingBoxOutbounds
         );

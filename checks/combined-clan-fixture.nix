@@ -63,6 +63,7 @@ let
   );
   caddyUnit = units.caddy;
   mieruPasswordSecret = machine.sops.secrets."fixture-mieru-password";
+  anytlsPasswordSecret = machine.sops.secrets."fixture-anytls-password";
   pathTokenSecret = machine.sops.secrets."mihomo-client-fixture-cHJvYmU-path-token";
   tmpfilesRules = machine.systemd.tmpfiles.rules;
   afterFinalPrivateReset = lib.last (lib.splitString "private_tmp_files=()" publicationUnit.script);
@@ -131,7 +132,7 @@ let
   contract =
     builtins.attrNames config.inventory.instances
     == lib.sort builtins.lessThan (supportNames ++ serviceNames)
-    && builtins.length (builtins.attrNames config._services.allServices) == 11
+    && builtins.length (builtins.attrNames config._services.allServices) == 12
     && machine.services.xray.enable
     && units ? xray
     && units ? mihomo-hysteria2
@@ -148,6 +149,20 @@ let
     &&
       lib.sort builtins.lessThan mieruPasswordSecret.restartUnits == lib.sort builtins.lessThan [
         "mita.service"
+        publisherIntegration.publicationUnit
+      ]
+    && units ? anytls
+    && machine.sops.templates ? "anytls.json"
+    && machine.sops.templates."anytls.json".owner == "anytls"
+    && machine.sops.templates."anytls.json".group == "anytls"
+    && machine.sops.templates."anytls.json".mode == "0400"
+    && machine.sops.templates."anytls.json".restartUnits == [ "anytls.service" ]
+    && anytlsPasswordSecret.owner == "root"
+    && anytlsPasswordSecret.group == "root"
+    && anytlsPasswordSecret.mode == "0400"
+    &&
+      lib.sort builtins.lessThan anytlsPasswordSecret.restartUnits == lib.sort builtins.lessThan [
+        "anytls.service"
         publisherIntegration.publicationUnit
       ]
     && !((machine.networkCore.mihomo or { }) ? vlessXhttp)
