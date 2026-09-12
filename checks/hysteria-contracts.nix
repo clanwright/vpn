@@ -262,6 +262,12 @@ let
   readinessContract = builtins.all (value: value) (builtins.attrValues readinessResults);
   schemaContract =
     schemaAccepts baseSettings
+    && schemaAccepts (
+      baseSettings
+      // {
+        users = map (user: user // { name = "device.${user.name}"; }) baseSettings.users;
+      }
+    )
     && !(masqueradeRootOption ? default)
     && activeMissingRootRejected
     && disabledContract

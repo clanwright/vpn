@@ -4,6 +4,8 @@
   ...
 }:
 let
+  identities = import ../../modules/contracts/identities.nix { inherit lib; };
+  providerEnvelope = import ../../modules/contracts/provider-envelope.nix { inherit lib; };
   validation = import ./validation.nix { inherit lib; };
 in
 {
@@ -53,11 +55,11 @@ in
           };
 
           privateKeySecretName = lib.mkOption {
-            type = lib.types.str;
+            type = identities.safeSecretNameType;
           };
 
           headerProtectionKeySecretName = lib.mkOption {
-            type = lib.types.str;
+            type = identities.safeSecretNameType;
             description = "SOPS secret containing one canonical base64-encoded 32-byte AWG3 header protection key.";
           };
 
@@ -72,13 +74,13 @@ in
               lib.types.submodule (_: {
                 options = {
                   name = lib.mkOption {
-                    type = lib.types.str;
+                    type = identities.safeIdentityType;
                   };
                   publicKey = lib.mkOption {
                     type = lib.types.str;
                   };
                   clientPrivateKeySecretName = lib.mkOption {
-                    type = lib.types.str;
+                    type = identities.safeSecretNameType;
                     description = "SOPS secret containing this peer's client private key.";
                   };
                   allowedIPs = lib.mkOption {
@@ -141,23 +143,16 @@ in
       in
       {
         exports = lib.optionalAttrs active (mkExports {
-          vpnProvider = {
-            schemaVersion = 2;
+          vpnProvider = providerEnvelope.mkProvider {
+            protocol = "amneziawg";
             instanceId = instanceName;
             machine = providerMachine;
-            role = "gateway";
-            protocol = "amneziawg";
-            enabled = true;
             endpoint = {
               domain = settings.endpointDomain;
               ipv4 = settings.listenIPv4;
               port = settings.listenPort;
-              transport = "udp";
             };
             transportMetadata = {
-              protocol = "amneziawg";
-              generation = 3;
-              inherit (validation) profile;
               inherit (settings) serverPublicKey;
               inherit (settings) interfaceName;
               inherit (settings) address;

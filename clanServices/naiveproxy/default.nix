@@ -1,5 +1,6 @@
 { lib, ... }:
 let
+  providerEnvelope = import ../../modules/contracts/provider-envelope.nix { inherit lib; };
   identityPattern = "[A-Za-z0-9][A-Za-z0-9._-]{0,63}";
   secretNamePattern = "[A-Za-z0-9_][A-Za-z0-9_.+-]*(/[A-Za-z0-9_][A-Za-z0-9_.+-]*)*";
   validIdentity = value: builtins.match identityPattern value != null;
@@ -148,21 +149,16 @@ in
       in
       {
         exports = lib.optionalAttrs active (mkExports {
-          vpnProvider = {
-            schemaVersion = 2;
+          vpnProvider = providerEnvelope.mkProvider {
+            protocol = "naiveproxy";
             instanceId = instanceName;
             machine = providerMachine;
-            role = "addon";
-            protocol = "naiveproxy";
-            enabled = true;
             endpoint = {
               inherit (selectedPublicSiteEndpoint) domain;
               ipv4 = selectedPublicSiteEndpoint.publicIPv4;
               port = 443;
-              transport = "tcp";
             };
             transportMetadata = {
-              protocol = "naiveproxy";
               tlsServerName = selectedPublicSiteEndpoint.domain;
               inherit userNames;
               port = 443;
@@ -183,6 +179,7 @@ in
             templateName = "naiveproxy-${providerMachine}.caddy";
             fragmentPath = config.sops.templates.${templateName}.path;
             caddyConfig = config.services.caddy;
+            activeInstances = config.clanwright.vpn.naiveproxy.activeInstances;
             secretNames = builtins.attrValues settings.passwordSecretNames;
             publicOnlyDeny = [
               "0.0.0.0/8"
@@ -250,98 +247,108 @@ in
             sopsUnits = lib.optional config.sops.useSystemdActivation "sops-install-secrets.service";
           in
           {
-            assertions = [
-              {
-                assertion =
-                  !settings.enable
-                  || (caddyConfig.enableReload && caddyConfig.adapter == "caddyfile" && !caddyConfig.resume);
-                message = "naiveproxy: runtime credentials require native Caddyfile reload and resume disabled.";
-              }
-              {
-                assertion = !settings.enable || settings.selectedPublicSiteClaim != "";
-                message = "naiveproxy: selectedPublicSiteClaim must not be empty when enabled.";
-              }
-              {
-                assertion =
-                  !settings.enable || builtins.hasAttr settings.probeUserName settings.passwordSecretNames;
-                message = "naiveproxy: probeUserName must name an identity in passwordSecretNames.";
-              }
-              {
-                assertion = !settings.enable || profileNames != [ ];
-                message = "naiveproxy: at least one non-probe device identity is required.";
-              }
-              {
-                assertion =
-                  !settings.enable
-                  || (
-                    selectedClaim != null
-                    && (selectedClaim.publicSite or false)
-                    && selectedPublicSiteEndpoint.domain != ""
-                    && selectedPublicSiteEndpoint.domain == selectedClaim.hostName
-                    && selectedPublicSiteEndpoint.publicIPv4 != ""
-                    && selectedPublicSiteEndpoint.caddyBindIPv4 != ""
-                    && selectedPublicSiteEndpoint.caddyBindIPv4 != "0.0.0.0"
-                    && selectedClaimPrimaryListenAddress != null
-                    && selectedClaim.listenAddresses == [ selectedPublicSiteEndpoint.caddyBindIPv4 ]
-                  );
-                message = "naiveproxy: selected claim must be publicSite and have exactly the declared domain and isolated Caddy listener.";
-              }
-            ];
-          }
-          // lib.optionalAttrs settings.enable {
-            sops.templates.${templateName} = {
-              content = fragmentContent;
-              owner = "root";
-              inherit (caddyConfig) group;
-              mode = "0440";
-              reloadUnits = [ "caddy.service" ];
-            };
-            # Adapted config contains reversible auth material. Keep it in /run
-            # and memory; Caddy's default autosave must not persist credentials.
-            services.caddy.globalConfig = lib.mkAfter ''
-              persist_config off
-            '';
+            imports = [ ./shared.nix ];
 
-            sops.secrets = lib.genAttrs secretNames (name: {
-              path = "/run/secrets/${name}";
-              owner = "root";
-              group = "root";
-              mode = "0400";
-            });
+            config = {
+              clanwright.vpn.naiveproxy.activeInstances = lib.mkIf active [ instanceName ];
 
-            networkCore.caddy.contributions = lib.optionalAttrs (selectedClaim != null) (
-              lib.mapAttrs (
-                claimName: claim:
-                let
-                  isSelected = claimName == settings.selectedPublicSiteClaim;
-                  wildcard = addresses: addresses == [ ] || builtins.elem "0.0.0.0" addresses;
-                  sharesSelectedListener =
-                    !isSelected
-                    && (
-                      wildcard claim.listenAddresses
-                      || builtins.elem selectedPublicSiteEndpoint.caddyBindIPv4 claim.listenAddresses
-                    );
-                  siblingConnectRoute = ''
-                    @naive_proxy_connect {
-                      method CONNECT
-                      expression `{http.request.local.host} == "${selectedPublicSiteEndpoint.caddyBindIPv4}" && {http.request.local.port} == "443"`
-                    }
-                    route @naive_proxy_connect {
-                      import ${fragmentPath}
-                    }
-                  '';
-                in
+              assertions = [
                 {
-                  preRouteConfigFragments =
-                    lib.optional isSelected "import ${fragmentPath}"
-                    ++ lib.optional sharesSelectedListener siblingConnectRoute;
-                  capabilities = lib.optional isSelected "forward-proxy";
-                  siteAddress = if isSelected then ":443" else null;
-                  wantsUnits = lib.optionals isSelected sopsUnits;
-                  afterUnits = lib.optionals isSelected sopsUnits;
+                  assertion = !active || lib.length activeInstances == 1;
+                  message = "naiveproxy: only one active instance may claim the machine-wide Caddy forward-proxy integration.";
                 }
-              ) config.networkCore.caddy.fragments
-            );
+                {
+                  assertion =
+                    !settings.enable
+                    || (caddyConfig.enableReload && caddyConfig.adapter == "caddyfile" && !caddyConfig.resume);
+                  message = "naiveproxy: runtime credentials require native Caddyfile reload and resume disabled.";
+                }
+                {
+                  assertion = !settings.enable || settings.selectedPublicSiteClaim != "";
+                  message = "naiveproxy: selectedPublicSiteClaim must not be empty when enabled.";
+                }
+                {
+                  assertion =
+                    !settings.enable || builtins.hasAttr settings.probeUserName settings.passwordSecretNames;
+                  message = "naiveproxy: probeUserName must name an identity in passwordSecretNames.";
+                }
+                {
+                  assertion = !settings.enable || profileNames != [ ];
+                  message = "naiveproxy: at least one non-probe device identity is required.";
+                }
+                {
+                  assertion =
+                    !settings.enable
+                    || (
+                      selectedClaim != null
+                      && (selectedClaim.publicSite or false)
+                      && selectedPublicSiteEndpoint.domain != ""
+                      && selectedPublicSiteEndpoint.domain == selectedClaim.hostName
+                      && selectedPublicSiteEndpoint.publicIPv4 != ""
+                      && selectedPublicSiteEndpoint.caddyBindIPv4 != ""
+                      && selectedPublicSiteEndpoint.caddyBindIPv4 != "0.0.0.0"
+                      && selectedClaimPrimaryListenAddress != null
+                      && selectedClaim.listenAddresses == [ selectedPublicSiteEndpoint.caddyBindIPv4 ]
+                    );
+                  message = "naiveproxy: selected claim must be publicSite and have exactly the declared domain and isolated Caddy listener.";
+                }
+              ];
+            }
+            // lib.optionalAttrs settings.enable {
+              sops.templates.${templateName} = {
+                content = fragmentContent;
+                owner = "root";
+                inherit (caddyConfig) group;
+                mode = "0440";
+                reloadUnits = [ "caddy.service" ];
+              };
+              # Adapted config contains reversible auth material. Keep it in /run
+              # and memory; Caddy's default autosave must not persist credentials.
+              services.caddy.globalConfig = lib.mkAfter ''
+                persist_config off
+              '';
+
+              sops.secrets = lib.genAttrs secretNames (name: {
+                path = "/run/secrets/${name}";
+                owner = "root";
+                group = "root";
+                mode = "0400";
+              });
+
+              networkCore.caddy.contributions = lib.optionalAttrs (selectedClaim != null) (
+                lib.mapAttrs (
+                  claimName: claim:
+                  let
+                    isSelected = claimName == settings.selectedPublicSiteClaim;
+                    wildcard = addresses: addresses == [ ] || builtins.elem "0.0.0.0" addresses;
+                    sharesSelectedListener =
+                      !isSelected
+                      && (
+                        wildcard claim.listenAddresses
+                        || builtins.elem selectedPublicSiteEndpoint.caddyBindIPv4 claim.listenAddresses
+                      );
+                    siblingConnectRoute = ''
+                      @naive_proxy_connect {
+                        method CONNECT
+                        expression `{http.request.local.host} == "${selectedPublicSiteEndpoint.caddyBindIPv4}" && {http.request.local.port} == "443"`
+                      }
+                      route @naive_proxy_connect {
+                        import ${fragmentPath}
+                      }
+                    '';
+                  in
+                  {
+                    preRouteConfigFragments =
+                      lib.optional isSelected "import ${fragmentPath}"
+                      ++ lib.optional sharesSelectedListener siblingConnectRoute;
+                    capabilities = lib.optional isSelected "forward-proxy";
+                    siteAddress = if isSelected then ":443" else null;
+                    wantsUnits = lib.optionals isSelected sopsUnits;
+                    afterUnits = lib.optionals isSelected sopsUnits;
+                  }
+                ) config.networkCore.caddy.fragments
+              );
+            };
           };
       };
   };

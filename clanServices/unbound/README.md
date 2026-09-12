@@ -12,6 +12,10 @@ consumer.
 ## Settings
 
 Точная схема и defaults определены в [`default.nix`](default.nix).
+`enable` по умолчанию равен `true`; при `false` роль не объявляет native
+Unbound runtime. На одной машине допускается ровно один active instance,
+поскольку все instances используют общий `services.unbound` unit и state.
+Один disabled instance может соседствовать с одним active.
 `listen.hosts` принимает `null` либо непустой список loopback IP literals.
 Разрешены IPv4 из `127.0.0.0/8` и `::1`; hostnames, wildcard и public addresses
 отклоняются. `listen.port` принимает `1..65535`. Privacy flags:

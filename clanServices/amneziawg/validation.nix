@@ -1,5 +1,7 @@
 { lib }:
 let
+  identities = import ../../modules/contracts/identities.nix { inherit lib; };
+  providerEnvelope = import ../../modules/contracts/provider-envelope.nix { inherit lib; };
   inRange =
     value: min: max:
     builtins.isInt value && value >= min && value <= max;
@@ -7,13 +9,8 @@ let
   allUnique = values: builtins.length values == builtins.length (lib.unique values);
   validToken =
     value: builtins.isString value && builtins.match "[A-Za-z0-9][A-Za-z0-9_.+-]*" value != null;
-  validSecretName =
-    value:
-    builtins.isString value
-    && builtins.match "[A-Za-z0-9][A-Za-z0-9_./-]*" value != null
-    && !(lib.hasInfix ".." value)
-    && !(lib.hasPrefix "/" value)
-    && !(lib.hasSuffix "/" value);
+  inherit (identities) safeIdentity;
+  validSecretName = identities.safeSecretName;
   validKey =
     value:
     builtins.isString value && builtins.match "[A-Za-z0-9+/]{42}[AEIMQUYcgkosw048]=" value != null;
@@ -84,22 +81,7 @@ let
     && builtins.isString package.version
     && lib.hasPrefix family package.version;
 
-  profile = {
-    s1 = 12;
-    s2 = 12;
-    s3 = 12;
-    s4 = 12;
-    h1 = 1;
-    h2 = 2;
-    h3 = 3;
-    h4 = 4;
-    contentPaddingAddition = {
-      min = 2;
-      max = 10;
-    };
-    randomTrailers = true;
-    disableCookies = false;
-  };
+  profile = providerEnvelope.fixedTransportMetadata.amneziawg.profile;
 
   interfaceExtraOptions = {
     S1 = profile.s1;
@@ -208,7 +190,7 @@ in
         message = "${serviceName}: at least one peer is required.";
       }
       {
-        assertion = builtins.all validToken peerNames && allUnique peerNames;
+        assertion = builtins.all safeIdentity peerNames && allUnique peerNames;
         message = "${serviceName}: peer names must be non-empty safe tokens and unique.";
       }
       {

@@ -7,30 +7,29 @@ let
   fixture = import ../fixtures/example-clan.nix;
 in
 {
-  instanceNames,
+  instanceNames ? null,
+  instances ? null,
+  instanceOverrides ? { },
   extraModule ? { },
   includeNetwork ? false,
+  fixtureName ? "vpn-consumer-fixture",
 }:
 let
+  lib = inputs.nixpkgs.lib;
   supportInstances = [
     "edge-wildcard-certificate"
     "network-caddy"
     "network-certificates"
   ];
-  selectedSupportInstances = if includeNetwork then supportInstances else [ ];
-  rawSelectedInstances = builtins.intersectAttrs (inputs.nixpkgs.lib.genAttrs (
-    selectedSupportInstances ++ instanceNames
-  ) (_: null)) fixture.instances;
-  selectedInstances =
-    if instanceNames == [ "vpn-client-profiles" ] then
-      rawSelectedInstances
-      // {
-        vpn-client-profiles = inputs.nixpkgs.lib.recursiveUpdate rawSelectedInstances.vpn-client-profiles {
-          roles.publisher.machines.vpn-fixture.settings.enable = false;
-        };
-      }
+  selectedSupportInstances = lib.optionals includeNetwork supportInstances;
+  rawSelectedInstances =
+    if instances != null then
+      instances
     else
-      rawSelectedInstances;
+      builtins.intersectAttrs (lib.genAttrs (selectedSupportInstances ++ instanceNames) (
+        _: null
+      )) fixture.instances;
+  selectedInstances = lib.recursiveUpdate rawSelectedInstances instanceOverrides;
   consumer = inputs.clan-core.lib.clan {
     self.inputs = {
       vpn = self;
@@ -40,7 +39,7 @@ let
     specialArgs.clan-core = inputs.clan-core;
     directory = builtins.path {
       path = root + /checks/fixtures;
-      name = "vpn-consumer-fixtures";
+      name = fixtureName;
     };
     imports = [
       self.clanModule
@@ -51,7 +50,7 @@ let
           // {
             imports =
               (fixture.machine.imports or [ ])
-              ++ inputs.nixpkgs.lib.optional includeNetwork fixture.networkIntegrationModule
+              ++ lib.optional includeNetwork fixture.networkIntegrationModule
               ++ [ extraModule ];
           };
         inventory = {

@@ -23,6 +23,9 @@ Cloudflare Standard, Quad9 без threat blocking и Google Public DNS по DoH,
 `filtering.enable`, `filtering.userRules`, `dns.privateZones` и `dns.rewrites`.
 `dns.upstream` содержит ровно
 один числовой loopback endpoint Unbound в формате `127.0.0.1:<port>`.
+На одной машине допускается ровно один active instance: роль владеет общими
+native `adguardhome` и `dnsproxy` runtimes, state path и integration output.
+Disabled instance не заявляет эти ресурсы и может соседствовать с одним active.
 
 `dns.privateZones` — список непустых групп вида:
 

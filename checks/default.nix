@@ -27,6 +27,12 @@ let
     package-authority-contracts = import ./package-authority-contracts.nix {
       inherit inputs self system;
     };
+    provider-contracts = import ./provider-contracts.nix {
+      inherit inputs;
+    };
+    publisher-manifest-contracts = import ./publisher-manifest-contracts.nix {
+      inherit pkgs;
+    };
     unbound-contracts = import ./unbound-contracts.nix {
       inherit
         inputs
@@ -36,7 +42,12 @@ let
         ;
     };
     naiveproxy-contracts = import ./naiveproxy-contracts.nix {
-      inherit inputs pkgs;
+      inherit
+        inputs
+        pkgs
+        root
+        self
+        ;
     };
     adguardhome-contracts = import ./adguardhome-contracts.nix {
       inherit

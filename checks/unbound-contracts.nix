@@ -20,19 +20,21 @@ let
     }).config;
   schemaAccepts =
     rawSettings: (builtins.tryEval (builtins.deepSeq (evalSettings rawSettings) true)).success;
-  evaluate =
-    rawSettings: enableIPv6: extraModule:
+  evaluateInstances =
+    rawSettingsList: enableIPv6: extraModule:
     let
-      settings = evalSettings rawSettings;
-      instance = service.roles.recursive-backend.perInstance {
-        inherit settings;
-        instanceName = "fixture--unbound";
-        machine.name = "fixture";
-      };
+      settingsList = map evalSettings rawSettingsList;
+      instances = lib.imap0 (
+        index: settings:
+        service.roles.recursive-backend.perInstance {
+          inherit settings;
+          instanceName = if index == 0 then "fixture--unbound" else "fixture--second-unbound";
+          machine.name = "fixture";
+        }
+      ) settingsList;
       evaluated = lib.nixosSystem {
         inherit system;
-        modules = [
-          instance.nixosModule
+        modules = map (instance: instance.nixosModule) instances ++ [
           {
             boot.isContainer = true;
             networking = { inherit enableIPv6; };
@@ -44,14 +46,27 @@ let
       inherit (evaluated) config;
     in
     {
-      inherit config settings;
+      inherit config;
+      settings = builtins.head settingsList;
       assertionsPass = builtins.all (entry: entry.assertion) config.assertions;
     };
+  evaluate =
+    rawSettings: enableIPv6: extraModule:
+    evaluateInstances [ rawSettings ] enableIPv6 extraModule;
   defaults = evaluate { } true { };
   ipv4Only = evaluate { } false { };
   explicitIpv4 = evaluate { listen.hosts = [ "127.9.8.7" ]; } true { };
   explicitIpv6 = evaluate { listen.hosts = [ "::1" ]; } true { };
   explicitIpv6Conflict = evaluate { listen.hosts = [ "::1" ]; } false { };
+  duplicateInstances = evaluateInstances [
+    { }
+    { }
+  ] true { };
+  activeWithDisabled = evaluateInstances [
+    { }
+    { enable = false; }
+  ] true { };
+  disabled = evaluate { enable = false; } true { };
   rejectsOverride = extraModule: !(evaluate { } true extraModule).assertionsPass;
   effectiveOverrideResults = map rejectsOverride [
     { services.unbound.package = lib.mkOverride 0 pkgs.hello; }
@@ -144,6 +159,13 @@ let
     && !(schemaAccepts { adguardIntegrationProvider = "dns-adguardhome"; });
   defaultContract =
     defaults.assertionsPass
+    && defaults.config.clanwright.dns.unbound.activeInstances == [ "fixture--unbound" ]
+    && !duplicateInstances.assertionsPass
+    && activeWithDisabled.assertionsPass
+    && activeWithDisabled.config.clanwright.dns.unbound.activeInstances == [ "fixture--unbound" ]
+    && disabled.assertionsPass
+    && disabled.config.clanwright.dns.unbound.activeInstances == [ ]
+    && !disabled.config.services.unbound.enable
     &&
       defaultServer.interface == [
         "127.0.0.1"

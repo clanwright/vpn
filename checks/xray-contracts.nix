@@ -370,6 +370,12 @@ let
       };
   directDefaultsContract =
     (schemaResult settings).success
+    && (schemaResult (
+      settings
+      // {
+        profiles = map (profile: profile // { name = "device.one"; }) settings.profiles;
+      }
+    )).success
     && (schemaConfig settings).localListener == null
     && inbound.listen == settings.bindIPv4
     && inbound.port == settings.port;

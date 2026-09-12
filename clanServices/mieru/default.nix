@@ -4,11 +4,9 @@
   ...
 }:
 let
-  identityPattern = "[A-Za-z0-9][A-Za-z0-9_-]{0,63}";
-  secretNamePattern = "[A-Za-z0-9_][A-Za-z0-9_.+-]*(/[A-Za-z0-9_][A-Za-z0-9_.+-]*)*";
+  identities = import ../../modules/contracts/identities.nix { inherit lib; };
+  providerEnvelope = import ../../modules/contracts/provider-envelope.nix { inherit lib; };
   decimalPattern = "(0|[1-9][0-9]{0,2})";
-  validIdentity = value: builtins.match identityPattern value != null;
-  validSecretName = value: builtins.match secretNamePattern value != null;
   validIPv4 =
     value:
     let
@@ -61,11 +59,11 @@ in
               lib.types.submodule (_: {
                 options = {
                   name = lib.mkOption {
-                    type = lib.types.addCheck lib.types.str validIdentity;
+                    type = identities.safeIdentityType;
                     description = "Unique device identity exported to client profile generation.";
                   };
                   passwordSecretName = lib.mkOption {
-                    type = lib.types.addCheck lib.types.str validSecretName;
+                    type = identities.safeSecretNameType;
                     description = "Consumer-owned SOPS secret containing a nonempty unpadded base64url password.";
                   };
                 };
@@ -114,23 +112,17 @@ in
       in
       {
         exports = lib.optionalAttrs active (mkExports {
-          vpnProvider = {
-            schemaVersion = 2;
+          vpnProvider = providerEnvelope.mkProvider {
+            protocol = "mieru";
             instanceId = instanceName;
             machine = providerMachine;
-            role = "gateway";
-            protocol = "mieru";
-            enabled = true;
             endpoint = {
               domain = null;
               ipv4 = settings.ingressIPv4;
               inherit (settings) port;
-              transport = "tcp";
             };
             transportMetadata = {
-              protocol = "mieru";
               userNames = profileNames;
-              credentialEncoding = "base64url";
             };
             inherit profileNames secretNames;
           };

@@ -39,6 +39,15 @@ exports и `clanLib.selectExports`: `naiveproxy` требует addon, а
 `providerRefs.profileNames` сужает их `profileNames` без промежуточных
 protocol-specific adapter shapes.
 
+Каждый renderer формирует внутренний manifest конкретных артефактов. Артефакт
+содержит non-secret template, формат и имя выходного файла, ссылки на явный
+каталог public assets и typed secret bindings. Binding задаёт только secret
+name, одно из закрытых правил чтения (`literal`, `wireguard-private-key`,
+`base64url`), точный структурный путь и placeholder. Manifest проверяет, что
+каждый placeholder связан ровно один раз, target существует, а asset reference
+есть в каталоге. Publication применяет этот manifest без protocol branches и
+без знания полей конкретного client format.
+
 Поддержка `hysteria2` сохранена только для совместимости с существующими
 provider refs и профилями. Протокол deprecated и не рекомендуется для новых
 профилей после пользовательского сообщения о блокировке клиентских подключений.
@@ -192,6 +201,9 @@ rules при длительной недоступности upstream.
 consumer также учитывает результат refresh unit. Локальный список
 `personalProxyDomains` синхронизирует только publication unit до проверки
 готовности; удалённый refresh его не перезаписывает.
+Нужные файлы, refresh actions, readiness paths и Caddy asset routes выводятся
+из ссылок артефактов на единый внутренний asset catalog. Lifecycle не исследует
+дерево Mihomo и не определяет необходимость assets по наличию `rule-providers`.
 При runtime-загрузке SRS проходит проверку штатным sing-box; для MRS и
 текстовых upstream-списков принятие ограничено успешным HTTP-ответом и
 непустым файлом. Cache не является доказательством корректности всех rule sets

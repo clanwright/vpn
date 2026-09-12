@@ -25,31 +25,51 @@ let
   adguardSettings = builtins.fromJSON adguardTemplate.content;
   adguardIntegration = machine.clanwright.dns.adguardhome.integration;
   publisherIntegration = machine.clanwright.vpn.publishers.vpn-client-profiles;
+  publisherManifest = machine.clanwright.vpn.publisherManifests.vpn-client-profiles;
+  inherit (publisherManifest) publicationPhases;
+  publicationPhaseIds = map (phase: phase.id) publicationPhases;
+  indexOf =
+    predicate: values:
+    let
+      go =
+        index: remaining:
+        if remaining == [ ] || predicate (builtins.head remaining) then
+          index
+        else
+          go (index + 1) (builtins.tail remaining);
+    in
+    go 0 values;
+  phaseIndex = id: indexOf (candidate: candidate == id) publicationPhaseIds;
+  phasePrerequisites =
+    id: (builtins.head (builtins.filter (phase: phase.id == id) publicationPhases)).prerequisites;
   caddyFragments = machine.networkCore.caddy.effectiveFragments;
   acmeReloadUnits = machine.networkCore.acme.reloadServices.fixture;
   publicationUnitName = lib.removeSuffix ".service" publisherIntegration.publicationUnit;
   refreshUnitName = lib.removeSuffix ".service" publisherIntegration.refreshUnit;
   publicationUnit = units.${publicationUnitName};
   refreshUnit = units.${refreshUnitName};
+  publicationPhaseMarker = "# publication-phase:";
+  publicationScriptPhaseRegions = builtins.tail (
+    lib.splitString publicationPhaseMarker publicationUnit.script
+  );
+  publicationScriptPhaseIds = map (
+    segment: builtins.head (lib.splitString "\n" segment)
+  ) publicationScriptPhaseRegions;
+  revokeCommand = "rm -f -- ${publisherIntegration.profileRoot}";
+  generationsFind = ''find "$runtime_base/generations"'';
+  revokePhaseRegion = builtins.head publicationScriptPhaseRegions;
+  revokeRegionBeforeGenerationsFind = builtins.head (
+    lib.splitString generationsFind revokePhaseRegion
+  );
   caddyUnit = units.caddy;
   mieruPasswordSecret = machine.sops.secrets."fixture-mieru-password";
   pathTokenSecret = machine.sops.secrets."mihomo-client-fixture-cHJvYmU-path-token";
   tmpfilesRules = machine.systemd.tmpfiles.rules;
   afterFinalPrivateReset = lib.last (lib.splitString "private_tmp_files=()" publicationUnit.script);
   afterLocalAssetSync = lib.last (lib.splitString "local_asset_tmp=" publicationUnit.script);
-  remoteRuleSetNames = [
-    "ru_blocked_and_geoblocked_domains"
-    "ru_blocked_asn_ips"
-    "refilter_blocked_domains"
-    "refilter_blocked_ips"
-  ];
-  requiredFixtureAssetNames = [
-    "secure-dns.txt"
-    "segments.txt"
-    "filters.srs"
-  ]
-  ++ map (name: "${name}.mrs") remoteRuleSetNames
-  ++ map (name: "${name}.srs") remoteRuleSetNames;
+  requiredFixtureAssetNames = map (asset: asset.filename) (
+    builtins.attrValues publisherManifest.assetCatalog
+  );
   refreshPreservesCache =
     !(lib.hasInfix "rm -f ${publisherIntegration.assetRoot}/" refreshUnit.script)
     && lib.hasInfix ''publish_file "$tmp" "$name"'' refreshUnit.script
@@ -62,17 +82,39 @@ let
       name: lib.hasInfix "test -s ${publisherIntegration.assetRoot}/${name}" afterLocalAssetSync
     ) requiredFixtureAssetNames
     && !(lib.hasInfix "segments.txt" refreshUnit.script);
+  publicationPhaseResults = {
+    revokePrecedesAssetPreparation =
+      phasePrerequisites "sync-local-assets" == [ "revoke-current" ]
+      && phaseIndex "revoke-current" < phaseIndex "sync-local-assets";
+    assetsPrecedeGeneration =
+      phasePrerequisites "check-assets" == [ "sync-local-assets" ]
+      && phasePrerequisites "prepare-generation" == [ "check-assets" ]
+      && phaseIndex "check-assets" < phaseIndex "prepare-generation";
+    renderPrecedesExposure =
+      phasePrerequisites "render-artifacts" == [ "prepare-generation" ]
+      && phasePrerequisites "expose-generation" == [ "seal-generation" ]
+      && phaseIndex "render-artifacts" < phaseIndex "expose-generation";
+    retirementAndCleanupFollowExposure =
+      phasePrerequisites "retire-old-generations" == [ "expose-generation" ]
+      && phasePrerequisites "cleanup-private-temporaries" == [ "retire-old-generations" ]
+      && phaseIndex "expose-generation" < phaseIndex "cleanup-private-temporaries";
+    scriptMarkersMatchManifestOrder = publicationScriptPhaseIds == publicationPhaseIds;
+    revokePhaseRemovesCurrentBeforeGenerationCleanup =
+      lib.hasInfix generationsFind revokePhaseRegion
+      && lib.hasInfix revokeCommand revokeRegionBeforeGenerationsFind;
+  };
+  publicationPhaseContract = builtins.all (value: value) (
+    builtins.attrValues publicationPhaseResults
+  );
   assetLifecycleResults = {
-    emptyDirectoryFailsClosed =
-      publisherChecksCompleteAssetsAfterRefresh
-      && lib.hasInfix "exit \"$missing\"" refreshUnit.script
-      && lib.hasInfix "failure_reason=required-assets-missing-or-empty" publicationUnit.script;
+    emptyDirectoryGuardPresent =
+      publisherChecksCompleteAssetsAfterRefresh && lib.hasInfix "exit \"$missing\"" refreshUnit.script;
     unavailableSourceWithoutCacheFailsClosed =
       publisherChecksCompleteAssetsAfterRefresh
       && lib.hasInfix ''record_status "$name" failed download_failed'' refreshUnit.script;
     unavailableSourceWithCompleteCachePublishes =
       refreshPreservesCache && publisherChecksCompleteAssetsAfterRefresh;
-    recoveryRetriesBothStages =
+    retryDeclarationsPresent =
       refreshUnit.serviceConfig.Restart == "on-failure"
       && publicationUnit.serviceConfig.Restart == "on-failure";
   };
@@ -186,6 +228,10 @@ let
     && !(lib.hasInfix "bind " publisherIntegration.routeConfig)
     && !(lib.hasInfix "tls " publisherIntegration.routeConfig)
     && !(lib.hasInfix "import " publisherIntegration.routeConfig)
+    && builtins.all (
+      asset: lib.hasInfix "handle ${asset.publicPath}" publisherIntegration.routeConfig
+    ) (builtins.attrValues publisherManifest.assetCatalog)
+    && machine.clanwright.vpn.publisherPublicationPhases.vpn-client-profiles == publicationPhases
     && caddyFragments ? vpn-client-profiles
     && caddyFragments.vpn-client-profiles.hostName == publisherIntegration.configGatewayDomain
     &&
@@ -224,10 +270,7 @@ let
     && !(builtins.elem publisherIntegration.refreshUnit (lib.toList (publicationUnit.requires or [ ])))
     && lib.hasInfix "failure_stage=assets-readiness" publicationUnit.script
     && lib.hasInfix "failure_reason=required-assets-missing-or-empty" publicationUnit.script
-    && lib.hasInfix "failure_stage=mihomo-validation" publicationUnit.script
-    && lib.hasInfix "failure_reason=config-rejected" publicationUnit.script
-    && lib.hasInfix "failure_stage=file-installation" publicationUnit.script
-    && lib.hasInfix "failure_reason=install-failed" publicationUnit.script
+    && publicationPhaseContract
     && publisherChecksCompleteAssetsAfterRefresh
     && builtins.all (value: value) (builtins.attrValues assetLifecycleResults)
     && refreshUnit.serviceConfig.Restart == "on-failure"
@@ -244,9 +287,18 @@ let
     && builtins.elem "forward-proxy" caddyFragments.fixture-site.capabilities;
 in
 if !contract then
-  throw "Combined external Clan fixture contract failed"
+  throw "Combined external Clan fixture contract failed: ${
+    builtins.toJSON {
+      inherit publicationPhaseResults;
+    }
+  }"
 else
   {
     all = true;
-    inherit assetLifecycleResults contract;
+    inherit
+      assetLifecycleResults
+      contract
+      publicationPhaseContract
+      publicationPhaseResults
+      ;
   }

@@ -166,7 +166,7 @@ let
     && !(assertionsPass (baseSettings // { endpointDomain = "invalid domain"; }))
     && !(assertionsPass (baseSettings // { endpointDomain = "invalid..domain"; }))
     && !(assertionsPass (baseSettings // { address = "10.77.0.999/24"; }))
-    && !(assertionsPass (baseSettings // { headerProtectionKeySecretName = "../secret"; }))
+    && !(schemaAccepts (baseSettings // { headerProtectionKeySecretName = "../secret"; }))
     && !(assertionsPass (
       baseSettings
       // {
@@ -182,7 +182,7 @@ let
         ];
       }
     ))
-    && !(assertionsPass (
+    && !(schemaAccepts (
       baseSettings
       // {
         peers = [
@@ -505,17 +505,20 @@ let
     && firewallConfigRejected { networking.firewall.enable = lib.mkForce false; }
     && firewallConfigRejected { networking.firewall.backend = lib.mkForce "iptables"; };
 
-  interfaceClaimContract =
-    !(extraInstanceAccepted baseSettings "fixture--amneziawg-duplicate")
-    && !(extraInstanceAccepted (
-      secondSettings // { inherit (baseSettings) listenPort; }
-    ) "fixture--amneziawg-same-port")
-    && extraInstanceAccepted secondSettings "fixture--amneziawg-second"
-    && secondUnit.serviceConfig.AmbientCapabilities == [ "CAP_NET_ADMIN" ]
-    && secondUnit.serviceConfig.CapabilityBoundingSet == [ "CAP_NET_ADMIN" ]
-    && secondMachine.boot.kernel.sysctl."net.ipv4.ip_forward" == 1
-    && forwardingNotRequested noNatMachine
-    && forwardingNotRequested disabledMachine;
+  interfaceClaimResults = {
+    duplicateInterfaceRejected = !(extraInstanceAccepted baseSettings "fixture--amneziawg-duplicate");
+    duplicatePortRejected =
+      !(extraInstanceAccepted (
+        secondSettings // { inherit (baseSettings) listenPort; }
+      ) "fixture--amneziawg-same-port");
+    distinctAccepted = extraInstanceAccepted secondSettings "fixture--amneziawg-second";
+    ambientCapabilities = secondUnit.serviceConfig.AmbientCapabilities == [ "CAP_NET_ADMIN" ];
+    capabilityBoundingSet = secondUnit.serviceConfig.CapabilityBoundingSet == [ "CAP_NET_ADMIN" ];
+    forwardingEnabled = secondMachine.boot.kernel.sysctl."net.ipv4.ip_forward" == 1;
+    noNatForwardingDisabled = forwardingNotRequested noNatMachine;
+    disabledForwardingDisabled = forwardingNotRequested disabledMachine;
+  };
+  interfaceClaimContract = builtins.all (value: value) (builtins.attrValues interfaceClaimResults);
 
   disabledContract =
     !(disabledMachine.systemd.services ? "wireguard-awg-fixture")
@@ -526,8 +529,16 @@ let
       ? ${"vpn_amneziawg_${builtins.hashString "sha256" "awg-fixture"}"}
     );
 
+  dottedIdentityContract = schemaAccepts (
+    baseSettings
+    // {
+      peers = map (peer: peer // { name = "device.${peer.name}"; }) baseSettings.peers;
+    }
+  );
+
   contract =
     invalidContracts
+    && dottedIdentityContract
     && exportContract
     && runtimeConfigContract
     && fourPeerRuntimeContract
@@ -536,6 +547,20 @@ let
     && disabledContract;
 in
 if !contract then
-  throw "AWG3 validation, export, fail-closed readiness, cleanup, or firewall contract failed"
+  throw "AWG3 validation, export, fail-closed readiness, cleanup, or firewall contract failed: ${
+    builtins.toJSON {
+      inherit
+        disabledContract
+        dottedIdentityContract
+        exportContract
+        firewallContract
+        fourPeerRuntimeContract
+        interfaceClaimContract
+        interfaceClaimResults
+        invalidContracts
+        runtimeConfigContract
+        ;
+    }
+  }"
 else
   { all = true; }

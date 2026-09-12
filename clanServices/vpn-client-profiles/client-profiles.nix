@@ -6,8 +6,9 @@
 }:
 let
   profileTypes = import ./types.nix { inherit lib; };
+  manifestLib = import ./artifact-manifest.nix { inherit lib; };
   inherit (settings) localMachineName;
-  clientDnsEndpoints = profileTypes.normalizeClientDnsEndpoints settings;
+  inherit (settings) clientDnsEndpoints;
   localPublicNetwork = {
     inherit (settings) publicIPv4;
     domains.edge = settings.edgeDomain;
@@ -25,6 +26,19 @@ let
   mieruProviders = providersFor "mieru";
   providerId = profileTypes.providerNamespace;
   profilePolicy = profileName: provider: builtins.elem profileName provider.profileNames;
+  indexOf =
+    predicate: values:
+    let
+      go =
+        index: remaining:
+        if remaining == [ ] then
+          -1
+        else if predicate (builtins.head remaining) then
+          index
+        else
+          go (index + 1) (builtins.tail remaining);
+    in
+    go 0 values;
 
   secureDnsRuleSetPublicPath = "/assets/v1/catalog/filters.srs";
   personalProxyDomainsTxtPublicPath = "/assets/v1/catalog/segments.txt";
@@ -165,6 +179,79 @@ let
       url = "https://github.com/legiz-ru/mihomo-rule-sets/raw/main/re-filter/ip-rule.mrs";
     }
   ];
+
+  assetCatalog = {
+    secure-dns-domains = {
+      id = "secure-dns-domains";
+      filename = "secure-dns.txt";
+      publicPath = secureDnsDomainsTxtPublicPath;
+      routePriority = 30;
+      contentType = "text/plain; charset=utf-8";
+      validator = "nonempty";
+      source = {
+        kind = "download";
+        url = "https://raw.githubusercontent.com/hagezi/dns-blocklists/main/wildcard/doh-onlydomains.txt";
+      };
+    };
+    personal-proxy-domains = {
+      id = "personal-proxy-domains";
+      filename = "segments.txt";
+      publicPath = personalProxyDomainsTxtPublicPath;
+      routePriority = 1;
+      contentType = "text/plain; charset=utf-8";
+      validator = "nonempty";
+      source = {
+        kind = "local-file";
+        path = personalProxyDomainsTxt;
+      };
+    };
+    secure-dns-filter = {
+      id = "secure-dns-filter";
+      filename = "filters.srs";
+      publicPath = secureDnsRuleSetPublicPath;
+      routePriority = 0;
+      contentType = "application/octet-stream";
+      validator = "srs";
+      source = {
+        kind = "adguard-to-srs";
+        url = "https://raw.githubusercontent.com/hagezi/dns-blocklists/main/adblock/doh.txt";
+      };
+    };
+  }
+  // builtins.listToAttrs (
+    lib.imap0 (index: ruleSet: {
+      name = "sing-box-${ruleSet.tag}";
+      value = {
+        id = "sing-box-${ruleSet.tag}";
+        filename = "${ruleSet.tag}.srs";
+        publicPath = ruleSetMirrorPublicPath ruleSet.tag;
+        routePriority = 10 + index;
+        contentType = "application/octet-stream";
+        validator = "srs";
+        source = {
+          kind = "download";
+          inherit (ruleSet) url;
+        };
+      };
+    }) upstreamRuleSets
+  )
+  // builtins.listToAttrs (
+    lib.imap0 (index: ruleSet: {
+      name = "mihomo-${ruleSet.tag}";
+      value = {
+        id = "mihomo-${ruleSet.tag}";
+        filename = "${ruleSet.tag}.mrs";
+        publicPath = ruleSetMirrorMrsPublicPath ruleSet.tag;
+        routePriority = 20 + index;
+        contentType = "application/octet-stream";
+        validator = "nonempty";
+        source = {
+          kind = "download";
+          inherit (ruleSet) url;
+        };
+      };
+    }) mihomoMrsUpstream
+  );
 
   # Harbor fetches the upstream .srs on a timer (ruleSetMirrorService). Profiles
   # with Naive download the mirrored copy through a concrete outbound, avoiding
@@ -616,6 +703,65 @@ let
       };
       mihomoSelectiveTemplate = mkMihomoTemplate "SELECTIVE" "DIRECT";
       mihomoFullTemplate = mkMihomoTemplate "FULL" "FULL";
+      proxyIndex = tag: indexOf (candidate: candidate.name == tag) proxies;
+      mkBinding = secretName: decoding: targetPath: placeholder: {
+        inherit
+          secretName
+          decoding
+          targetPath
+          placeholder
+          ;
+      };
+      mihomoBindings =
+        lib.concatMap (cred: [
+          (mkBinding cred.vlessUuidSecretName "literal" [
+            "proxies"
+            (proxyIndex cred.vlessTag)
+            "uuid"
+          ] "__MIHOMO_VLESS_UUID_${cred.machineName}__")
+        ]) upstreamCredentials
+        ++ lib.concatMap (cred: [
+          (mkBinding cred.clientPrivateKeySecretName "wireguard-private-key" [
+            "proxies"
+            (proxyIndex cred.amneziawgTag)
+            "private-key"
+          ] "__MIHOMO_AMNEZIAWG_PRIVATE_KEY_${cred.machineName}__")
+          (mkBinding cred.headerProtectionKeySecretName "literal" [
+            "proxies"
+            (proxyIndex cred.amneziawgTag)
+            "amnezia-wg-option"
+            "header-protection-key"
+          ] "__MIHOMO_AMNEZIAWG_HEADER_PROTECTION_KEY_${cred.machineName}_${profile.name}__")
+        ]) amneziawgCredentials
+        ++ lib.concatMap (
+          cred:
+          [
+            (mkBinding cred.passwordSecretName "literal" [
+              "proxies"
+              (proxyIndex cred.tag)
+              "password"
+            ] "__MIHOMO_HY2_PASSWORD_${cred.machineName}_${cred.profileName}__")
+          ]
+          ++ lib.optional (cred.obfsPasswordSecretName != null) (
+            mkBinding cred.obfsPasswordSecretName "literal" [
+              "proxies"
+              (proxyIndex cred.tag)
+              "obfs-password"
+            ] "__MIHOMO_HY2_OBFS_PASSWORD_${cred.machineName}__"
+          )
+        ) hysteria2Credentials
+        ++ lib.concatMap (cred: [
+          (mkBinding cred.passwordSecretName "base64url" [
+            "proxies"
+            (proxyIndex cred.tag)
+            "password"
+          ] "__MIHOMO_MIERU_PASSWORD_${cred.machineName}_${cred.profileName}__")
+        ]) mieruCredentials;
+      mihomoAssetRefs = [
+        "secure-dns-domains"
+      ]
+      ++ map (ruleSet: "mihomo-${ruleSet.tag}") mihomoMrsUpstream
+      ++ lib.optional (personalProxyDomains != [ ]) "personal-proxy-domains";
 
       mkSingBoxNaiveOutbound = cred: {
         type = "naive";
@@ -882,6 +1028,63 @@ let
           ];
         };
       };
+      singBoxBindings = map (
+        cred:
+        let
+          outboundIndex = indexOf (
+            candidate: (candidate.tag or null) == cred.tag
+          ) profileJsonTemplate.outbounds;
+        in
+        mkBinding cred.passwordSecretName "literal" [
+          "outbounds"
+          outboundIndex
+          "password"
+        ] "__PROFILE_NAIVE_PASSWORD_${cred.machineName}__"
+      ) naiveCredentials;
+      singBoxAssetRefs = [
+        "secure-dns-filter"
+      ]
+      ++ map (ruleSet: "sing-box-${ruleSet.tag}") upstreamRuleSets;
+      selectiveTemplatePath = pkgs.writeText "mihomo-client-${basename}.template.json" (
+        builtins.toJSON mihomoSelectiveTemplate
+      );
+      fullTemplatePath = pkgs.writeText "mihomo-client-${basename}-full.template.json" (
+        builtins.toJSON mihomoFullTemplate
+      );
+      profileJsonTemplatePath =
+        if publishProfileJson then
+          pkgs.writeText "client-profile-${basename}.template.json" (builtins.toJSON profileJsonTemplate)
+        else
+          null;
+      artifacts = [
+        {
+          id = "${profile.name}-mihomo-selective";
+          outputName = "mihomo.yaml";
+          format = "mihomo";
+          template = mihomoSelectiveTemplate;
+          templatePath = selectiveTemplatePath;
+          assetRefs = mihomoAssetRefs;
+          bindings = mihomoBindings;
+        }
+        {
+          id = "${profile.name}-mihomo-full";
+          outputName = "mihomo-full.yaml";
+          format = "mihomo";
+          template = mihomoFullTemplate;
+          templatePath = fullTemplatePath;
+          assetRefs = mihomoAssetRefs;
+          bindings = mihomoBindings;
+        }
+      ]
+      ++ lib.optional publishProfileJson {
+        id = "${profile.name}-sing-box";
+        outputName = "profile.json";
+        format = "json";
+        template = profileJsonTemplate;
+        templatePath = profileJsonTemplatePath;
+        assetRefs = singBoxAssetRefs;
+        bindings = singBoxBindings;
+      };
     in
     {
       inherit
@@ -895,22 +1098,26 @@ let
         ;
       inherit (profile) name;
       inherit publishProfileJson;
-      templatePath = pkgs.writeText "mihomo-client-${basename}.template.json" (
-        builtins.toJSON mihomoSelectiveTemplate
-      );
-      fullTemplatePath = pkgs.writeText "mihomo-client-${basename}-full.template.json" (
-        builtins.toJSON mihomoFullTemplate
-      );
+      templatePath = selectiveTemplatePath;
+      inherit fullTemplatePath artifacts;
       inherit mihomoSelectiveTemplate mihomoFullTemplate;
       profileJsonTemplate = if publishProfileJson then profileJsonTemplate else null;
-      profileJsonTemplatePath =
-        if publishProfileJson then
-          pkgs.writeText "client-profile-${basename}.template.json" (builtins.toJSON profileJsonTemplate)
-        else
-          null;
+      inherit profileJsonTemplatePath;
     };
 
   generatedProfiles = map mkProfile profiles;
+  manifest = {
+    schemaVersion = 1;
+    inherit assetCatalog;
+    profiles = map (profile: {
+      inherit (profile) name artifacts;
+      pathTokenBinding = {
+        secretName = profile.pathTokenSecret;
+        decoding = "path-token";
+      };
+    }) generatedProfiles;
+    publicationPhases = manifestLib.expectedPublicationPhases;
+  };
 in
 {
   renderedProfiles = map (profile: {
@@ -923,6 +1130,7 @@ in
       ;
   }) generatedProfiles;
   inherit
+    manifest
     generatedProfiles
     upstreamRuleSets
     mihomoMrsUpstream

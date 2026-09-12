@@ -301,6 +301,12 @@ let
   disabledContract = builtins.all (value: value) (builtins.attrValues disabledResults);
   schemaContract =
     schemaAccepts baseSettings
+    && schemaAccepts (
+      baseSettings
+      // {
+        users = map (user: user // { name = "device.${user.name}"; }) baseSettings.users;
+      }
+    )
     && !(schemaAccepts (baseSettings // { ingressIPv4 = "0.0.0.0"; }))
     && !(schemaAccepts (baseSettings // { ingressIPv4 = "192.0.2.999"; }))
     && !(schemaAccepts (baseSettings // { dnsResolverIPv4s = [ ]; }))

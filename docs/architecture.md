@@ -37,14 +37,24 @@ The flake does not import a consumer checkout. TCP tuning belongs to the consume
   Mieru is selectable in both Mihomo profiles, including their ordinary Auto
   groups when the consumer includes the provider. It is not exported to sing-box.
 
-The profile publisher passes selected typed provider exports and per-device
-bindings directly to its renderer.
+Provider modules construct their common export envelope through the shared
+contract implementation. Protocol-specific transport data remains owned by
+each provider; consumers select those exports through the public helpers.
+
+The profile publisher normalizes its settings and passes selected typed
+provider exports and per-device bindings to its renderer.
 It renders Mihomo selective/full profiles and publishes a sing-box profile only
 for devices with an eligible Naive provider. Personal proxy domain additions
 come from the consumer.
 
-Rendering, public rule-asset refresh and secret publication are separate
-components. Public rule assets live in persistent state; credentials and
+Rendering produces an internal artifact manifest: client templates, output
+formats, structural secret bindings and required public assets. The runtime
+publisher reads that manifest without knowing protocol-specific client fields.
+An explicit asset catalog supplies publication paths, refresh sources and
+readiness requirements. These are private implementation interfaces, not new
+consumer configuration.
+
+Public rule assets live in persistent state; credentials and
 token-named publication paths live only under `/run`. Initial publication waits
 for a complete required asset set. Refresh failures retain accepted public
 assets without a hard expiry and expose nonsecret status for consumer monitoring.
@@ -64,6 +74,12 @@ startup relationship between AdGuard and Unbound. The AdGuard role configures a
 loopback dnsproxy reserve: parallel encrypted providers, followed by plaintext
 providers only after encrypted exchange failures. Received NXDOMAIN or SERVFAIL
 does not activate the plaintext tier.
+
+AdGuard Home, Unbound and NaiveProxy each allow one active instance per machine;
+their native services or Caddy integration are singletons. Disabled instances
+do not claim that slot. Private DNS validation and policy rendering are isolated
+in a pure internal module; the AdGuard integration retains assertions on the
+final effective configuration after NixOS option merging.
 
 Optional private zones form a closed conditional-routing branch in both
 AdGuard upstream lists. Their numeric private resolvers never fall through to

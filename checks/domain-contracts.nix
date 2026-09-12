@@ -20,6 +20,7 @@ let
     dns-unbound.role = "recursive-backend";
   };
   serviceNames = builtins.attrNames serviceSpecs;
+  independentServiceNames = builtins.filter (name: name != "vpn-client-profiles") serviceNames;
   evaluatedServices = lib.mapAttrs' (
     publicName: module:
     let
@@ -366,17 +367,15 @@ let
         machine.systemd.services ? wireguard-awg-fixture
         && !(machine.networking.wireguard.interfaces ? awg-fixture);
       vpn-naiveproxy = machine.sops.templates ? "naiveproxy-vpn-fixture.caddy";
-      vpn-client-profiles = !(machine.systemd.services ? mihomo-client-caddy-fixture);
       dns-adguardhome = machine.services.adguardhome.enable;
       dns-unbound = machine.services.unbound.enable;
     }
     .${name};
-  independentPlacementResults = lib.genAttrs serviceNames (
+  independentPlacementResults = lib.genAttrs independentServiceNames (
     name:
     let
       includeNetwork = builtins.elem name [
         "dns-adguardhome"
-        "vpn-client-profiles"
         "vpn-naiveproxy"
       ];
       extraModule = lib.optionalAttrs (name == "vpn-mihomo-hysteria2") {
@@ -410,6 +409,66 @@ let
   independentPlacements = builtins.all (value: value) (
     builtins.attrValues independentPlacementResults
   );
+  publisherSettings = settingsFor "vpn-client-profiles" "publisher";
+  disabledPublisherOverrides = {
+    vpn-client-profiles.roles.publisher.machines.vpn-fixture.settings.enable = false;
+  };
+  disabledPublisher = consume {
+    instanceNames = [ "vpn-client-profiles" ];
+    instanceOverrides = disabledPublisherOverrides;
+    fixtureName = "vpn-consumer-disabled-publisher-fixture";
+  };
+  minimalPublisherSettings = publisherSettings // {
+    providerRefs = builtins.filter (ref: ref.protocol == "vless-xhttp") publisherSettings.providerRefs;
+  };
+  minimalPublisher = consume {
+    instanceNames = [
+      "vpn-mihomo-vless-xhttp"
+      "vpn-client-profiles"
+    ];
+    instanceOverrides.vpn-client-profiles.roles.publisher.machines.vpn-fixture.settings =
+      minimalPublisherSettings;
+    fixtureName = "vpn-consumer-minimal-publisher-fixture";
+  };
+  disabledPublisherUnits = disabledPublisher.machine.systemd.services;
+  minimalPublisherUnits = minimalPublisher.machine.systemd.services;
+  minimalPublisherIntegration =
+    minimalPublisher.machine.clanwright.vpn.publishers.vpn-client-profiles;
+  publisherFixtureResults = {
+    disabledExplicit =
+      disabledPublisherOverrides.vpn-client-profiles.roles.publisher.machines.vpn-fixture.settings.enable
+      == false;
+    disabledHasNoIntegration =
+      !(disabledPublisher.machine.clanwright.vpn.publishers ? vpn-client-profiles);
+    disabledHasNoDeclarations =
+      !(disabledPublisherUnits ? vpn-client-profiles-publish-fixture)
+      && !(disabledPublisherUnits ? vpn-client-profiles-public-assets-fixture)
+      && !(disabledPublisher.machine.users.groups ? vpn-client-profiles)
+      && disabledPublisher.machine.sops.secrets == { };
+    minimalInventoryExplicit =
+      builtins.attrNames minimalPublisher.config.inventory.instances == [
+        "vpn-client-profiles"
+        "vpn-mihomo-vless-xhttp"
+      ];
+    minimalPublicationPresent =
+      minimalPublisherUnits ? vpn-client-profiles-publish-fixture
+      && minimalPublisherUnits ? vpn-client-profiles-public-assets-fixture;
+    minimalIntegrationPresent =
+      minimalPublisherIntegration.publicationUnit == "vpn-client-profiles-publish-fixture.service"
+      && minimalPublisherIntegration.refreshUnit == "vpn-client-profiles-public-assets-fixture.service"
+      && minimalPublisher.machine.clanwright.vpn.publisherRenders ? vpn-client-profiles;
+    minimalProviderPresent =
+      minimalPublisher.machine.services.xray.enable && minimalPublisherUnits ? xray;
+    minimalHasNoUnrelatedServices =
+      !(minimalPublisherUnits ? mihomo-hysteria2)
+      && !(minimalPublisherUnits ? mita)
+      && !(minimalPublisherUnits ? wireguard-awg-fixture)
+      && !(minimalPublisherUnits ? caddy)
+      && !minimalPublisher.machine.services.adguardhome.enable
+      && !minimalPublisher.machine.services.dnsproxy.enable
+      && !minimalPublisher.machine.services.unbound.enable;
+  };
+  publisherFixtures = builtins.all (value: value) (builtins.attrValues publisherFixtureResults);
   combined = consume {
     instanceNames = serviceNames;
     includeNetwork = true;
@@ -497,6 +556,7 @@ let
     && providerVersionsContract
     && publisherVersionContract
     && independentPlacements
+    && publisherFixtures
     && combinedClanFixture.contract
     && awgTransportContract
     && mieruEndpointContract
@@ -518,6 +578,8 @@ if !contract then
         dnsStateResults
         independentPlacementResults
         independentPlacements
+        publisherFixtureResults
+        publisherFixtures
         combinedClanFixture
         invalidFieldTypes
         missingAwgClientPrivateKeyBindingRejected
@@ -547,6 +609,8 @@ else
       dnsStatePreserved
       combinedClanFixture
       independentPlacements
+      publisherFixtureResults
+      publisherFixtures
       invalidFieldTypes
       missingAwgClientPrivateKeyBindingRejected
       invalidNestedFields

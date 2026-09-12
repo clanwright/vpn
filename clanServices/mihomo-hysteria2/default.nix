@@ -6,11 +6,9 @@
   ...
 }:
 let
-  identityPattern = "[A-Za-z0-9][A-Za-z0-9_-]{0,63}";
-  secretNamePattern = "[A-Za-z0-9_][A-Za-z0-9_.+-]*(/[A-Za-z0-9_][A-Za-z0-9_.+-]*)*";
+  identities = import ../../modules/contracts/identities.nix { inherit lib; };
+  providerEnvelope = import ../../modules/contracts/provider-envelope.nix { inherit lib; };
   decimalPattern = "(0|[1-9][0-9]{0,2})";
-  validIdentity = value: builtins.match identityPattern value != null;
-  validSecretName = value: builtins.match secretNamePattern value != null;
   validIPv4 =
     value:
     let
@@ -73,11 +71,11 @@ in
               lib.types.submodule (_: {
                 options = {
                   name = lib.mkOption {
-                    type = lib.types.addCheck lib.types.str validIdentity;
+                    type = identities.safeIdentityType;
                     description = "Unique device identity exported to client profile generation.";
                   };
                   passwordSecretName = lib.mkOption {
-                    type = lib.types.addCheck lib.types.str validSecretName;
+                    type = identities.safeSecretNameType;
                     description = "Consumer-owned SOPS secret containing an unpadded base64url password.";
                   };
                 };
@@ -86,11 +84,11 @@ in
             default = [ ];
           };
           acmeCertName = lib.mkOption {
-            type = lib.types.addCheck lib.types.str validIdentity;
+            type = identities.safeIdentityType;
             description = "Consumer-owned ACME certificate name under /var/lib/acme.";
           };
           obfsPasswordSecretName = lib.mkOption {
-            type = lib.types.addCheck lib.types.str validSecretName;
+            type = identities.safeSecretNameType;
             description = "Consumer-owned SOPS secret containing an unpadded base64url Gecko password.";
           };
         };
@@ -127,29 +125,18 @@ in
       in
       {
         exports = lib.optionalAttrs active (mkExports {
-          vpnProvider = {
-            schemaVersion = 2;
+          vpnProvider = providerEnvelope.mkProvider {
+            protocol = "hysteria2";
             instanceId = instanceName;
             machine = providerMachine;
-            role = "gateway";
-            protocol = "hysteria2";
-            enabled = true;
             endpoint = {
               domain = settings.serverName;
               ipv4 = settings.listenIPv4;
               inherit (settings) port;
-              transport = "udp";
             };
             transportMetadata = {
-              protocol = "hysteria2";
               sni = settings.serverName;
-              alpn = [ "h3" ];
               userNames = profileNames;
-              obfsName = "gecko";
-              obfsMinPacketSize = 512;
-              obfsMaxPacketSize = 1200;
-              tlsVerify = true;
-              credentialEncoding = "base64url";
             };
             inherit profileNames secretNames;
           };

@@ -3,11 +3,17 @@ let
   inherit (lib) types;
   inherit (types) nonEmptyListOf nonEmptyStr;
   identities = import ./identities.nix { inherit lib; };
+  providerEnvelope = import ./provider-envelope.nix { inherit lib; };
   inherit (identities)
     safeIdentity
     safeSecretName
     safeIdentityType
     safeSecretNameType
+    ;
+  inherit (providerEnvelope)
+    protocolRoles
+    protocolServices
+    protocolTransports
     ;
   fixed = value: types.enum [ value ];
   nullableNonEmptyStr = types.nullOr nonEmptyStr;
@@ -23,14 +29,7 @@ let
   };
   xhttpModule = mkSubmodule {
     path = mkOption nonEmptyStr;
-    mode = mkOption (
-      types.enum [
-        "auto"
-        "stream-one"
-        "stream-up"
-        "packet-up"
-      ]
-    );
+    mode = mkOption (fixed "auto");
   };
   dohModule = mkSubmodule {
     domain = mkOption nonEmptyStr;
@@ -67,103 +66,103 @@ let
     disableCookies = mkOption types.bool;
   };
 
-  metadataModule = {
-    options = {
-      protocol = mkOption (
-        types.enum [
-          "naiveproxy"
-          "vless-xhttp"
-          "hysteria2"
-          "amneziawg"
-          "mieru"
-        ]
-      );
-      tlsServerName = lib.mkOption {
-        type = nullableNonEmptyStr;
-        default = null;
-      };
-      userNames = lib.mkOption {
-        type = types.nullOr (nonEmptyListOf safeIdentityType);
-        default = null;
-      };
-      port = lib.mkOption {
-        type = types.nullOr types.port;
-        default = null;
-      };
-      reality = lib.mkOption {
-        type = types.nullOr (types.submodule realityModule);
-        default = null;
-      };
-      xhttp = lib.mkOption {
-        type = types.nullOr (types.submodule xhttpModule);
-        default = null;
-      };
-      fingerprint = lib.mkOption {
-        type = nullableNonEmptyStr;
-        default = null;
-      };
-      doh = lib.mkOption {
-        type = types.nullOr (types.submodule dohModule);
-        default = null;
-      };
-      sni = lib.mkOption {
-        type = nullableNonEmptyStr;
-        default = null;
-      };
-      alpn = lib.mkOption {
-        type = types.nullOr (nonEmptyListOf nonEmptyStr);
-        default = null;
-      };
-      obfsName = lib.mkOption {
-        type = nullableNonEmptyStr;
-        default = null;
-      };
-      obfsMinPacketSize = lib.mkOption {
-        type = types.nullOr types.int;
-        default = null;
-      };
-      obfsMaxPacketSize = lib.mkOption {
-        type = types.nullOr types.int;
-        default = null;
-      };
-      tlsVerify = lib.mkOption {
-        type = types.nullOr types.bool;
-        default = null;
-      };
-      credentialEncoding = lib.mkOption {
-        type = nullableNonEmptyStr;
-        default = null;
-      };
-      generation = lib.mkOption {
-        type = types.nullOr types.int;
-        default = null;
-      };
-      profile = lib.mkOption {
-        type = types.nullOr (types.submodule awgProfileModule);
-        default = null;
-      };
-      serverPublicKey = lib.mkOption {
-        type = nullableNonEmptyStr;
-        default = null;
-      };
-      interfaceName = lib.mkOption {
-        type = nullableNonEmptyStr;
-        default = null;
-      };
-      address = lib.mkOption {
-        type = nullableNonEmptyStr;
-        default = null;
-      };
-      mtu = lib.mkOption {
-        type = types.nullOr types.int;
-        default = null;
-      };
-      peers = lib.mkOption {
-        type = types.listOf (types.submodule awgPeerModule);
-        default = [ ];
+  metadataModule =
+    expectedProtocol:
+    let
+      fixedPolicy = providerEnvelope.fixedTransportMetadata.${expectedProtocol};
+      policyType =
+        name: fallback:
+        if builtins.hasAttr name fixedPolicy then fixed (builtins.getAttr name fixedPolicy) else fallback;
+    in
+    {
+      options = {
+        protocol = mkOption (fixed expectedProtocol);
+        tlsServerName = lib.mkOption {
+          type = nullableNonEmptyStr;
+          default = null;
+        };
+        userNames = lib.mkOption {
+          type = types.nullOr (nonEmptyListOf safeIdentityType);
+          default = null;
+        };
+        port = lib.mkOption {
+          type = types.nullOr types.port;
+          default = null;
+        };
+        reality = lib.mkOption {
+          type = types.nullOr (types.submodule realityModule);
+          default = null;
+        };
+        xhttp = lib.mkOption {
+          type = types.nullOr (types.submodule xhttpModule);
+          default = null;
+        };
+        fingerprint = lib.mkOption {
+          type = nullableNonEmptyStr;
+          default = null;
+        };
+        doh = lib.mkOption {
+          type = types.nullOr (types.submodule dohModule);
+          default = null;
+        };
+        sni = lib.mkOption {
+          type = nullableNonEmptyStr;
+          default = null;
+        };
+        alpn = lib.mkOption {
+          type = policyType "alpn" (types.nullOr (nonEmptyListOf nonEmptyStr));
+          default = null;
+        };
+        obfsName = lib.mkOption {
+          type = policyType "obfsName" nullableNonEmptyStr;
+          default = null;
+        };
+        obfsMinPacketSize = lib.mkOption {
+          type = policyType "obfsMinPacketSize" (types.nullOr types.int);
+          default = null;
+        };
+        obfsMaxPacketSize = lib.mkOption {
+          type = policyType "obfsMaxPacketSize" (types.nullOr types.int);
+          default = null;
+        };
+        tlsVerify = lib.mkOption {
+          type = policyType "tlsVerify" (types.nullOr types.bool);
+          default = null;
+        };
+        credentialEncoding = lib.mkOption {
+          type = policyType "credentialEncoding" nullableNonEmptyStr;
+          default = null;
+        };
+        generation = lib.mkOption {
+          type = policyType "generation" (types.nullOr types.int);
+          default = null;
+        };
+        profile = lib.mkOption {
+          type = policyType "profile" (types.nullOr (types.submodule awgProfileModule));
+          default = null;
+        };
+        serverPublicKey = lib.mkOption {
+          type = nullableNonEmptyStr;
+          default = null;
+        };
+        interfaceName = lib.mkOption {
+          type = nullableNonEmptyStr;
+          default = null;
+        };
+        address = lib.mkOption {
+          type = nullableNonEmptyStr;
+          default = null;
+        };
+        mtu = lib.mkOption {
+          type = types.nullOr types.int;
+          default = null;
+        };
+        peers = lib.mkOption {
+          type = types.listOf (types.submodule awgPeerModule);
+          default = [ ];
+        };
       };
     };
-  };
   protocolMetadataFields = {
     naiveproxy = [
       "protocol"
@@ -211,7 +210,8 @@ let
     && builtins.isString (value.protocol or null)
     && builtins.hasAttr value.protocol protocolMetadataFields
     && attrsHaveExactly protocolMetadataFields.${value.protocol} value;
-  metadataType = types.addCheck (types.submodule metadataModule) validMetadataShape;
+  metadataType =
+    protocol: types.addCheck (types.submodule (metadataModule protocol)) validMetadataShape;
 
   secretNamesModule = {
     options = {
@@ -277,30 +277,17 @@ let
         if protocol == "mieru" then types.addCheck nonEmptyStr validIPv4 else nullableNonEmptyStr
       );
       port = mkOption types.port;
-      transport = mkOption (
-        if protocol == "mieru" then
-          fixed "tcp"
-        else
-          types.enum [
-            "tcp"
-            "udp"
-          ]
-      );
+      transport = mkOption (fixed protocolTransports.${protocol});
     };
 
   vpnProviderModule =
     { config, ... }:
     {
       options = {
-        schemaVersion = mkOption (fixed 2);
+        schemaVersion = mkOption (fixed providerEnvelope.schemaVersion);
         instanceId = mkOption safeIdentityType;
         machine = mkOption safeIdentityType;
-        role = mkOption (
-          types.enum [
-            "gateway"
-            "addon"
-          ]
-        );
+        role = mkOption (fixed protocolRoles.${config.protocol});
         protocol = mkOption (
           types.enum [
             "naiveproxy"
@@ -312,7 +299,7 @@ let
         );
         enabled = mkOption (fixed true);
         endpoint = mkOption (types.submodule (endpointModule config.protocol));
-        transportMetadata = mkOption metadataType;
+        transportMetadata = mkOption (metadataType config.protocol);
         profileNames = mkOption (nonEmptyListOf safeIdentityType);
         secretNames = mkOption secretNamesType;
       };
@@ -338,22 +325,6 @@ let
       };
     };
   };
-  protocolRoles = {
-    naiveproxy = "addon";
-    vless-xhttp = "gateway";
-    hysteria2 = "gateway";
-    amneziawg = "gateway";
-    mieru = "gateway";
-  };
-
-  protocolServices = {
-    naiveproxy = "@clanwright/vpn-naiveproxy";
-    vless-xhttp = "@clanwright/vpn-mihomo-vless-xhttp";
-    hysteria2 = "@clanwright/vpn-mihomo-hysteria2";
-    amneziawg = "@clanwright/vpn-amneziawg";
-    mieru = "@clanwright/vpn-mieru";
-  };
-
   fail =
     {
       providerMachine,
@@ -430,18 +401,7 @@ let
     && builtins.isInt value.contentPaddingAddition.max
     && builtins.isBool value.randomTrailers
     && builtins.isBool value.disableCookies
-    && value.s1 == 12
-    && value.s2 == 12
-    && value.s3 == 12
-    && value.s4 == 12
-    && value.h1 == 1
-    && value.h2 == 2
-    && value.h3 == 3
-    && value.h4 == 4
-    && value.contentPaddingAddition.min == 2
-    && value.contentPaddingAddition.max == 10
-    && value.randomTrailers == true
-    && value.disableCookies == false;
+    && value == providerEnvelope.fixedTransportMetadata.amneziawg.profile;
 
   validReality =
     value:
@@ -507,6 +467,7 @@ let
     let
       rawMetadata = if builtins.isAttrs value then value else { };
       allowedKeys = protocolMetadataFields.${protocol} or [ ];
+      fixedPolicy = providerEnvelope.fixedTransportMetadata.${protocol} or { };
       schemaFields = lib.unique (lib.concatLists (builtins.attrValues protocolMetadataFields));
       metadata = lib.filterAttrs (
         name: item:
@@ -545,14 +506,14 @@ let
       && (
         !isNonEmptyString (metadata.sni or null)
         || !allStrings (metadata.alpn or [ ])
-        || metadata.alpn != [ "h3" ]
+        || metadata.alpn != fixedPolicy.alpn
         || !allStrings (metadata.userNames or [ ])
         || !isNonEmptyString (metadata.obfsName or null)
-        || (metadata.obfsName or null) != "gecko"
-        || (metadata.obfsMinPacketSize or null) != 512
-        || (metadata.obfsMaxPacketSize or null) != 1200
-        || (metadata.tlsVerify or null) != true
-        || (metadata.credentialEncoding or null) != "base64url"
+        || (metadata.obfsName or null) != fixedPolicy.obfsName
+        || (metadata.obfsMinPacketSize or null) != fixedPolicy.obfsMinPacketSize
+        || (metadata.obfsMaxPacketSize or null) != fixedPolicy.obfsMaxPacketSize
+        || (metadata.tlsVerify or null) != fixedPolicy.tlsVerify
+        || (metadata.credentialEncoding or null) != fixedPolicy.credentialEncoding
       )
     then
       fail context "Hysteria2 public transport metadata is incomplete"
@@ -565,7 +526,7 @@ let
         || !builtins.isList (metadata.peers or [ ])
         || !(builtins.all validAwgPeer (metadata.peers or [ ]))
         || !(builtins.isNull (metadata.mtu or null) || builtins.isInt (metadata.mtu or null))
-        || (metadata.generation or null) != 3
+        || (metadata.generation or null) != fixedPolicy.generation
         || !validAwgProfile (metadata.profile or null)
       )
     then
@@ -574,7 +535,7 @@ let
       protocol == "mieru"
       && (
         !allSafeIdentities (metadata.userNames or [ ])
-        || (metadata.credentialEncoding or null) != "base64url"
+        || (metadata.credentialEncoding or null) != fixedPolicy.credentialEncoding
       )
     then
       fail context "Mieru public transport metadata is incomplete"
@@ -645,7 +606,7 @@ let
       validShape =
         builtins.isAttrs raw
         && attrsHaveExactly requiredFields raw
-        && raw.schemaVersion == 2
+        && raw.schemaVersion == providerEnvelope.schemaVersion
         && raw.instanceId == providerInstanceId
         && raw.machine == providerMachine
         && raw.role == expectedRole
@@ -663,18 +624,7 @@ let
         && builtins.isInt endpoint.port
         && endpoint.port > 0
         && endpoint.port <= 65535
-        &&
-          endpoint.transport == (
-            if
-              builtins.elem protocol [
-                "hysteria2"
-                "amneziawg"
-              ]
-            then
-              "udp"
-            else
-              "tcp"
-          )
+        && endpoint.transport == protocolTransports.${protocol}
         && safeIdentity (raw.instanceId or null)
         && safeIdentity (raw.machine or null)
         && allSafeIdentities (raw.profileNames or [ ])

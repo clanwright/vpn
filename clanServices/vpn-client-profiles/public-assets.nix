@@ -2,65 +2,87 @@
   lib,
   pkgs,
   appsPkgs,
-  render,
+  manifest,
   assetRoot,
   statusPath,
   readerGroup,
   refreshService,
 }:
 let
-  inherit (render)
-    generatedProfiles
-    mihomoMrsUpstream
-    personalProxyDomainsTxt
-    upstreamRuleSets
-    ;
-
-  hasProfiles = generatedProfiles != [ ];
-  needsSingBoxAssets = builtins.any (profile: profile.publishProfileJson) generatedProfiles;
-  hasPersonalDomains = builtins.any (
-    profile: profile.mihomoSelectiveTemplate."rule-providers" ? personal_proxy_domains
-  ) generatedProfiles;
-
-  mihomoRemoteAssetPaths = lib.optionals hasProfiles (
-    [ "${assetRoot}/secure-dns.txt" ]
-    ++ map (ruleSet: "${assetRoot}/${ruleSet.tag}.mrs") mihomoMrsUpstream
+  inherit (manifest) assetCatalog;
+  referencedAssetIds = lib.unique (
+    lib.concatMap (
+      profile: lib.concatMap (artifact: artifact.assetRefs) profile.artifacts
+    ) manifest.profiles
   );
-  singBoxAssetPaths = lib.optionals needsSingBoxAssets (
-    [ "${assetRoot}/filters.srs" ] ++ map (ruleSet: "${assetRoot}/${ruleSet.tag}.srs") upstreamRuleSets
+  referencedAssets = lib.sort (left: right: left.routePriority < right.routePriority) (
+    map (id: assetCatalog.${id}) referencedAssetIds
   );
-  requiredRemoteAssetPaths = mihomoRemoteAssetPaths ++ singBoxAssetPaths;
-  requiredAssetPaths =
-    requiredRemoteAssetPaths ++ lib.optional hasPersonalDomains "${assetRoot}/segments.txt";
+  remoteAssets = builtins.filter (asset: asset.source.kind != "local-file") referencedAssets;
+  allLocalAssets = builtins.filter (asset: asset.source.kind == "local-file") (
+    builtins.attrValues assetCatalog
+  );
+  requiredAssetPaths = map (asset: "${assetRoot}/${asset.filename}") referencedAssets;
+  requiredRemoteAssetPaths = map (asset: "${assetRoot}/${asset.filename}") remoteAssets;
 
-  refreshSrs = ruleSet: ''
-    refresh_download srs ${lib.escapeShellArg "${ruleSet.tag}.srs"} ${lib.escapeShellArg ruleSet.url}
-  '';
-  refreshMrs = ruleSet: ''
-    refresh_download nonempty ${lib.escapeShellArg "${ruleSet.tag}.mrs"} ${lib.escapeShellArg ruleSet.url}
-  '';
-in
-{
-  inherit requiredAssetPaths;
-  localAssetSyncScript =
-    if hasPersonalDomains then
+  localAssetAction =
+    asset:
+    if builtins.elem asset.id referencedAssetIds then
       ''
-        install -d -o root -g ${lib.escapeShellArg readerGroup} -m 0750 ${lib.escapeShellArg assetRoot}
-        local_asset_tmp="$(mktemp ${lib.escapeShellArg "${assetRoot}/.segments.XXXXXX"})"
-        install -o root -g ${lib.escapeShellArg readerGroup} -m 0440 ${lib.escapeShellArg personalProxyDomainsTxt} "$local_asset_tmp"
-        mv -f "$local_asset_tmp" ${lib.escapeShellArg "${assetRoot}/segments.txt"}
+        local_asset_tmp="$(mktemp ${lib.escapeShellArg "${assetRoot}/.${asset.id}.XXXXXX"})"
+        install -o root -g ${lib.escapeShellArg readerGroup} -m 0440 \
+          ${lib.escapeShellArg asset.source.path} "$local_asset_tmp"
+        mv -f "$local_asset_tmp" ${lib.escapeShellArg "${assetRoot}/${asset.filename}"}
       ''
     else
       ''
-        rm -f ${lib.escapeShellArg "${assetRoot}/segments.txt"}
+        rm -f ${lib.escapeShellArg "${assetRoot}/${asset.filename}"}
       '';
 
+  remoteAssetAction =
+    asset:
+    if asset.source.kind == "download" then
+      ''
+        refresh_download ${lib.escapeShellArg asset.validator} ${lib.escapeShellArg asset.filename} ${lib.escapeShellArg asset.source.url}
+      ''
+    else
+      ''
+        adguard_source="$work_dir/${asset.id}.adguard.txt"
+        adguard_filtered="$work_dir/${asset.id}.filtered.txt"
+        adguard_srs="$work_dir/${asset.filename}"
+        if ! curl --fail --location --silent --show-error \
+          --connect-timeout 15 --max-time 120 \
+          --retry 6 --retry-delay 10 --retry-all-errors \
+          --output "$adguard_source" ${lib.escapeShellArg asset.source.url}; then
+          record_status ${lib.escapeShellArg asset.filename} failed download_failed
+        elif ! sed '/^[[:space:]]*$/d' "$adguard_source" > "$adguard_filtered" \
+          || [ ! -s "$adguard_filtered" ]; then
+          record_status ${lib.escapeShellArg asset.filename} failed empty_download
+        elif ! sing-box rule-set convert --type adguard --output "$adguard_srs" "$adguard_filtered" >/dev/null 2>&1 \
+          || [ ! -s "$adguard_srs" ] \
+          || ! sing-box rule-set match --format binary "$adguard_srs" dns.google >/dev/null 2>&1; then
+          record_status ${lib.escapeShellArg asset.filename} failed validation_failed
+        else
+          publish_file "$adguard_srs" ${lib.escapeShellArg asset.filename}
+          record_status ${lib.escapeShellArg asset.filename} refreshed ok
+        fi
+      '';
+in
+{
+  inherit
+    referencedAssets
+    referencedAssetIds
+    requiredAssetPaths
+    ;
+  localAssetSyncScript = ''
+    install -d -o root -g ${lib.escapeShellArg readerGroup} -m 0750 ${lib.escapeShellArg assetRoot}
+    ${lib.concatMapStringsSep "\n" localAssetAction allLocalAssets}
+  '';
   systemd = {
     tmpfiles.rules = [
       "d ${assetRoot} 0750 root ${readerGroup} -"
       "d ${builtins.dirOf statusPath} 0750 root ${readerGroup} -"
     ];
-
     timers.${refreshService} = {
       wantedBy = [ "timers.target" ];
       timerConfig = {
@@ -70,7 +92,6 @@ in
         Unit = "${refreshService}.service";
       };
     };
-
     services.${refreshService} = {
       description = "Refresh persistent public VPN client rule assets";
       wantedBy = [ "multi-user.target" ];
@@ -152,36 +173,7 @@ in
           record_status "$name" refreshed ok
         }
 
-        ${lib.optionalString hasProfiles ''
-          refresh_download nonempty secure-dns.txt \
-            https://raw.githubusercontent.com/hagezi/dns-blocklists/main/wildcard/doh-onlydomains.txt
-          ${lib.concatMapStrings refreshMrs mihomoMrsUpstream}
-        ''}
-
-        ${lib.optionalString needsSingBoxAssets ''
-          hagezi_source="$work_dir/hagezi-adblock.txt"
-          hagezi_filtered="$work_dir/hagezi-adblock.filtered.txt"
-          hagezi_srs="$work_dir/filters.srs"
-          if ! curl --fail --location --silent --show-error \
-            --connect-timeout 15 --max-time 120 \
-            --retry 6 --retry-delay 10 --retry-all-errors \
-            --output "$hagezi_source" \
-            https://raw.githubusercontent.com/hagezi/dns-blocklists/main/adblock/doh.txt; then
-            record_status filters.srs failed download_failed
-          elif ! sed '/^[[:space:]]*$/d' "$hagezi_source" > "$hagezi_filtered" \
-            || [ ! -s "$hagezi_filtered" ]; then
-            record_status filters.srs failed empty_download
-          elif ! sing-box rule-set convert --type adguard --output "$hagezi_srs" "$hagezi_filtered" >/dev/null 2>&1 \
-            || [ ! -s "$hagezi_srs" ] \
-            || ! sing-box rule-set match --format binary "$hagezi_srs" dns.google >/dev/null 2>&1; then
-            record_status filters.srs failed validation_failed
-          else
-            publish_file "$hagezi_srs" filters.srs
-            record_status filters.srs refreshed ok
-          fi
-
-          ${lib.concatMapStrings refreshSrs upstreamRuleSets}
-        ''}
+        ${lib.concatMapStringsSep "\n" remoteAssetAction remoteAssets}
 
         install -o root -g ${lib.escapeShellArg readerGroup} -m 0440 "$status_work" "$status_stage"
         mv -f "$status_stage" ${lib.escapeShellArg statusPath}

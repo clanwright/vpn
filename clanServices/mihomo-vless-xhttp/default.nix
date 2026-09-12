@@ -6,10 +6,8 @@
   ...
 }:
 let
-  identityPattern = "[A-Za-z0-9][A-Za-z0-9._-]{0,63}";
-  secretNamePattern = "[A-Za-z0-9_][A-Za-z0-9_.+-]*(/[A-Za-z0-9_][A-Za-z0-9_.+-]*)*";
-  validIdentity = value: builtins.match identityPattern value != null;
-  validSecretName = value: builtins.match secretNamePattern value != null;
+  identities = import ../../modules/contracts/identities.nix { inherit lib; };
+  providerEnvelope = import ../../modules/contracts/provider-envelope.nix { inherit lib; };
   validHostname =
     value:
     let
@@ -29,8 +27,8 @@ let
   validShortId = value: builtins.match "[0-9a-f]{16}" value != null;
   validPublicKey = value: builtins.match "[A-Za-z0-9_-]{43}" value != null;
   validPath = value: builtins.match "/[^[:space:]]*" value != null;
-  identityType = lib.types.addCheck lib.types.str validIdentity;
-  secretNameType = lib.types.addCheck lib.types.str validSecretName;
+  identityType = identities.safeIdentityType;
+  secretNameType = identities.safeSecretNameType;
   hostnameType = lib.types.addCheck lib.types.str validHostname;
 in
 {
@@ -186,20 +184,15 @@ in
       in
       {
         exports = lib.optionalAttrs active (mkExports {
-          vpnProvider = {
-            schemaVersion = 2;
+          vpnProvider = providerEnvelope.mkProvider {
+            protocol = "vless-xhttp";
             instanceId = instanceName;
             machine = providerMachine;
-            role = "gateway";
-            protocol = "vless-xhttp";
-            enabled = true;
             endpoint = {
               inherit (settings) domain port;
               ipv4 = settings.bindIPv4;
-              transport = "tcp";
             };
             transportMetadata = {
-              protocol = "vless-xhttp";
               reality = {
                 serverName = settings.reality.targetHost;
                 inherit (settings.reality) serverNames publicKey;

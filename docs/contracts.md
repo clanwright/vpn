@@ -126,6 +126,14 @@ Roles with an `enable` setting use it alone to control their declarations.
 Disabled roles do not retain service or secret declarations; credential storage
 remains consumer-owned.
 Protocol policy with a single supported value is fixed by the implementation.
+The VLESS XHTTP export accepts only `mode = "auto"`, matching provider selection
+and client rendering. Identity and secret-name rules share the same contract
+definitions across provider roles and exports.
+
+AdGuard Home, Unbound and NaiveProxy permit at most one active instance per
+machine. A disabled instance does not reserve the native service or emit its
+secret declarations. Unbound's `enable` defaults to `true`; existing resolver
+settings therefore keep their enabled behavior when this setting is omitted.
 
 ## Published profiles
 

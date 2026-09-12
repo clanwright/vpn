@@ -31,6 +31,11 @@
       in
       {
         options = {
+          enable = lib.mkOption {
+            type = lib.types.bool;
+            default = true;
+            description = "Whether to declare the native Unbound recursive backend.";
+          };
           listen.hosts = lib.mkOption {
             type = lib.types.nullOr explicitListenHostsType;
             default = null;
@@ -65,7 +70,11 @@
       };
 
     perInstance =
-      { settings, ... }:
+      {
+        settings,
+        instanceName ? "dns-unbound",
+        ...
+      }:
       {
         nixosModule =
           {
@@ -75,6 +84,8 @@
             ...
           }:
           let
+            active = settings.enable;
+            activeInstances = config.clanwright.dns.unbound.activeInstances;
             unboundPackage = unboundPackageFor pkgs.system;
             explicitListenHosts = settings.listen.hosts;
             effectiveListenHosts =
@@ -130,139 +141,149 @@
             ];
           in
           {
-            assertions = [
-              {
-                assertion = config.services.unbound.package == unboundPackage;
-                message = "unbound: the runtime package must come from the VPN domain platform pin.";
-              }
-              {
-                assertion =
-                  explicitListenHosts == null
-                  || config.networking.enableIPv6
-                  || !(builtins.elem "::1" explicitListenHosts);
-                message = "unbound: listen.hosts explicitly enables ::1 while host IPv6 is disabled.";
-              }
-              {
-                assertion =
-                  effectiveServer.interface == effectiveListenHosts
-                  && effectiveServer.interface != [ ]
-                  && !effectiveServer.interface-automatic
-                  && builtins.all (
-                    host: builtins.elem host [ "::1" ] || lib.hasPrefix "127." host
-                  ) effectiveServer.interface;
-                message = "unbound: effective interfaces must remain the configured nonempty loopback listener set.";
-              }
-              {
-                assertion =
-                  !(effectiveSettings ? include)
-                  && !(effectiveSettings ? include-toplevel)
-                  && !(effectiveServer ? include)
-                  && config.services.unbound.checkconf;
-                message = "unbound: include directives cannot bypass the effective loopback and DNSSEC policy.";
-              }
-              {
-                assertion =
-                  builtins.attrNames effectiveSettings == [
-                    "remote-control"
-                    "server"
-                  ]
-                  && builtins.attrNames effectiveServer == allowedServerKeys
-                  &&
-                    builtins.attrNames effectiveSettings.remote-control == [
-                      "control-cert-file"
-                      "control-enable"
-                      "control-interface"
-                      "control-key-file"
-                      "server-cert-file"
-                      "server-key-file"
-                    ]
-                  && !effectiveSettings.remote-control.control-enable;
-                message = "unbound: freeform directives and remote control cannot replace the closed recursive backend policy.";
-              }
-              {
-                assertion =
-                  effectiveServer.port == settings.listen.port
-                  && effectiveServer.port >= 1
-                  && effectiveServer.port <= 65535;
-                message = "unbound: the effective listener port must remain within 1-65535.";
-              }
-              {
-                assertion = effectiveServer.access-control == effectiveAccessControl;
-                message = "unbound: effective access control must allow only enabled loopback address families.";
-              }
-              {
-                assertion =
-                  config.services.unbound.enableRootTrustAnchor
-                  && effectiveServer.auto-trust-anchor-file == "${config.services.unbound.stateDir}/root.key"
-                  && effectiveServer.module-config == ''"validator iterator"''
-                  && !effectiveServer.val-permissive-mode
-                  && effectiveServer.harden-dnssec-stripped
-                  && effectiveServer.domain-insecure == [ ]
-                  && effectiveServer.trust-anchor == [ ]
-                  && effectiveServer.trust-anchor-file == [ ]
-                  && effectiveServer.trusted-keys-file == [ ];
-                message = "unbound: effective DNSSEC validation and the native managed root trust anchor must remain enabled.";
-              }
-              {
-                assertion =
-                  effectiveServer.do-ip4
-                  && effectiveServer.do-ip6 == config.networking.enableIPv6
-                  && effectiveServer.do-udp
-                  && effectiveServer.do-tcp
-                  && effectiveServer.edns-buffer-size == 1232
-                  && effectiveServer.cache-min-ttl == 0
-                  && effectiveServer.serve-expired
-                  && effectiveServer.serve-expired-ttl == 86400
-                  && !effectiveServer.serve-expired-ttl-reset
-                  && effectiveServer.serve-expired-client-timeout == 1800
-                  && effectiveServer.serve-expired-reply-ttl == 30;
-                message = "unbound: effective transport, EDNS, TTL, and bounded serve-expired policy must remain enabled.";
-              }
-              {
-                assertion =
-                  effectiveServer.prefetch == settings.privacy.prefetch
-                  && effectiveServer.hide-identity == settings.privacy.hideIdentity
-                  && effectiveServer.hide-version == settings.privacy.hideVersion
-                  && effectiveServer.qname-minimisation == settings.privacy.qnameMinimisation
-                  && !effectiveServer.qname-minimisation-strict;
-                message = "unbound: effective privacy settings must retain non-strict QNAME minimisation.";
-              }
-            ];
+            imports = [ ./shared.nix ];
 
-            services.unbound = {
-              enable = true;
-              package = lib.mkForce unboundPackage;
-              checkconf = lib.mkForce true;
-              resolveLocalQueries = false;
-              enableRootTrustAnchor = lib.mkForce true;
-              settings.server = {
-                port = lib.mkForce settings.listen.port;
-                interface = lib.mkForce effectiveListenHosts;
-                interface-automatic = lib.mkForce false;
-                access-control = lib.mkForce effectiveAccessControl;
-                do-ip4 = lib.mkForce true;
-                do-ip6 = lib.mkForce config.networking.enableIPv6;
-                do-udp = lib.mkForce true;
-                do-tcp = lib.mkForce true;
-                edns-buffer-size = lib.mkForce 1232;
-                prefetch = lib.mkForce settings.privacy.prefetch;
-                hide-identity = lib.mkForce settings.privacy.hideIdentity;
-                hide-version = lib.mkForce settings.privacy.hideVersion;
-                qname-minimisation = lib.mkForce settings.privacy.qnameMinimisation;
-                qname-minimisation-strict = lib.mkForce false;
-                module-config = lib.mkForce ''"validator iterator"'';
-                val-permissive-mode = lib.mkForce false;
-                harden-dnssec-stripped = lib.mkForce true;
-                domain-insecure = lib.mkForce [ ];
-                trust-anchor = lib.mkForce [ ];
-                trust-anchor-file = lib.mkForce [ ];
-                trusted-keys-file = lib.mkForce [ ];
-                cache-min-ttl = lib.mkForce 0;
-                serve-expired = lib.mkForce true;
-                serve-expired-ttl = lib.mkForce 86400;
-                serve-expired-ttl-reset = lib.mkForce false;
-                serve-expired-client-timeout = lib.mkForce 1800;
-                serve-expired-reply-ttl = lib.mkForce 30;
+            config = lib.mkIf active {
+              clanwright.dns.unbound.activeInstances = [ instanceName ];
+
+              assertions = [
+                {
+                  assertion = lib.length activeInstances == 1;
+                  message = "unbound: only one active instance may claim the native Unbound runtime per machine.";
+                }
+                {
+                  assertion = config.services.unbound.package == unboundPackage;
+                  message = "unbound: the runtime package must come from the VPN domain platform pin.";
+                }
+                {
+                  assertion =
+                    explicitListenHosts == null
+                    || config.networking.enableIPv6
+                    || !(builtins.elem "::1" explicitListenHosts);
+                  message = "unbound: listen.hosts explicitly enables ::1 while host IPv6 is disabled.";
+                }
+                {
+                  assertion =
+                    effectiveServer.interface == effectiveListenHosts
+                    && effectiveServer.interface != [ ]
+                    && !effectiveServer.interface-automatic
+                    && builtins.all (
+                      host: builtins.elem host [ "::1" ] || lib.hasPrefix "127." host
+                    ) effectiveServer.interface;
+                  message = "unbound: effective interfaces must remain the configured nonempty loopback listener set.";
+                }
+                {
+                  assertion =
+                    !(effectiveSettings ? include)
+                    && !(effectiveSettings ? include-toplevel)
+                    && !(effectiveServer ? include)
+                    && config.services.unbound.checkconf;
+                  message = "unbound: include directives cannot bypass the effective loopback and DNSSEC policy.";
+                }
+                {
+                  assertion =
+                    builtins.attrNames effectiveSettings == [
+                      "remote-control"
+                      "server"
+                    ]
+                    && builtins.attrNames effectiveServer == allowedServerKeys
+                    &&
+                      builtins.attrNames effectiveSettings.remote-control == [
+                        "control-cert-file"
+                        "control-enable"
+                        "control-interface"
+                        "control-key-file"
+                        "server-cert-file"
+                        "server-key-file"
+                      ]
+                    && !effectiveSettings.remote-control.control-enable;
+                  message = "unbound: freeform directives and remote control cannot replace the closed recursive backend policy.";
+                }
+                {
+                  assertion =
+                    effectiveServer.port == settings.listen.port
+                    && effectiveServer.port >= 1
+                    && effectiveServer.port <= 65535;
+                  message = "unbound: the effective listener port must remain within 1-65535.";
+                }
+                {
+                  assertion = effectiveServer.access-control == effectiveAccessControl;
+                  message = "unbound: effective access control must allow only enabled loopback address families.";
+                }
+                {
+                  assertion =
+                    config.services.unbound.enableRootTrustAnchor
+                    && effectiveServer.auto-trust-anchor-file == "${config.services.unbound.stateDir}/root.key"
+                    && effectiveServer.module-config == ''"validator iterator"''
+                    && !effectiveServer.val-permissive-mode
+                    && effectiveServer.harden-dnssec-stripped
+                    && effectiveServer.domain-insecure == [ ]
+                    && effectiveServer.trust-anchor == [ ]
+                    && effectiveServer.trust-anchor-file == [ ]
+                    && effectiveServer.trusted-keys-file == [ ];
+                  message = "unbound: effective DNSSEC validation and the native managed root trust anchor must remain enabled.";
+                }
+                {
+                  assertion =
+                    effectiveServer.do-ip4
+                    && effectiveServer.do-ip6 == config.networking.enableIPv6
+                    && effectiveServer.do-udp
+                    && effectiveServer.do-tcp
+                    && effectiveServer.edns-buffer-size == 1232
+                    && effectiveServer.cache-min-ttl == 0
+                    && effectiveServer.serve-expired
+                    && effectiveServer.serve-expired-ttl == 86400
+                    && !effectiveServer.serve-expired-ttl-reset
+                    && effectiveServer.serve-expired-client-timeout == 1800
+                    && effectiveServer.serve-expired-reply-ttl == 30;
+                  message = "unbound: effective transport, EDNS, TTL, and bounded serve-expired policy must remain enabled.";
+                }
+                {
+                  assertion =
+                    effectiveServer.prefetch == settings.privacy.prefetch
+                    && effectiveServer.hide-identity == settings.privacy.hideIdentity
+                    && effectiveServer.hide-version == settings.privacy.hideVersion
+                    && effectiveServer.qname-minimisation == settings.privacy.qnameMinimisation
+                    && !effectiveServer.qname-minimisation-strict;
+                  message = "unbound: effective privacy settings must retain non-strict QNAME minimisation.";
+                }
+              ];
+
+              services.unbound = {
+                enable = true;
+                package = lib.mkForce unboundPackage;
+                checkconf = lib.mkForce true;
+                resolveLocalQueries = false;
+                enableRootTrustAnchor = lib.mkForce true;
+                settings.server = {
+                  port = lib.mkForce settings.listen.port;
+                  interface = lib.mkForce effectiveListenHosts;
+                  interface-automatic = lib.mkForce false;
+                  access-control = lib.mkForce effectiveAccessControl;
+                  do-ip4 = lib.mkForce true;
+                  do-ip6 = lib.mkForce config.networking.enableIPv6;
+                  do-udp = lib.mkForce true;
+                  do-tcp = lib.mkForce true;
+                  edns-buffer-size = lib.mkForce 1232;
+                  prefetch = lib.mkForce settings.privacy.prefetch;
+                  hide-identity = lib.mkForce settings.privacy.hideIdentity;
+                  hide-version = lib.mkForce settings.privacy.hideVersion;
+                  qname-minimisation = lib.mkForce settings.privacy.qnameMinimisation;
+                  qname-minimisation-strict = lib.mkForce false;
+                  module-config = lib.mkForce ''"validator iterator"'';
+                  val-permissive-mode = lib.mkForce false;
+                  harden-dnssec-stripped = lib.mkForce true;
+                  domain-insecure = lib.mkForce [ ];
+                  trust-anchor = lib.mkForce [ ];
+                  trust-anchor-file = lib.mkForce [ ];
+                  trusted-keys-file = lib.mkForce [ ];
+                  cache-min-ttl = lib.mkForce 0;
+                  serve-expired = lib.mkForce true;
+                  serve-expired-ttl = lib.mkForce 86400;
+                  serve-expired-ttl-reset = lib.mkForce false;
+                  serve-expired-client-timeout = lib.mkForce 1800;
+                  serve-expired-reply-ttl = lib.mkForce 30;
+                };
               };
             };
           };

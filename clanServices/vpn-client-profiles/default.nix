@@ -210,12 +210,12 @@ in
                 lib
                 pkgs
                 appsPkgs
-                render
                 assetRoot
                 statusPath
                 readerGroup
                 refreshService
                 ;
+              inherit (render) manifest;
             };
             publication = import ./runtime-publication.nix {
               inherit
@@ -223,7 +223,6 @@ in
                 lib
                 pkgs
                 mihomoPackage
-                render
                 runtimeBase
                 profileRoot
                 readerGroup
@@ -231,6 +230,7 @@ in
                 refreshUnit
                 ;
               settings = publisher;
+              inherit (render) manifest renderedProfiles;
               inherit (publicAssets) requiredAssetPaths localAssetSyncScript;
             };
             assetRoute = path: filename: contentType: ''
@@ -274,19 +274,9 @@ in
                 file_server
               }
 
-              ${assetRoute render.secureDnsRuleSetPublicPath "filters.srs" "application/octet-stream"}
-              ${assetRoute render.personalProxyDomainsTxtPublicPath "segments.txt" "text/plain; charset=utf-8"}
               ${lib.concatMapStringsSep "\n" (
-                ruleSet:
-                assetRoute (render.ruleSetMirrorPublicPath ruleSet.tag) "${ruleSet.tag}.srs"
-                  "application/octet-stream"
-              ) render.upstreamRuleSets}
-              ${lib.concatMapStringsSep "\n" (
-                ruleSet:
-                assetRoute (render.ruleSetMirrorMrsPublicPath ruleSet.tag) "${ruleSet.tag}.mrs"
-                  "application/octet-stream"
-              ) render.mihomoMrsUpstream}
-              ${assetRoute render.secureDnsDomainsTxtPublicPath "secure-dns.txt" "text/plain; charset=utf-8"}
+                asset: assetRoute asset.publicPath asset.filename asset.contentType
+              ) publicAssets.referencedAssets}
             '';
             integration = {
               schemaVersion = 1;
@@ -312,9 +302,17 @@ in
           {
             imports = [ ./integration.nix ];
             config = {
-              clanwright.vpn.publishers = lib.mkIf active { ${instanceName} = integration; };
-              clanwright.vpn.publisherRenders = lib.mkIf active {
-                ${instanceName} = publication.renderedProfiles;
+              clanwright.vpn = {
+                publishers = lib.mkIf active { ${instanceName} = integration; };
+                publisherRenders = lib.mkIf active {
+                  ${instanceName} = publication.renderedProfiles;
+                };
+                publisherManifests = lib.mkIf active {
+                  ${instanceName} = render.manifest;
+                };
+                publisherPublicationPhases = lib.mkIf active {
+                  ${instanceName} = publication.publicationPhases;
+                };
               };
               users.groups.${readerGroup} = lib.mkIf active { };
               assertions = [

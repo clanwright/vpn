@@ -24,6 +24,9 @@ listener; wildcard и смешанный public/tailnet bind отклоняют�
 `probeUserName` и `additionalDeny`. Identity — ограниченный токен;
 secret names допускают namespace через `/`, но не traversal или управляющие
 символы. Endpoint должен совпадать с выбранным claim.
+На одной машине допускается ровно один active instance: instances разделяют
+machine-wide Caddy integration и runtime template namespace. Disabled instance
+не заявляет эти ресурсы и может соседствовать с одним active.
 
 ## Defaults
 

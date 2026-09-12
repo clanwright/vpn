@@ -28,61 +28,24 @@ let
   serviceNames = builtins.filter (name: !(builtins.elem name supportNames)) (
     builtins.attrNames fixture.instances
   );
-  renderCaptureModule =
-    {
-      lib,
-      vpnClientProfileRender,
-      ...
-    }:
-    {
-      options.clanwright.checks.vpnClientProfileRender = lib.mkOption {
-        type = lib.types.raw;
-        internal = true;
-      };
-      config.clanwright.checks.vpnClientProfileRender = vpnClientProfileRender;
-    };
-  consumer = (import ./lib/consumer.nix { inherit inputs root self; }) {
+  consume = import ./lib/consumer.nix { inherit inputs root self; };
+  consumer = consume {
     instanceNames = serviceNames;
     includeNetwork = true;
-    extraModule = renderCaptureModule;
+    fixtureName = "vpn-consumer-client-render-fixture";
   };
-  zeroNaiveInstances = fixture.instances // {
-    vpn-client-profiles = lib.recursiveUpdate fixture.instances.vpn-client-profiles {
+  zeroNaiveOverrides = {
+    vpn-client-profiles = {
       roles.publisher.machines.vpn-fixture.settings.providerRefs = builtins.filter (
         ref: ref.protocol != "naiveproxy"
       ) fixture.instances.vpn-client-profiles.roles.publisher.machines.vpn-fixture.settings.providerRefs;
     };
   };
-  zeroNaiveConsumer = inputs.clan-core.lib.clan {
-    self.inputs = {
-      vpn = self;
-      inherit (inputs) network;
-      self.clan = zeroNaiveConsumer.config;
-    };
-    specialArgs.clan-core = inputs.clan-core;
-    directory = builtins.path {
-      path = root + /checks/fixtures;
-      name = "vpn-consumer-zero-naive-fixture";
-    };
-    imports = [
-      self.clanModule
-      {
-        machines.${fixtureMachineName} =
-          _:
-          fixture.machine
-          // {
-            imports = (fixture.machine.imports or [ ]) ++ [
-              fixture.networkIntegrationModule
-              renderCaptureModule
-            ];
-          };
-        inventory = {
-          meta.name = "vpn-consumer-zero-naive-fixture";
-          machines.${fixtureMachineName} = { };
-          instances = zeroNaiveInstances;
-        };
-      }
-    ];
+  zeroNaiveConsumer = consume {
+    instanceNames = serviceNames;
+    instanceOverrides = zeroNaiveOverrides;
+    includeNetwork = true;
+    fixtureName = "vpn-consumer-zero-naive-fixture";
   };
   publisherSettings =
     fixture.instances.vpn-client-profiles.roles.publisher.machines.vpn-fixture.settings;
@@ -95,40 +58,11 @@ let
     };
   evaluateInstances =
     name: instances:
-    let
-      candidate = inputs.clan-core.lib.clan {
-        self.inputs = {
-          vpn = self;
-          inherit (inputs) network;
-          self.clan = candidate.config;
-        };
-        specialArgs.clan-core = inputs.clan-core;
-        directory = builtins.path {
-          path = root + /checks/fixtures;
-          name = "vpn-consumer-${name}-fixture";
-        };
-        imports = [
-          self.clanModule
-          {
-            machines.${fixtureMachineName} =
-              _:
-              fixture.machine
-              // {
-                imports = (fixture.machine.imports or [ ]) ++ [
-                  fixture.networkIntegrationModule
-                  renderCaptureModule
-                ];
-              };
-            inventory = {
-              meta.name = "vpn-consumer-${name}-fixture";
-              machines.${fixtureMachineName} = { };
-              inherit instances;
-            };
-          }
-        ];
-      };
-    in
-    candidate;
+    consume {
+      inherit instances;
+      includeNetwork = true;
+      fixtureName = "vpn-consumer-${name}-fixture";
+    };
   publisherWithExactSettings =
     settings:
     let
@@ -151,18 +85,13 @@ let
     let
       candidate = evaluateInstances name (publisherWithExactSettings settings);
     in
-    builtins.head
-      candidate.config.nixosConfigurations.${fixtureMachineName}.config.clanwright.checks.vpnClientProfileRender;
+    builtins.head candidate.machine.clanwright.vpn.publisherRenders.vpn-client-profiles;
   rejectsInstances =
     name: instances:
     let
       candidate = evaluateInstances name instances;
     in
-    !(builtins.tryEval (
-      builtins.deepSeq
-        candidate.config.nixosConfigurations.${fixtureMachineName}.config.system.build.toplevel.drvPath
-        true
-    )).success;
+    !(builtins.tryEval (builtins.deepSeq candidate.machine.system.build.toplevel.drvPath true)).success;
   secondPublisherWith =
     settings:
     lib.recursiveUpdate fixture.instances.vpn-client-profiles {
@@ -209,8 +138,7 @@ let
   disjointPublisherConsumer = evaluateInstances "disjoint-publishers" (
     publisherPair firstPublisherSettings secondPublisherSettings
   );
-  disjointPublisherMachine =
-    disjointPublisherConsumer.config.nixosConfigurations.${fixtureMachineName}.config;
+  disjointPublisherMachine = disjointPublisherConsumer.machine;
   disjointPublisherIntegrations = disjointPublisherMachine.clanwright.vpn.publishers;
   disjointPublisherResults = {
     registryMerged =
@@ -423,7 +351,166 @@ let
     )
   );
   consumerMachine = consumer.config.nixosConfigurations.${fixtureMachineName}.config;
-  rendered = builtins.head consumerMachine.clanwright.checks.vpnClientProfileRender;
+  rendered = builtins.head consumerMachine.clanwright.vpn.publisherRenders.vpn-client-profiles;
+  manifest = consumerMachine.clanwright.vpn.publisherManifests.vpn-client-profiles;
+  manifestProfile = builtins.head manifest.profiles;
+  manifestArtifacts = manifestProfile.artifacts;
+  artifactByOutput =
+    outputName:
+    builtins.head (builtins.filter (artifact: artifact.outputName == outputName) manifestArtifacts);
+  valueAtPath =
+    value: path:
+    if path == [ ] then
+      value
+    else
+      let
+        component = builtins.head path;
+        next = if builtins.isInt component then builtins.elemAt value component else value.${component};
+      in
+      valueAtPath next (builtins.tail path);
+  placeholdersIn =
+    value:
+    if builtins.isString value then
+      lib.optional (builtins.match "__[A-Za-z0-9_-]+__" value != null) value
+    else if builtins.isList value then
+      lib.concatMap placeholdersIn value
+    else if builtins.isAttrs value then
+      lib.concatMap placeholdersIn (builtins.attrValues value)
+    else
+      [ ];
+  publicationPhaseIds = map (phase: phase.id) manifest.publicationPhases;
+  phaseIndex = id: indexOf (candidate: candidate == id) publicationPhaseIds;
+  allAssetRefs = lib.unique (lib.concatMap (artifact: artifact.assetRefs) manifestArtifacts);
+  manifestAssets = builtins.attrValues manifest.assetCatalog;
+  manifestResults = {
+    schemaVersion = manifest.schemaVersion == 1;
+    profileIdentity =
+      map (profileEntry: profileEntry.name) manifest.profiles == [ "cHJvYmU" ]
+      &&
+        manifestProfile.pathTokenBinding == {
+          secretName = "mihomo-client-fixture-cHJvYmU-path-token";
+          decoding = "path-token";
+        };
+    artifactOutputs =
+      map (artifact: artifact.outputName) manifestArtifacts == [
+        "mihomo.yaml"
+        "mihomo-full.yaml"
+        "profile.json"
+      ];
+    actualTemplatesRetained =
+      (artifactByOutput "mihomo.yaml").template == rendered.mihomoSelectiveTemplate
+      && (artifactByOutput "mihomo-full.yaml").template == rendered.mihomoFullTemplate
+      && (artifactByOutput "profile.json").template == rendered.profileJsonTemplate;
+    closedArtifactFormats = builtins.all (
+      artifact:
+      builtins.elem artifact.format [
+        "mihomo"
+        "json"
+      ]
+    ) manifestArtifacts;
+    bindingTargetsResolve = builtins.all (
+      artifact:
+      builtins.all (
+        binding: valueAtPath artifact.template binding.targetPath == binding.placeholder
+      ) artifact.bindings
+    ) manifestArtifacts;
+    placeholdersBoundExactlyOnce = builtins.all (
+      artifact:
+      let
+        placeholders = placeholdersIn artifact.template;
+        bindingPlaceholders = map (binding: binding.placeholder) artifact.bindings;
+      in
+      bindingPlaceholders == lib.unique bindingPlaceholders
+      && lib.sort builtins.lessThan placeholders == lib.sort builtins.lessThan bindingPlaceholders
+    ) manifestArtifacts;
+    closedDecodingRules = builtins.all (
+      artifact:
+      builtins.all (
+        binding:
+        builtins.elem binding.decoding [
+          "literal"
+          "wireguard-private-key"
+          "base64url"
+        ]
+      ) artifact.bindings
+    ) manifestArtifacts;
+    assetsDeclaredAndUsed =
+      builtins.all (assetId: builtins.hasAttr assetId manifest.assetCatalog) allAssetRefs
+      && lib.sort builtins.lessThan allAssetRefs == builtins.attrNames manifest.assetCatalog;
+    assetCatalogClosed =
+      builtins.all (
+        asset:
+        builtins.elem asset.validator [
+          "nonempty"
+          "srs"
+        ]
+        && builtins.elem asset.source.kind [
+          "download"
+          "adguard-to-srs"
+          "local-file"
+        ]
+      ) manifestAssets
+      &&
+        map (asset: asset.filename) manifestAssets
+        == lib.unique (map (asset: asset.filename) manifestAssets)
+      &&
+        map (asset: asset.publicPath) manifestAssets
+        == lib.unique (map (asset: asset.publicPath) manifestAssets)
+      &&
+        map (asset: asset.routePriority) manifestAssets
+        == lib.unique (map (asset: asset.routePriority) manifestAssets);
+    publishedPhasesMatchManifest =
+      consumerMachine.clanwright.vpn.publisherPublicationPhases.vpn-client-profiles
+      == manifest.publicationPhases;
+    publicationPhasesOrdered =
+      manifest.publicationPhases == [
+        {
+          id = "revoke-current";
+          prerequisites = [ ];
+        }
+        {
+          id = "sync-local-assets";
+          prerequisites = [ "revoke-current" ];
+        }
+        {
+          id = "check-assets";
+          prerequisites = [ "sync-local-assets" ];
+        }
+        {
+          id = "prepare-generation";
+          prerequisites = [ "check-assets" ];
+        }
+        {
+          id = "render-artifacts";
+          prerequisites = [ "prepare-generation" ];
+        }
+        {
+          id = "finalize-links";
+          prerequisites = [ "render-artifacts" ];
+        }
+        {
+          id = "seal-generation";
+          prerequisites = [ "finalize-links" ];
+        }
+        {
+          id = "expose-generation";
+          prerequisites = [ "seal-generation" ];
+        }
+        {
+          id = "retire-old-generations";
+          prerequisites = [ "expose-generation" ];
+        }
+        {
+          id = "cleanup-private-temporaries";
+          prerequisites = [ "retire-old-generations" ];
+        }
+      ]
+      && builtins.all (
+        phase:
+        builtins.all (prerequisite: phaseIndex prerequisite < phaseIndex phase.id) phase.prerequisites
+      ) manifest.publicationPhases;
+  };
+  manifestContract = builtins.all (value: value) (builtins.attrValues manifestResults);
   oneDnsRendered = renderedWithSettings "one-client-dns" (
     publisherSettings
     // {
@@ -439,7 +526,9 @@ let
     builtins.removeAttrs publisherSettings [ "clientDnsEndpoints" ]
   );
   zeroNaiveMachine = zeroNaiveConsumer.config.nixosConfigurations.${fixtureMachineName}.config;
-  zeroNaiveRendered = builtins.head zeroNaiveMachine.clanwright.checks.vpnClientProfileRender;
+  zeroNaiveRendered = builtins.head zeroNaiveMachine.clanwright.vpn.publisherRenders.vpn-client-profiles;
+  zeroNaiveManifest = zeroNaiveMachine.clanwright.vpn.publisherManifests.vpn-client-profiles;
+  zeroNaiveArtifacts = (builtins.head zeroNaiveManifest.profiles).artifacts;
   zeroNaivePublicationScript = zeroNaiveMachine.systemd.services.${publicationUnitName}.script;
   publicationScript = consumerMachine.systemd.services.${publicationUnitName}.script;
   mihomoTypes = map (proxy: proxy.type) rendered.mihomoSelectiveTemplate.proxies;
@@ -823,6 +912,11 @@ let
     profileLinkSuppressed = !(lib.hasInfix "/profile.json" zeroNaivePublicationScript);
     publicationDisabled = !zeroNaiveRendered.publishProfileJson;
     templateSuppressed = zeroNaiveRendered.profileJsonTemplate == null;
+    manifestSuppressesProfileJson =
+      map (artifact: artifact.outputName) zeroNaiveArtifacts == [
+        "mihomo.yaml"
+        "mihomo-full.yaml"
+      ];
   };
   zeroNaiveContract = builtins.all (value: value) (builtins.attrValues zeroNaiveResults);
   negativeResults = {
@@ -865,6 +959,7 @@ let
     && routeContract
     && dnsContract
     && namespaceContract
+    && manifestContract
     && zeroNaiveContract
     && disjointPublisherContract
     && negativeContract;
@@ -881,6 +976,8 @@ if !contract then
         disjointPublisherContract
         disjointPublisherResults
         mihomoContract
+        manifestContract
+        manifestResults
         mieruContractResults
         mieruExportContract
         namespaceContract
@@ -906,6 +1003,8 @@ else
       disjointPublisherContract
       disjointPublisherResults
       mihomoContract
+      manifestContract
+      manifestResults
       mieruContractResults
       mieruExportContract
       namespaceContract

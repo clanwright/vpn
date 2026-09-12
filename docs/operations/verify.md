@@ -42,6 +42,11 @@ combined Clan composition. Publisher checks cover static log suppression,
 publication cleanup/retry declarations, public-cache paths and readiness,
 secret restart targets and consumer-owned integration. These are generated
 configuration and script contracts, not execution of the runtime scripts.
+Manifest checks reject missing or duplicate placeholder bindings, unsupported
+decoders, unknown asset references and invalid publication phase order. The
+runtime script is rendered from those phases; static guards also inspect the
+resulting script. Separate consumer fixtures cover a disabled publisher, an
+enabled publisher with minimal dependencies and complete composition.
 The asset contracts check refresh-before-publication ordering, the complete
 required-file guard after local asset synchronization, retention of cached
 downloads on failure and retry declarations for recovery. Empty-cache and
@@ -57,6 +62,15 @@ directory. `scope.txt` records `full` or `test:<name>` so a focused
 pass cannot be mistaken for the complete gate. Read `summary.tsv` for stage
 status, duration and log paths. The adjacent logs contain the complete readable
 output. Preserve that directory with review evidence.
+
+`revision.txt` identifies the starting Git commit and `worktree-status.txt`
+records pending paths without retaining a diff. `source-files.txt` lists the
+filtered snapshot inputs using shell-quoted paths. `source.nar-hash` hashes
+the actual evaluated snapshot, including file contents, executable bits and
+symlink targets; `flake-lock.hash` separately hashes its lockfile. These hashes
+identify uncommitted and untracked source changes as well as committed code.
+They are written when the evaluation snapshot is prepared; a run that fails
+during static checks has only its starting revision and worktree status.
 
 A passing gate proves that the evaluated Nix contracts and static source checks
 accepted the revision. It does not prove that application configuration

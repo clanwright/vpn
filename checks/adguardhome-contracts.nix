@@ -55,8 +55,9 @@ let
       };
       module = instance.nixosModule { inherit config lib pkgs; };
     in
-    module.config // { inherit (module) options; };
+    module.config;
   placeholderConfig = {
+    clanwright.dns.adguardhome.activeInstances = [ "dns-adguardhome" ];
     sops.placeholder.${baseSettings.auth.passwordSecretName} =
       "<SOPS:fixture-adguard-bcrypt:PLACEHOLDER>";
   };
@@ -77,7 +78,43 @@ let
     instanceNames = [ "dns-adguardhome" ];
     includeNetwork = false;
   };
-  disabledModule = moduleFor (baseSettings // { enable = false; }) { };
+  twoActiveAttempt = builtins.tryEval (
+    builtins.deepSeq ((import ./lib/consumer.nix { inherit inputs root self; }) {
+      instances = {
+        dns-adguardhome = fixture.instances.dns-adguardhome;
+        dns-second-adguardhome = fixture.instances.dns-adguardhome;
+      };
+      includeNetwork = false;
+      fixtureName = "vpn-adguard-two-active-fixture";
+    }) true
+  );
+  activeWithDisabled = (import ./lib/consumer.nix { inherit inputs root self; }) {
+    instances = {
+      dns-adguardhome = fixture.instances.dns-adguardhome;
+      dns-disabled-adguardhome = lib.recursiveUpdate fixture.instances.dns-adguardhome {
+        roles.resolver.machines.vpn-fixture.settings.enable = false;
+      };
+    };
+    includeNetwork = false;
+    fixtureName = "vpn-adguard-active-disabled-fixture";
+  };
+  disabledModule = moduleFor (baseSettings // { enable = false; }) {
+    clanwright.dns.adguardhome.activeInstances = [ ];
+  };
+  duplicateInstancesModule = moduleFor baseSettings (
+    lib.recursiveUpdate placeholderConfig {
+      clanwright.dns.adguardhome.activeInstances = [
+        "dns-adguardhome"
+        "dns-second-adguardhome"
+      ];
+    }
+  );
+  missingInstanceClaimModule = moduleFor baseSettings (
+    lib.recursiveUpdate placeholderConfig {
+      clanwright.dns.adguardhome.activeInstances = [ ];
+    }
+  );
+  disabledSiblingModule = moduleFor (baseSettings // { enable = false; }) placeholderConfig;
   privateSettings = lib.recursiveUpdate baseSettings {
     dns = privateDnsFixture;
     filtering.userRules = [
@@ -121,16 +158,13 @@ let
   privateFilteringDisabledEffective =
     builtins.fromJSON
       privateFilteringDisabledModule.sops.templates."dns-adguardhome-adguardhome.yaml".content;
-  privateDisabledModule = moduleFor (privateSettings // { enable = false; }) { };
-  disabledIntegration =
-    (lib.evalModules {
-      modules = [
-        {
-          options.clanwright.dns.adguardhome.integration =
-            disabledModule.options.clanwright.dns.adguardhome.integration;
-        }
-      ];
-    }).config.clanwright.dns.adguardhome.integration;
+  privateDisabledModule = moduleFor (privateSettings // { enable = false; }) {
+    clanwright.dns.adguardhome.activeInstances = [ ];
+  };
+  sharedEvaluation = lib.evalModules {
+    modules = [ ../clanServices/adguardhome/shared.nix ];
+  };
+  disabledIntegration = sharedEvaluation.config.clanwright.dns.adguardhome.integration;
   customRulesAccepted = effective.user_rules == baseSettings.filtering.userRules;
   settingOverrideResults = [
     (rejectsSetting "adguardhome: dns.upstream must contain one 127.0.0.1:<port> Unbound endpoint." (
@@ -528,18 +562,16 @@ let
         placeholderConfig
       ).assertion;
     malformedZoneRejected =
-      rejectsSetting
-        "adguardhome: private zone domains must be unique canonical lowercase DNS names without wildcards or trailing dots."
-        (
-          lib.recursiveUpdate baseSettings {
-            dns.privateZones = [
-              {
-                domains = [ "*.Internal.example.invalid." ];
-                upstreams = [ { address = "10.0.0.53"; } ];
-              }
-            ];
-          }
-        );
+      !(schemaAccepts (
+        lib.recursiveUpdate baseSettings {
+          dns.privateZones = [
+            {
+              domains = [ "*.Internal.example.invalid." ];
+              upstreams = [ { address = "10.0.0.53"; } ];
+            }
+          ];
+        }
+      ));
     duplicateZoneRejected =
       rejectsSetting
         "adguardhome: private zone domains must be unique canonical lowercase DNS names without wildcards or trailing dots."
@@ -558,31 +590,27 @@ let
           }
         );
     publicEndpointRejected =
-      rejectsSetting
-        "adguardhome: private DNS endpoints must be unique private numeric addresses with nonzero ports and must not loop to local DNS, Unbound, or fallback listeners."
-        (
-          lib.recursiveUpdate baseSettings {
-            dns.privateZones = [
-              {
-                domains = [ "internal.example.invalid" ];
-                upstreams = [ { address = "8.8.8.8"; } ];
-              }
-            ];
-          }
-        );
+      !(schemaAccepts (
+        lib.recursiveUpdate baseSettings {
+          dns.privateZones = [
+            {
+              domains = [ "internal.example.invalid" ];
+              upstreams = [ { address = "8.8.8.8"; } ];
+            }
+          ];
+        }
+      ));
     hostnameEndpointRejected =
-      rejectsSetting
-        "adguardhome: private DNS endpoints must be unique private numeric addresses with nonzero ports and must not loop to local DNS, Unbound, or fallback listeners."
-        (
-          lib.recursiveUpdate baseSettings {
-            dns.privateZones = [
-              {
-                domains = [ "internal.example.invalid" ];
-                upstreams = [ { address = "resolver.internal.example.invalid"; } ];
-              }
-            ];
-          }
-        );
+      !(schemaAccepts (
+        lib.recursiveUpdate baseSettings {
+          dns.privateZones = [
+            {
+              domains = [ "internal.example.invalid" ];
+              upstreams = [ { address = "resolver.internal.example.invalid"; } ];
+            }
+          ];
+        }
+      ));
     zeroPortRejected =
       rejectsSetting
         "adguardhome: private DNS endpoints must be unique private numeric addresses with nonzero ports and must not loop to local DNS, Unbound, or fallback listeners."
@@ -716,26 +744,24 @@ let
           }
         );
     publicAnswerRejected =
-      rejectsSetting
-        "adguardhome: private rewrite answers must be private numeric IPs or canonical private-zone CNAME targets that are not rewrite sources."
-        (
-          lib.recursiveUpdate privateSettings {
-            dns = {
-              privateZones = privateDnsFixture.privateZones ++ [
-                {
-                  domains = [ "8.8.8.8" ];
-                  upstreams = [ { address = "10.0.0.53"; } ];
-                }
-              ];
-              rewrites = [
-                {
-                  domain = "alias.8.8.8.8";
-                  answer = "8.8.8.8";
-                }
-              ];
-            };
-          }
-        );
+      !(schemaAccepts (
+        lib.recursiveUpdate privateSettings {
+          dns = {
+            privateZones = privateDnsFixture.privateZones ++ [
+              {
+                domains = [ "8.8.8.8" ];
+                upstreams = [ { address = "10.0.0.53"; } ];
+              }
+            ];
+            rewrites = [
+              {
+                domain = "alias.8.8.8.8";
+                answer = "8.8.8.8";
+              }
+            ];
+          };
+        }
+      ));
     outsideCnameRejected =
       rejectsSetting
         "adguardhome: private rewrite answers must be private numeric IPs or canonical private-zone CNAME targets that are not rewrite sources."
@@ -827,6 +853,14 @@ let
   };
   effectiveContract =
     builtins.all (entry: entry.assertion) machine.assertions
+    && !twoActiveAttempt.success
+    && activeWithDisabled.machine.clanwright.dns.adguardhome.activeInstances == [ "dns-adguardhome" ]
+    && builtins.all (entry: entry.assertion) activeWithDisabled.machine.assertions
+    && !(builtins.all (entry: entry.assertion) duplicateInstancesModule.assertions)
+    && !(builtins.all (entry: entry.assertion) missingInstanceClaimModule.assertions)
+    && builtins.all (entry: entry.assertion) disabledSiblingModule.assertions
+    && (disabledSiblingModule.services or { }) == { }
+    && (disabledSiblingModule.sops or { }) == { }
     && machine.services.adguardhome.enable
     && machine.services.adguardhome.package == adguardPackage
     && machine.services.adguardhome.settings == null
@@ -974,7 +1008,7 @@ let
     && !(adguardUnit.serviceConfig ? SupplementaryGroups);
   integrationContract =
     !(baselineModule ? networkCore)
-    && baselineModule.options.clanwright.dns.adguardhome.integration.readOnly
+    && sharedEvaluation.options.clanwright.dns.adguardhome.integration.readOnly
     && disabledIntegration == null
     && ((baselineModule.networking or { }).firewall or { }) == { }
     &&

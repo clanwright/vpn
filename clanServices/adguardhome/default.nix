@@ -18,6 +18,9 @@
     description = "DNS resolver role";
     interface =
       { lib, ... }:
+      let
+        privateDnsPolicy = import ./private-dns-policy.nix { inherit lib; };
+      in
       {
         options = {
           ui = {
@@ -61,14 +64,14 @@
                 lib.types.submodule {
                   options = {
                     domains = lib.mkOption {
-                      type = lib.types.nonEmptyListOf lib.types.str;
+                      type = lib.types.nonEmptyListOf privateDnsPolicy.types.dnsName;
                       description = "Canonical private DNS zone names served by the same upstreams.";
                     };
                     upstreams = lib.mkOption {
                       type = lib.types.nonEmptyListOf (
                         lib.types.submodule {
                           options = {
-                            address = lib.mkOption { type = lib.types.str; };
+                            address = lib.mkOption { type = privateDnsPolicy.types.privateAddress; };
                             port = lib.mkOption {
                               type = lib.types.port;
                               default = 53;
@@ -88,8 +91,8 @@
               type = lib.types.listOf (
                 lib.types.submodule {
                   options = {
-                    domain = lib.mkOption { type = lib.types.str; };
-                    answer = lib.mkOption { type = lib.types.str; };
+                    domain = lib.mkOption { type = privateDnsPolicy.types.dnsName; };
+                    answer = lib.mkOption { type = privateDnsPolicy.types.rewriteAnswer; };
                   };
                 }
               );
@@ -174,6 +177,7 @@
           }:
           let
             active = settings.enable;
+            activeInstances = config.clanwright.dns.adguardhome.activeInstances;
             adguardPackage = adguardPackageFor pkgs.system;
             adguardSchemaVersion = 34;
             dnsproxyPackage = dnsproxyPackageFor pkgs.system;
@@ -219,80 +223,20 @@
                   value = 0;
                 };
             unboundPort = if unboundPortAttempt.success then unboundPortAttempt.value else 0;
-            privateZoneDomains = lib.concatMap (zone: zone.domains) settings.dns.privateZones;
-            privateRewriteSources = map (rewrite: rewrite.domain) settings.dns.rewrites;
-            validDnsLabel =
-              label:
-              builtins.stringLength label <= 63 && builtins.match "[a-z0-9]([a-z0-9-]*[a-z0-9])?" label != null;
-            validDnsName =
-              name:
-              builtins.stringLength name > 0
-              && builtins.stringLength name <= 253
-              && builtins.all validDnsLabel (lib.splitString "." name);
-            isWithinPrivateZone =
-              name: builtins.any (zone: name == zone || lib.hasSuffix ".${zone}" name) privateZoneDomains;
-            looksLikeIpv4 = value: builtins.match "[0-9]+\\.[0-9]+\\.[0-9]+\\.[0-9]+" value != null;
-            isLoopbackHost =
-              host:
-              host == "::1" || builtins.match "127\\.${ipv4Octet}\\.${ipv4Octet}\\.${ipv4Octet}" host != null;
-            conflictsWithLocalDns =
-              upstream:
-              upstream.port == settings.dns.port && builtins.elem upstream.address settings.dns.bindHosts
-              ||
-                isLoopbackHost upstream.address
-                && builtins.elem upstream.port [
-                  settings.dns.port
-                  unboundPort
-                  settings.dns.fallbackPort
-                ];
-            privateUpstreamLines = lib.concatMap (
-              zone:
-              map (
-                upstream:
-                "[/${lib.concatStringsSep "/" zone.domains}/]${
-                  if upstream.address == "::1" then "[::1]" else upstream.address
-                }:${toString upstream.port}"
-              ) zone.upstreams
-            ) settings.dns.privateZones;
-            privateAllowRules = lib.concatMap (domain: [
-              "@@||${domain}^$important,dnsrewrite"
-              "@@||${domain}^$important"
-            ]) privateZoneDomains;
-            privateDsGuards = map (domain: "||${domain}^$dnstype=DS") privateZoneDomains;
-            renderedRewrites = map (rewrite: rewrite // { enabled = true; }) settings.dns.rewrites;
-            forbiddenPrivateRuleModifier =
-              rule:
-              let
-                normalized = lib.toLower rule;
-                lineHasImportantModifier =
-                  line:
-                  builtins.any (
-                    modifierTail:
-                    let
-                      commaSeparated =
-                        lib.replaceStrings
-                          [
-                            " "
-                            "\t"
-                            "\r"
-                          ]
-                          [
-                            ","
-                            ","
-                            ","
-                          ]
-                          modifierTail;
-                      terminated = "${commaSeparated},";
-                    in
-                    lib.hasPrefix "important," terminated
-                    || lib.hasPrefix "important=" terminated
-                    || lib.hasInfix ",important," ",${terminated}"
-                    || lib.hasInfix ",important=" ",${terminated}"
-                  ) (lib.drop 1 (lib.splitString "$" line));
-              in
-              lib.hasInfix "dnsrewrite" normalized
-              || lib.hasInfix "badfilter" normalized
-              || builtins.any lineHasImportantModifier (lib.splitString "\n" normalized);
+            privateDnsPolicy = import ./private-dns-policy.nix { inherit lib; };
+            privatePolicy = privateDnsPolicy.render {
+              privateZones = settings.dns.privateZones;
+              rewrites = settings.dns.rewrites;
+              userRules = settings.filtering.userRules;
+              dnsBindHosts = settings.dns.bindHosts;
+              dnsPort = settings.dns.port;
+              inherit unboundPort;
+              fallbackPort = settings.dns.fallbackPort;
+            };
+            privateUpstreamLines = privatePolicy.upstreamLines;
+            privateAllowRules = privatePolicy.allowRules;
+            privateDsGuards = privatePolicy.dsGuards;
+            inherit (privatePolicy) renderedRewrites;
             encryptedFallbackUpstreams = [
               # DNS stamps pin a numeric connect address while retaining the
               # provider hostname as the certificate identity.
@@ -561,54 +505,30 @@
             };
           in
           {
-            options.clanwright.dns.adguardhome.integration = lib.mkOption {
-              type = lib.types.nullOr (
-                lib.types.submodule {
-                  options = {
-                    schemaVersion = lib.mkOption { type = lib.types.enum [ 1 ]; };
-                    uiBackend = lib.mkOption {
-                      type = lib.types.submodule {
-                        options = {
-                          host = lib.mkOption { type = lib.types.str; };
-                          port = lib.mkOption { type = lib.types.port; };
-                        };
-                      };
-                    };
-                    dohBackend = lib.mkOption {
-                      type = lib.types.submodule {
-                        options = {
-                          host = lib.mkOption { type = lib.types.str; };
-                          port = lib.mkOption { type = lib.types.port; };
-                          serverName = lib.mkOption { type = lib.types.str; };
-                        };
-                      };
-                    };
-                    reloadUnits = lib.mkOption { type = lib.types.listOf lib.types.str; };
-                  };
-                }
-              );
-              default =
-                if active then
-                  {
-                    schemaVersion = 1;
-                    uiBackend = {
-                      inherit (settings.ui) host port;
-                    };
-                    dohBackend = {
-                      host = settings.ui.host;
-                      port = settings.tls.httpsPort;
-                      serverName = settings.tls.serverName;
-                    };
-                    reloadUnits = [ "adguardhome.service" ];
-                  }
-                else
-                  null;
-              readOnly = true;
-              description = "Read-only AdGuard backend data for consumer-owned integration.";
-            };
+            imports = [ ./shared.nix ];
 
             config = {
+              clanwright.dns.adguardhome.activeInstances = lib.mkIf active [ instanceName ];
+              clanwright.dns.adguardhome.integrationClaims = lib.mkIf active [
+                {
+                  schemaVersion = 1;
+                  uiBackend = {
+                    inherit (settings.ui) host port;
+                  };
+                  dohBackend = {
+                    host = settings.ui.host;
+                    port = settings.tls.httpsPort;
+                    serverName = settings.tls.serverName;
+                  };
+                  reloadUnits = [ "adguardhome.service" ];
+                }
+              ];
+
               assertions = [
+                {
+                  assertion = !active || lib.length activeInstances == 1;
+                  message = "adguardhome: only one active instance may claim the native AdGuard Home and dnsproxy runtimes per machine.";
+                }
                 {
                   assertion = !active || config.services.adguardhome.package == adguardPackage;
                   message = "adguardhome: the runtime package must come from the VPN domain platform pin.";
@@ -662,58 +582,27 @@
                   message = "adguardhome: UI backend must remain loopback-only.";
                 }
                 {
-                  assertion =
-                    !active
-                    || settings.dns.privateZones == [ ]
-                    ||
-                      builtins.all validDnsName privateZoneDomains
-                      && builtins.length privateZoneDomains == builtins.length (lib.unique privateZoneDomains);
+                  assertion = !active || settings.dns.privateZones == [ ] || privatePolicy.validation.uniqueDomains;
                   message = "adguardhome: private zone domains must be unique canonical lowercase DNS names without wildcards or trailing dots.";
                 }
                 {
-                  assertion =
-                    !active
-                    || settings.dns.privateZones == [ ]
-                    || builtins.all (
-                      zone:
-                      builtins.length zone.upstreams == builtins.length (lib.unique zone.upstreams)
-                      && builtins.all (
-                        upstream: isPrivateBindHost upstream.address && upstream.port > 0 && !conflictsWithLocalDns upstream
-                      ) zone.upstreams
-                    ) settings.dns.privateZones;
+                  assertion = !active || settings.dns.privateZones == [ ] || privatePolicy.validation.safeUpstreams;
                   message = "adguardhome: private DNS endpoints must be unique private numeric addresses with nonzero ports and must not loop to local DNS, Unbound, or fallback listeners.";
                 }
                 {
                   assertion =
                     !active
                     || settings.dns.rewrites == [ ]
-                    ||
-                      builtins.length privateRewriteSources == builtins.length (lib.unique privateRewriteSources)
-                      && builtins.all (
-                        rewrite: validDnsName rewrite.domain && isWithinPrivateZone rewrite.domain
-                      ) settings.dns.rewrites;
+                    || privatePolicy.validation.uniqueRewriteSources && privatePolicy.validation.rewriteSourcesCovered;
                   message = "adguardhome: private rewrite sources must be unique canonical lowercase DNS names within a declared private zone.";
                 }
                 {
                   assertion =
-                    !active
-                    || settings.dns.rewrites == [ ]
-                    || builtins.all (
-                      rewrite:
-                      isPrivateBindHost rewrite.answer
-                      ||
-                        !looksLikeIpv4 rewrite.answer
-                        && validDnsName rewrite.answer
-                        && isWithinPrivateZone rewrite.answer
-                        && !builtins.elem rewrite.answer privateRewriteSources
-                    ) settings.dns.rewrites;
+                    !active || settings.dns.rewrites == [ ] || privatePolicy.validation.rewriteAnswersClosed;
                   message = "adguardhome: private rewrite answers must be private numeric IPs or canonical private-zone CNAME targets that are not rewrite sources.";
                 }
                 {
-                  assertion =
-                    !active
-                    || settings.dns.privateZones == [ ]
-                    || !builtins.any forbiddenPrivateRuleModifier settings.filtering.userRules;
+                  assertion = !active || settings.dns.privateZones == [ ] || privatePolicy.validation.userRulesSafe;
                   message = "adguardhome: userRules must not use dnsrewrite, badfilter, or important modifiers when private zones are configured.";
                 }
                 {

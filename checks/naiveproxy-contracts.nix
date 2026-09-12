@@ -1,9 +1,17 @@
 {
   inputs,
   pkgs,
+  root,
+  self,
 }:
 let
   lib = inputs.nixpkgs.lib;
+  fixture = import ./fixtures/example-clan.nix;
+  networkSupportInstances = builtins.intersectAttrs {
+    edge-wildcard-certificate = null;
+    network-caddy = null;
+    network-certificates = null;
+  } fixture.instances;
   service = import ../clanServices/naiveproxy/default.nix { inherit lib; };
   interface = service.roles.addon.interface { inherit lib; };
   baseSettings = {
@@ -48,11 +56,17 @@ let
     };
   };
   evaluate =
-    rawSettings: claimSet: useSystemdActivation:
+    {
+      rawSettings,
+      claimSet,
+      useSystemdActivation,
+      activeInstances ? [ "fixture--naiveproxy" ],
+    }:
     let
       settings = evalSettings rawSettings;
       secretNames = builtins.attrValues settings.passwordSecretNames;
       config = {
+        clanwright.vpn.naiveproxy = { inherit activeInstances; };
         networkCore.caddy.fragments = claimSet;
         services.caddy = {
           configFile = "/etc/caddy/caddy_config";
@@ -79,52 +93,114 @@ let
         instanceName = "fixture--naiveproxy";
         machine.name = "fixture";
       };
-      module = instance.nixosModule { inherit config lib pkgs; };
+      definition = instance.nixosModule { inherit config lib pkgs; };
+      module = definition.config;
     in
     {
       inherit instance module settings;
       assertionsPass = builtins.all (entry: entry.assertion) module.assertions;
     };
-  legacy = evaluate baseSettings claims true;
-  activationScriptMode = evaluate baseSettings claims false;
-  arbitrary = evaluate (
-    baseSettings
-    // {
+  legacy = evaluate {
+    rawSettings = baseSettings;
+    claimSet = claims;
+    useSystemdActivation = true;
+  };
+  activationScriptMode = evaluate {
+    rawSettings = baseSettings;
+    claimSet = claims;
+    useSystemdActivation = false;
+  };
+  arbitrary = evaluate {
+    rawSettings = baseSettings // {
       passwordSecretNames = {
         phone-android = "fixture/naive-phone-password";
         macbook = "fixture/naive-macbook-password";
         health-check = "fixture/naive-health-password";
       };
       probeUserName = "health-check";
-    }
-  ) claims true;
-  nonPublic = evaluate baseSettings (claims // { fixture-site.publicSite = false; }) true;
-  wrongEndpoint = evaluate (
-    baseSettings
-    // {
+    };
+    claimSet = claims;
+    useSystemdActivation = true;
+  };
+  nonPublic = evaluate {
+    rawSettings = baseSettings;
+    claimSet = claims // {
+      fixture-site.publicSite = false;
+    };
+    useSystemdActivation = true;
+  };
+  wrongEndpoint = evaluate {
+    rawSettings = baseSettings // {
       selectedPublicSiteEndpoint = baseSettings.selectedPublicSiteEndpoint // {
         domain = "wrong.example.invalid";
       };
-    }
-  ) claims true;
-  mixedSelectedListener = evaluate baseSettings (
-    claims
-    // {
+    };
+    claimSet = claims;
+    useSystemdActivation = true;
+  };
+  mixedSelectedListener = evaluate {
+    rawSettings = baseSettings;
+    claimSet = claims // {
       fixture-site.listenAddresses = [
         "192.0.2.10"
         "100.64.0.10"
       ];
-    }
-  ) true;
-  missingProbe = evaluate (
-    baseSettings
-    // {
+    };
+    useSystemdActivation = true;
+  };
+  missingProbe = evaluate {
+    rawSettings = baseSettings // {
       passwordSecretNames = {
         phone = "fixture/naive-phone-password";
         laptop = "fixture/naive-laptop-password";
       };
-    }
-  ) claims true;
+    };
+    claimSet = claims;
+    useSystemdActivation = true;
+  };
+  duplicateInstances = evaluate {
+    rawSettings = baseSettings;
+    claimSet = claims;
+    useSystemdActivation = true;
+    activeInstances = [
+      "fixture--naiveproxy"
+      "fixture--second-naiveproxy"
+    ];
+  };
+  missingInstanceClaim = evaluate {
+    rawSettings = baseSettings;
+    claimSet = claims;
+    useSystemdActivation = true;
+    activeInstances = [ ];
+  };
+  disabledSibling = evaluate {
+    rawSettings = baseSettings // {
+      enable = false;
+    };
+    claimSet = claims;
+    useSystemdActivation = true;
+    activeInstances = [ "fixture--naiveproxy" ];
+  };
+  twoActiveAttempt = builtins.tryEval (
+    builtins.deepSeq ((import ./lib/consumer.nix { inherit inputs root self; }) {
+      instances = networkSupportInstances // {
+        vpn-naiveproxy = fixture.instances.vpn-naiveproxy;
+        vpn-second-naiveproxy = fixture.instances.vpn-naiveproxy;
+      };
+      includeNetwork = true;
+      fixtureName = "vpn-naive-two-active-fixture";
+    }) true
+  );
+  activeWithDisabled = (import ./lib/consumer.nix { inherit inputs root self; }) {
+    instances = networkSupportInstances // {
+      vpn-naiveproxy = fixture.instances.vpn-naiveproxy;
+      vpn-disabled-naiveproxy = lib.recursiveUpdate fixture.instances.vpn-naiveproxy {
+        roles.addon.machines.vpn-fixture.settings.enable = false;
+      };
+    };
+    includeNetwork = true;
+    fixtureName = "vpn-naive-active-disabled-fixture";
+  };
   contributions = legacy.module.networkCore.caddy.contributions;
   selectedPrelude = contributions.fixture-site.preRouteConfigFragments;
   siblingPrelude = contributions.sibling-site.preRouteConfigFragments;
@@ -134,6 +210,16 @@ let
     legacy.assertionsPass
     && activationScriptMode.assertionsPass
     && arbitrary.assertionsPass
+    && !duplicateInstances.assertionsPass
+    && !missingInstanceClaim.assertionsPass
+    && disabledSibling.assertionsPass
+    && !twoActiveAttempt.success
+    && activeWithDisabled.machine.clanwright.vpn.naiveproxy.activeInstances == [ "vpn-naiveproxy" ]
+    && builtins.all (entry: entry.assertion) activeWithDisabled.machine.assertions
+    && disabledSibling.instance.exports == { }
+    && (disabledSibling.module.sops.templates or { }) == { }
+    && (disabledSibling.module.sops.secrets or { }) == { }
+    && (disabledSibling.module.networkCore.caddy.contributions or { }) == { }
     && legacy.instance.exports.vpnProvider.schemaVersion == 2
     && arbitrary.instance.exports.vpnProvider.schemaVersion == 2
     &&

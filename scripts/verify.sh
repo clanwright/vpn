@@ -49,6 +49,11 @@ finalize() {
 }
 trap finalize EXIT
 
+# The worktree can include intended edits. Identify it without retaining a diff
+# or file contents; the evaluation snapshot below receives its own content hash.
+git rev-parse HEAD >"$artifact_dir/revision.txt"
+git status --short --untracked-files=all >"$artifact_dir/worktree-status.txt"
+
 run_stage() {
 	local stage="$1"
 	shift
@@ -132,6 +137,11 @@ evaluation_checks() {
 		cleanup_evaluation_source
 		return 1
 	}
+
+	: >"$artifact_dir/source-files.txt" || {
+		cleanup_evaluation_source
+		return 1
+	}
 	while IFS= read -r -d '' source_file; do
 		if ! source_path_allowed "$source_file"; then
 			continue
@@ -147,7 +157,16 @@ evaluation_checks() {
 			cleanup_evaluation_source
 			return 1
 		}
+		# Shell quoting keeps unusual file names on one unambiguous line.
+		printf '%q\n' "$source_file" >>"$artifact_dir/source-files.txt" || {
+			cleanup_evaluation_source
+			return 1
+		}
 	done <"$eval_manifest"
+	LC_ALL=C sort -u -o "$artifact_dir/source-files.txt" "$artifact_dir/source-files.txt" || {
+		cleanup_evaluation_source
+		return 1
+	}
 
 	local nix_eval=(
 		nix
@@ -157,6 +176,16 @@ evaluation_checks() {
 		--option allow-import-from-derivation false
 	)
 	local flake_ref="path:$eval_source"
+	# NAR hashing includes file contents, executable bits and symlink targets.
+	# Hash the filtered copy actually evaluated, rather than only the Git commit.
+	"${nix_eval[@]}" hash path --type sha256 "$eval_source" >"$artifact_dir/source.nar-hash" || {
+		cleanup_evaluation_source
+		return 1
+	}
+	"${nix_eval[@]}" hash path --mode flat --type sha256 "$eval_source/flake.lock" >"$artifact_dir/flake-lock.hash" || {
+		cleanup_evaluation_source
+		return 1
+	}
 	if [[ -n "$requested_test" ]]; then
 		evaluation_attr="$flake_ref#evaluationTests.x86_64-linux.results.$requested_test"
 	else

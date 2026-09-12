@@ -59,6 +59,18 @@ in
       internal = true;
       description = "Pure rendered profile metadata keyed by publisher instance.";
     };
+    publisherManifests = lib.mkOption {
+      type = lib.types.attrsOf lib.types.raw;
+      default = { };
+      internal = true;
+      description = "Validated internal artifact manifests keyed by publisher instance.";
+    };
+    publisherPublicationPhases = lib.mkOption {
+      type = lib.types.attrsOf (lib.types.listOf lib.types.raw);
+      default = { };
+      internal = true;
+      description = "Internal publication phase data used to render publisher units.";
+    };
   };
   config._module.args.vpnClientProfileRender = lib.concatLists (
     builtins.attrValues config.clanwright.vpn.publisherRenders
