@@ -25,6 +25,12 @@ test assertion. Do not run application binaries, parser/CLI checks, services,
 listeners, Linux builds or external builders as tests. Disable builders and
 build jobs explicitly during evaluation.
 
+The publisher regression harness is a narrow exception: it may execute the
+generated publication shell with synthetic credentials, local jq and filesystem
+tools in an isolated temporary directory. It must stub VPN parsers and privileged
+ownership operations, use no real secrets or network, and remain separate from
+the pure gate. Before changing or running it, read `docs/operations/verify.md`.
+
 Use unmodified stock nixpkgs application packages with exact cached outputs.
 Do not add overrides or custom upstream-binary wrappers. The sole approved
 exception is the existing Network-owned Caddy with forwardproxy and ratelimit;

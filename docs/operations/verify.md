@@ -1,9 +1,33 @@
 # Verify the repository
 
-Repository acceptance is limited to pure Nix evaluation and static source
-hygiene. The gate does not build packages or checks and does not execute VPN,
+The main repository gate uses pure Nix evaluation and static source
+hygiene. It does not build packages or checks and does not execute VPN,
 DNS, parser, key-management, service or listener binaries. Python, virtual
 machines, VM-backed runners and tests on deployed machines are prohibited.
+
+A separate publisher regression harness is the narrow execution exception.
+It runs the generated publication shell with synthetic credentials and real
+local jq in an isolated temporary directory. Privileged ownership operations
+are stubbed; the JSON fixture does not invoke VPN parsers. It provides evidence
+about interpolation and temporary-file cleanup, not systemd, production permissions, client parser
+acceptance or deployed publication. It uses no real secrets or network and
+does not extend the main gate's execution boundary.
+
+Run it separately with local Bash, Nix and jq available:
+
+```bash
+bash scripts/test-publisher-runtime.sh
+```
+
+The harness evaluates the real publisher generator offline with builders
+disabled, then checks JSON credential substitution and cleanup after injected
+allocation, permission-setup and jq failures. It also checks that publication
+writes no files into its working directory. Ownership and read-only temporary
+file modes are adapted for an unprivileged test process, and the Linux-only
+`mv -T` option is adapted for the local filesystem tools. These adaptations do
+not verify production permissions or replacement semantics. Cleanup checks
+assume filesystem deletion succeeds; they do not cover forced termination or
+filesystem failures that prevent unlinking files.
 
 Run the complete local gate from the repository root:
 

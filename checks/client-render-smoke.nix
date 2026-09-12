@@ -1053,6 +1053,16 @@ let
     tokenPatternValidationPresent = lib.hasInfix "^[A-Za-z0-9_-]{32,128}$" publicationScript;
     base64urlCredentialValidationPresent = lib.hasInfix "^[A-Za-z0-9_-]+$" publicationScript;
     base64urlCredentialLengthValidationPresent = lib.hasInfix "value_count\" -gt 64" publicationScript;
+    generatedTemporaryReferencesExpanded =
+      lib.hasInfix ("> \"" + "$" + "{binding_") publicationScript
+      && lib.hasInfix "--rawfile binding_" publicationScript
+      && lib.hasInfix ("\"" + "$" + "{binding_") publicationScript
+      && lib.hasInfix ("cp \"" + "$" + "{artifact_") publicationScript
+      && lib.hasInfix ("yq -P -o=yaml '.' \"" + "$" + "{artifact_") publicationScript
+      && !(lib.hasInfix ("$" + "$" + "{record.fileVariable}") publicationScript)
+      && !(lib.hasInfix ("$" + "$" + "{record.valueVariable}") publicationScript)
+      && !(lib.hasInfix ("$" + "$" + "{jsonVariable}") publicationScript)
+      && !(lib.hasInfix ("$" + "$" + "{outputVariable}") publicationScript);
     explicitMieruCredentialBinding =
       lib.sort builtins.lessThan consumerMachine.sops.secrets."fixture-mieru-password".restartUnits
       == lib.sort builtins.lessThan [

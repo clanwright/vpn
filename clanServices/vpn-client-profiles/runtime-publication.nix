@@ -37,6 +37,8 @@ let
     restartUnits = [ "${publicationService}.service" ];
   });
   toIdent = value: lib.replaceStrings [ "_" "-" "." ] [ "_u" "_h" "_d" ] value;
+  shellVariable = name: "$" + "{${name}}";
+  jqVariable = name: "$" + name;
   decoderFunction =
     decoding:
     {
@@ -65,15 +67,15 @@ let
         make_secret_file ${record.fileVariable}
         ${decoderFunction record.binding.decoding} ${
           lib.escapeShellArg config.sops.secrets.${record.binding.secretName}.path
-        } > "$${record.fileVariable}"
+        } > "${shellVariable record.fileVariable}"
       '') bindingRecords;
       jqArguments = lib.concatMapStringsSep " \\\n          " (
-        record: ''--rawfile ${record.valueVariable} "$${record.fileVariable}"''
+        record: ''--rawfile ${record.valueVariable} "${shellVariable record.fileVariable}"''
       ) bindingRecords;
       jqFilter = lib.concatStringsSep "\n            | " (
         [ "." ]
         ++ map (
-          record: "setpath(${builtins.toJSON record.binding.targetPath}; $${record.valueVariable})"
+          record: "setpath(${builtins.toJSON record.binding.targetPath}; ${jqVariable record.valueVariable})"
         ) bindingRecords
       );
       jsonVariable = "artifact_${artifactId}_json";
@@ -81,22 +83,23 @@ let
       renderOutput =
         if artifact.format == "mihomo" then
           ''
-            yq -P -o=yaml '.' "$${jsonVariable}" > "$${outputVariable}"
+            yq -P -o=yaml '.' "${shellVariable jsonVariable}" > "${shellVariable outputVariable}"
             failure_stage=mihomo-validation
             failure_reason=config-rejected
-            mihomo -t -f "$${outputVariable}"
+            mihomo -t -f "${shellVariable outputVariable}"
           ''
         else
           ''
-            cp "$${jsonVariable}" "$${outputVariable}"
+            cp "${shellVariable jsonVariable}" "${shellVariable outputVariable}"
           '';
     in
     ''
       failure_stage=preparation
       failure_reason=temporary-file-failed
       ${jsonVariable}="$(mktemp "$runtime_base/.artifact.XXXXXX.json")"
+      private_tmp_files+=("${shellVariable jsonVariable}")
       ${outputVariable}="$(mktemp "$runtime_base/.artifact.XXXXXX.output")"
-      private_tmp_files+=("$${jsonVariable}" "$${outputVariable}")
+      private_tmp_files+=("${shellVariable outputVariable}")
       failure_stage=credential-loading
       failure_reason=credential-invalid-or-unavailable
       ${bindingDeclarations}
@@ -105,12 +108,12 @@ let
       jq \
         ${jqArguments} \
         ${lib.escapeShellArg jqFilter} \
-        ${lib.escapeShellArg artifact.templatePath} > "$${jsonVariable}"
+        ${lib.escapeShellArg artifact.templatePath} > "${shellVariable jsonVariable}"
       ${renderOutput}
       failure_stage=file-installation
       failure_reason=install-failed
       install -o root -g ${lib.escapeShellArg readerGroup} -m 0440 \
-        "$${outputVariable}" "$profile_dir/${artifact.outputName}"
+        "${shellVariable outputVariable}" "$profile_dir/${artifact.outputName}"
     '';
 
   profileCase =
@@ -313,8 +316,8 @@ in
         make_secret_file() {
           local var_name="$1" tmp
           tmp="$(mktemp "$runtime_base/.secret.XXXXXX")"
-          chmod 0400 "$tmp"
           private_tmp_files+=("$tmp")
+          chmod 0400 "$tmp"
           printf -v "$var_name" '%s' "$tmp"
         }
         read_wireguard_private_key() {
