@@ -38,3 +38,20 @@ release publication.
 The universal skill `.agents/skills/russia-vpn/SKILL.md` supports VPN
 selection, configuration and diagnosis for Russia, including RKN/TSPU blocking
 and app-side detection.
+
+## Agent skills
+
+### Issue tracker
+
+Track actionable work in GitHub Issues. Before reading or publishing
+tickets, read `docs/agents/issue-tracker.md`.
+
+### Triage labels
+
+Use the five canonical triage labels.
+Before triaging, read `docs/agents/triage-labels.md`.
+
+### Domain docs
+
+Use a single-context layout.
+Before domain exploration, read `docs/agents/domain.md`.
