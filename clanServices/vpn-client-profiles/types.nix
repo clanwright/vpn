@@ -36,6 +36,16 @@ let
     builtins.length octets == 4 && builtins.all validIPv4Octet octets;
   validHttpPath = value: builtins.match "/[A-Za-z0-9._~/-]*" value != null;
   validPort = value: builtins.isInt value && value >= 1 && value <= 65535;
+  protocolValues = [
+    "naiveproxy"
+    "vless-xhttp"
+    "hysteria2"
+    "amneziawg"
+    "mieru"
+  ];
+  autoProtocolsType = lib.types.addCheck (lib.types.listOf (lib.types.enum protocolValues)) (
+    protocols: protocols == lib.unique protocols
+  );
 
   clientDnsEndpointType = lib.types.submodule (_: {
     options = {
@@ -151,6 +161,11 @@ let
         type = lib.types.nullOr lib.types.bool;
         default = null;
       };
+      autoProtocols = lib.mkOption {
+        type = autoProtocolsType;
+        default = protocolValues;
+        description = "Protocols eligible for automatic probing and selection; an empty list keeps compatible outbounds manual-only.";
+      };
     };
   });
 
@@ -165,13 +180,7 @@ let
         description = "Machine hosting the selected provider.";
       };
       protocol = lib.mkOption {
-        type = lib.types.enum [
-          "naiveproxy"
-          "vless-xhttp"
-          "hysteria2"
-          "amneziawg"
-          "mieru"
-        ];
+        type = lib.types.enum protocolValues;
       };
       profileNames = lib.mkOption {
         type = lib.types.listOf safeIdentityType;
@@ -217,6 +226,8 @@ in
     safeSecretNameType
     linksPageDefaults
     providerNamespace
+    protocolValues
+    autoProtocolsType
     clientDnsEndpointType
     clientDnsEndpointsType
     normalizeClientDnsEndpoints

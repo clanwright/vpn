@@ -110,6 +110,7 @@ in
         pkgs.curl
         pkgs.gnused
         pkgs.jq
+        appsPkgs.mihomo
         appsPkgs.sing-box
       ];
       script = ''
@@ -150,7 +151,7 @@ in
         }
 
         refresh_download() {
-          local validator="$1" name="$2" url="$3" tmp
+          local validator="$1" name="$2" url="$3" tmp mrs_behavior mrs_output
           tmp="$work_dir/$name"
           if ! curl --fail --location --silent --show-error \
             --connect-timeout 15 --max-time 120 \
@@ -168,6 +169,25 @@ in
             && ! sing-box rule-set match --format binary "$tmp" example.com >/dev/null 2>&1; then
             record_status "$name" failed validation_failed
             return 0
+          fi
+          case "$validator" in
+            mrs-domain)
+              mrs_behavior=domain
+              ;;
+            mrs-ipcidr)
+              mrs_behavior=ipcidr
+              ;;
+            *)
+              mrs_behavior=
+              ;;
+          esac
+          if [ -n "$mrs_behavior" ]; then
+            mrs_output="$work_dir/.validate.$name.txt"
+            if ! mihomo convert-ruleset "$mrs_behavior" mrs "$tmp" "$mrs_output" >/dev/null 2>&1 \
+              || [ ! -s "$mrs_output" ]; then
+              record_status "$name" failed validation_failed
+              return 0
+            fi
           fi
           publish_file "$tmp" "$name"
           record_status "$name" refreshed ok

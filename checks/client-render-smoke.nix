@@ -6,9 +6,11 @@
 }:
 let
   lib = inputs.nixpkgs.lib;
+  pkgs = inputs.nixpkgs.legacyPackages.x86_64-linux;
   vpnExports = import ../modules/contracts/vpn-exports.nix { inherit lib; };
   profileTypes = import ../clanServices/vpn-client-profiles/types.nix { inherit lib; };
   clientDnsResults = import ./client-dns-contracts.nix { inherit lib profileTypes; };
+  clientPolicyResults = import ./client-policy-contracts.nix { inherit lib pkgs; };
   allBooleansTrue =
     value:
     if builtins.isBool value then
@@ -18,6 +20,7 @@ let
     else
       false;
   clientDnsContract = allBooleansTrue clientDnsResults;
+  clientPolicyContract = allBooleansTrue clientPolicyResults;
   fixture = import ./fixtures/example-clan.nix;
   fixtureMachineName = fixture.machineName or "vpn-fixture";
   supportNames = [
@@ -437,13 +440,25 @@ let
     assetsDeclaredAndUsed =
       builtins.all (assetId: builtins.hasAttr assetId manifest.assetCatalog) allAssetRefs
       && lib.sort builtins.lessThan allAssetRefs == builtins.attrNames manifest.assetCatalog;
+    canonicalAndLegacyAssetRoutesExposed =
+      let
+        routeConfig = consumerMachine.clanwright.vpn.publishers.vpn-client-profiles.routeConfig;
+        publicPaths = lib.concatMap (asset: [ asset.publicPath ] ++ asset.legacyPublicPaths) manifestAssets;
+      in
+      publicPaths == lib.unique publicPaths
+      && builtins.all (path: lib.hasInfix "handle ${path} {" routeConfig) publicPaths;
     assetCatalogClosed =
       builtins.all (
         asset:
         builtins.elem asset.validator [
           "nonempty"
+          "mrs-domain"
+          "mrs-ipcidr"
           "srs"
         ]
+        && builtins.isList asset.legacyPublicPaths
+        && asset.legacyPublicPaths == lib.unique asset.legacyPublicPaths
+        && !(builtins.elem asset.publicPath asset.legacyPublicPaths)
         && builtins.elem asset.source.kind [
           "download"
           "adguard-to-srs"
@@ -454,8 +469,8 @@ let
         map (asset: asset.filename) manifestAssets
         == lib.unique (map (asset: asset.filename) manifestAssets)
       &&
-        map (asset: asset.publicPath) manifestAssets
-        == lib.unique (map (asset: asset.publicPath) manifestAssets)
+        lib.concatMap (asset: [ asset.publicPath ] ++ asset.legacyPublicPaths) manifestAssets == lib.unique
+          (lib.concatMap (asset: [ asset.publicPath ] ++ asset.legacyPublicPaths) manifestAssets)
       &&
         map (asset: asset.routePriority) manifestAssets
         == lib.unique (map (asset: asset.routePriority) manifestAssets);
@@ -552,6 +567,7 @@ let
   clientDnsEndpoints = profileTypes.normalizeClientDnsEndpoints publisherSettings;
   naiveOutbounds = builtins.filter (outbound: outbound.type == "naive") profile.outbounds;
   naive = builtins.head naiveOutbounds;
+  singBoxHysteria = selector hysteria.name profile;
   vless = builtins.head (
     builtins.filter (proxy: proxy.type == "vless") rendered.mihomoSelectiveTemplate.proxies
   );
@@ -594,6 +610,9 @@ let
       "169.254.0.0/16"
       "172.16.0.0/12"
       "192.168.0.0/16"
+      "::1/128"
+      "fc00::/7"
+      "fe80::/10"
     ]
   ) profile.route.rules;
   tailnetResolveIndex = indexOf (
@@ -608,12 +627,19 @@ let
     rule: (rule.action or null) == "resolve" && !(rule ? domain)
   ) profile.route.rules;
   resolveRules = builtins.filter (rule: (rule.action or null) == "resolve") profile.route.rules;
-  multicastIndex = indexOf (rule: (rule.ip_cidr or [ ]) == [ "224.0.0.0/4" ]) profile.route.rules;
+  multicastIndex = indexOf (
+    rule:
+    (rule.ip_cidr or [ ]) == [
+      "224.0.0.0/4"
+      "ff00::/8"
+    ]
+  ) profile.route.rules;
+  ipv6RejectIndex = indexOf (
+    rule: (rule.ip_version or null) == 6 && (rule.action or null) == "reject"
+  ) profile.route.rules;
   protectedUdpIndex = indexOf (
     rule:
-    (rule.network or null) == "udp"
-    && (rule.rule_set or [ ]) != [ ]
-    && (rule.action or null) == "reject"
+    (rule.network or null) == "udp" && (rule.rule_set or [ ]) != [ ] && (rule.outbound or null) == "UDP"
   ) profile.route.rules;
   protectedProxyIndex = indexOf (
     rule: (rule.rule_set or [ ]) != [ ] && (rule.outbound or null) == "SELECTIVE"
@@ -622,7 +648,7 @@ let
     rule:
     (rule.clash_mode or null) == "Global"
     && (rule.network or null) == "udp"
-    && (rule.action or null) == "reject"
+    && (rule.outbound or null) == "UDP"
   ) profile.route.rules;
   globalFullIndex = indexOf (
     rule: (rule.clash_mode or null) == "Global" && (rule.outbound or null) == "FULL"
@@ -713,7 +739,7 @@ let
     && (builtins.elemAt candidateProfile.dns.servers (builtins.length endpoints)).type == "fakeip"
     && bootstrapHosts.tag == "bootstrap-hosts"
     && bootstrapHosts.type == "hosts"
-    && bootstrapHosts.path == [ "/dev/null" ]
+    && !(bootstrapHosts ? path)
     && builtins.all (endpoint: bootstrapHosts.predefined.${endpoint.domain} == endpoint.ipv4) endpoints
     && builtins.any (
       rule: (rule.domain or [ ]) == publisherSettings.tailnetAdminDomains
@@ -769,11 +795,15 @@ let
       selectiveGroups == [
         "SELECTIVE"
         "SELECTIVE-AUTO"
+        "UDP"
+        "UDP-AUTO"
       ]
     &&
       fullGroups == [
         "FULL"
         "FULL-AUTO"
+        "UDP"
+        "UDP-AUTO"
       ]
     && rendered.mihomoSelectiveTemplate.mode == "rule"
     && rendered.mihomoFullTemplate.mode == "rule"
@@ -835,29 +865,60 @@ let
     && !naive.quic
     && naive.tls.enabled
     && naive.tls.server_name == "site.example.invalid"
+    && singBoxHysteria.type == "hysteria2"
+    && singBoxHysteria.obfs.type == "gecko"
+    && singBoxHysteria.obfs.min_packet_size == 512
+    && singBoxHysteria.obfs.max_packet_size == 1200
+    && singBoxHysteria.tls.enabled
+    && !singBoxHysteria.tls.insecure
     && (selector "SELECTIVE" profile).default == "SELECTIVE-AUTO"
     &&
       (selector "SELECTIVE" profile).outbounds == [
         "SELECTIVE-AUTO"
         naive.tag
+        hysteria.name
       ]
     && (selector "FULL" profile).default == "FULL-AUTO"
     &&
       (selector "FULL" profile).outbounds == [
         "FULL-AUTO"
         naive.tag
+        hysteria.name
       ]
-    && builtins.length (urlTests profile) == 2
+    && builtins.length (urlTests profile) == 3
     && !(builtins.elem "DIRECT" (selector "SELECTIVE" profile).outbounds)
     && !(builtins.elem "DIRECT" (selector "FULL" profile).outbounds)
-    && builtins.all (test: test.outbounds == [ naive.tag ]) (urlTests profile)
-    && builtins.all (ruleSet: ruleSet.download_detour == naive.tag) (remoteRuleSets profile);
+    &&
+      (selector "SELECTIVE-AUTO" profile).outbounds == [
+        naive.tag
+        hysteria.name
+      ]
+    &&
+      (selector "FULL-AUTO" profile).outbounds == [
+        naive.tag
+        hysteria.name
+      ]
+    &&
+      (selector "UDP" profile).outbounds == [
+        "UDP-AUTO"
+        hysteria.name
+      ]
+    && (selector "UDP-AUTO" profile).outbounds == [ hysteria.name ]
+    && builtins.all (
+      ruleSet:
+      !(ruleSet ? download_detour)
+      && !(ruleSet.http_client ? detour)
+      && ruleSet.http_client.domain_resolver.server == "bootstrap-hosts"
+      && ruleSet.http_client.tls.server_name == publisherSettings.configGatewayDomain
+    ) (remoteRuleSets profile);
   routeContract =
-    builtins.length (udpRejects profile) >= 2
+    udpRejects profile == [ ]
     && builtins.length resolveRules == 2
     && privateIndex < tailnetResolveIndex
     && multicastIndex < tailnetResolveIndex
     && tailnetResolveIndex < globalUdpIndex
+    && tailnetDirectIndex < ipv6RejectIndex
+    && ipv6RejectIndex < globalUdpIndex
     && tailnetDirectIndex == tailnetResolveIndex + 1
     && protectedProxyIndex < fallbackResolveIndex
     && builtins.all (rule: !(rule ? server) && rule.strategy == "ipv4_only") resolveRules
@@ -885,7 +946,7 @@ let
       }
     && (lib.last profile.dns.servers).tag == "bootstrap-hosts"
     && (lib.last profile.dns.servers).type == "hosts"
-    && (lib.last profile.dns.servers).path == [ "/dev/null" ]
+    && !((lib.last profile.dns.servers) ? path)
     && builtins.all (
       endpoint: (lib.last profile.dns.servers).predefined.${endpoint.domain} == endpoint.ipv4
     ) clientDnsEndpoints
@@ -909,13 +970,14 @@ let
     mihomoLinksRetained =
       lib.hasInfix "/mihomo.yaml" zeroNaivePublicationScript
       && lib.hasInfix "/mihomo-full.yaml" zeroNaivePublicationScript;
-    profileLinkSuppressed = !(lib.hasInfix "/profile.json" zeroNaivePublicationScript);
-    publicationDisabled = !zeroNaiveRendered.publishProfileJson;
-    templateSuppressed = zeroNaiveRendered.profileJsonTemplate == null;
-    manifestSuppressesProfileJson =
+    hysteriaProfileLinkRetained = lib.hasInfix "/profile.json" zeroNaivePublicationScript;
+    hysteriaPublicationEnabled = zeroNaiveRendered.publishProfileJson;
+    hysteriaTemplateRetained = zeroNaiveRendered.profileJsonTemplate != null;
+    manifestIncludesProfileJson =
       map (artifact: artifact.outputName) zeroNaiveArtifacts == [
         "mihomo.yaml"
         "mihomo-full.yaml"
+        "profile.json"
       ];
   };
   zeroNaiveContract = builtins.all (value: value) (builtins.attrValues zeroNaiveResults);
@@ -952,6 +1014,7 @@ let
   negativeContract = builtins.all (value: value) (builtins.attrValues negativeResults);
   contract =
     clientDnsContract
+    && clientPolicyContract
     && clientDnsRenderVariantsContract
     && mihomoContract
     && mieruExportContract
@@ -972,6 +1035,8 @@ if !contract then
         clientDnsRenderVariantResults
         clientDnsRenderVariantsContract
         clientDnsResults
+        clientPolicyContract
+        clientPolicyResults
         dnsContract
         disjointPublisherContract
         disjointPublisherResults

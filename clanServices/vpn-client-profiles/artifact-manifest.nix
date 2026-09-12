@@ -215,6 +215,12 @@ let
     id: asset:
     let
       source = asset.source or { };
+      validPublicPath =
+        path:
+        builtins.isString path
+        && builtins.match "/assets/v1/catalog/[A-Za-z0-9._/-]+" path != null
+        && !(lib.hasInfix ".." path)
+        && !(lib.hasInfix "//" path);
       sourceShapeValid =
         if (source.kind or null) == "local-file" then
           builtins.attrNames source == [
@@ -238,6 +244,7 @@ let
       "contentType"
       "filename"
       "id"
+      "legacyPublicPaths"
       "publicPath"
       "routePriority"
       "source"
@@ -247,10 +254,11 @@ let
     && builtins.match "[A-Za-z0-9_-]+" asset.id != null
     && builtins.isString asset.filename
     && builtins.match "[A-Za-z0-9._-]+" asset.filename != null
-    && builtins.isString asset.publicPath
-    && builtins.match "/assets/v1/catalog/[A-Za-z0-9._/-]+" asset.publicPath != null
-    && !(lib.hasInfix ".." asset.publicPath)
-    && !(lib.hasInfix "//" asset.publicPath)
+    && validPublicPath asset.publicPath
+    && builtins.isList asset.legacyPublicPaths
+    && builtins.all validPublicPath asset.legacyPublicPaths
+    && asset.legacyPublicPaths == lib.unique asset.legacyPublicPaths
+    && !(builtins.elem asset.publicPath asset.legacyPublicPaths)
     && builtins.elem asset.contentType [
       "application/octet-stream"
       "text/plain; charset=utf-8"
@@ -259,6 +267,8 @@ let
     && asset.routePriority >= 0
     && builtins.elem asset.validator [
       "nonempty"
+      "mrs-domain"
+      "mrs-ipcidr"
       "srs"
     ]
     && builtins.isAttrs asset.source
@@ -297,7 +307,9 @@ let
       profileNames = map (profile: profile.name) manifest.profiles;
       inherit (manifest) assetCatalog;
       assetFilenames = map (asset: asset.filename) (builtins.attrValues assetCatalog);
-      assetPublicPaths = map (asset: asset.publicPath) (builtins.attrValues assetCatalog);
+      assetPublicPaths = lib.concatMap (asset: [ asset.publicPath ] ++ asset.legacyPublicPaths) (
+        builtins.attrValues assetCatalog
+      );
       assetRoutePriorities = map (asset: asset.routePriority) (builtins.attrValues assetCatalog);
     in
     builtins.attrNames manifest == [

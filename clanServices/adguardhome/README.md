@@ -20,7 +20,8 @@ Cloudflare Standard, Quad9 без threat blocking и Google Public DNS по DoH,
 `dns.fallbackTimeoutSeconds`, `tls.serverName`,
 `tls.httpsPort`, `tls.certificateFile`, `tls.privateKeyFile`,
 `auth.username`, `auth.passwordSecretName`, `systemResolver.enableLocalStub`,
-`filtering.enable`, `filtering.userRules`, `dns.privateZones` и `dns.rewrites`.
+`filtering.enable`, `filtering.safeSearch`, `filtering.youtubeRestrictedMode`,
+`filtering.userRules`, `dns.privateZones` и `dns.rewrites`.
 `dns.upstream` содержит ровно
 один числовой loopback endpoint Unbound в формате `127.0.0.1:<port>`.
 На одной машине допускается ровно один active instance: роль владеет общими
@@ -67,10 +68,22 @@ DoT выключен значением `0`, логин администрато
 auth всегда включён, системный resolver использует `127.0.0.1`.
 
 AdGuard кеширует без искусственного min TTL и optimistic stale. DDR и hosts
-file выключены. Родительский контроль, Safe Search, HaGeZi Multi NORMAL,
-URLHaus включены; удалённый Safe Browsing выключен. Библиотечный default
-`filtering.userRules` пуст, а постоянные личные правила задаёт consumer.
+file выключены. Родительский контроль, Safe Search для поддерживаемых public
+search engines, HaGeZi Multi NORMAL и URLHaus включены; YouTube Restricted Mode
+и удалённый Safe Browsing выключены. Библиотечный default `filtering.userRules`
+пуст, а постоянные личные правила задаёт consumer.
 Query log хранится 7 дней, statistics — 90 дней, IP не анонимизируются.
+
+`filtering.safeSearch` независимо включает Safe Search для Bing, DuckDuckGo,
+Ecosia, Google, Pixabay и Yandex. `filtering.youtubeRestrictedMode` отдельно
+управляет полем AdGuard Home `safe_search.youtube`, которое принудительно
+включает Restricted Mode для YouTube domains. Общий AdGuard flag
+`safe_search.enabled` включается, когда активна хотя бы одна из этих политик;
+поэтому каждая настройка работает при выключенной другой. Обе настройки —
+глобальная DNS-политика роли. Их результат может быть переопределён вне роли
+client-specific настройкой AdGuard, upstream family DNS, browser/account или
+managed-device policy; repository evaluation не доказывает фактический режим
+YouTube на клиенте.
 
 `filtering.enable = false` — поддерживаемая декларативная пауза защиты: она
 меняет только `protection_enabled`. AdGuard filtering engine и native rewrites
@@ -148,6 +161,11 @@ typed contract, сгенерированную конфигурацию и от�
 чистым Nix evaluation, не запуская AdGuard Home, dnsproxy или VM. Реальное
 поведение systemd и сетевых путей этим результатом не доказано.
 
+Safe Search schema сверена с
+[`SafeSearchConfig`](https://github.com/AdguardTeam/AdGuardHome/blob/v0.107.78/internal/filtering/safesearch.go#L18-L32)
+и [`OpenAPI`](https://github.com/AdguardTeam/AdGuardHome/blob/v0.107.78/openapi/openapi.yaml#L2679-L2698)
+AdGuard Home 0.107.78, а внешняя семантика — с актуальной официальной
+[`Configuration` wiki](https://github.com/AdguardTeam/AdGuardHome/wiki/Configuration).
 Route/rewrite semantics сверены с исходниками AdGuard Home 0.107.78:
 [`filtering`](https://github.com/AdguardTeam/AdGuardHome/blob/v0.107.78/internal/filtering/filtering.go),
 [`dnsforward`](https://github.com/AdguardTeam/AdGuardHome/blob/v0.107.78/internal/dnsforward/filter.go),

@@ -141,12 +141,24 @@ settings therefore keep their enabled behavior when this setting is omitted.
 | --- | --- |
 | `/<token>/mihomo.yaml` | Selective routing in Rule mode. |
 | `/<token>/mihomo-full.yaml` | Full routing in Rule mode with private DIRECT exceptions. |
-| `/<token>/profile.json` | sing-box Rule/Global modes with SELECTIVE/FULL selectors; present only with an eligible Naive provider. |
+| `/<token>/profile.json` | sing-box Rule/Global modes with separate TCP/UDP selectors; present with an eligible Naive or Hysteria2 provider. |
 
 These are templates, not live profile URLs. Per-device eligibility, DNS and
 routing policy are documented in [client profiles](../clanServices/vpn-client-profiles/README.md).
 Generated provider names use canonical machine identities without shortening
 machine-name suffixes.
+
+Publisher `profiles[].autoProtocols` controls only automatic selection and probes; manual
+compatible connections remain published. Its default includes all supported
+protocols for compatibility. An empty list disables automatic selection.
+Exclude `amneziawg` to keep AWG manual without background probes or keepalive.
+Rule assets use opaque canonical paths while previous URL paths remain aliases.
+These aliases preserve rule downloads for already-issued profiles; subscription
+token paths and output filenames are unchanged.
+
+AdGuard exposes independent booleans `filtering.safeSearch` (default `true`)
+and `filtering.youtubeRestrictedMode` (default `false`). The consumer applies
+the same settings to its DNS instances when equivalent filtering is required.
 
 Publisher `clientDnsEndpoints` accepts a nonempty typed list of consumer-owned
 DoH endpoints (`domain`, `ipv4`, optional `port` and `path`). It replaces the

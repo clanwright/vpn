@@ -58,6 +58,14 @@ let
         system
         ;
     };
+    adguard-safe-search-contracts = import ./adguard-safe-search-contracts.nix {
+      inherit
+        inputs
+        pkgs
+        self
+        system
+        ;
+    };
     xray-contracts = import ./xray-contracts.nix {
       inherit
         inputs

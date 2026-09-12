@@ -35,7 +35,8 @@ The flake does not import a consumer checkout. TCP tuning belongs to the consume
   the consumer-selected IPv4 and restrict service-originated destinations.
   Consumer supplies the system resolver addresses and owns host DNS configuration.
   Mieru is selectable in both Mihomo profiles, including their ordinary Auto
-  groups when the consumer includes the provider. It is not exported to sing-box.
+  groups when permitted by the profile's `autoProtocols`. It is not exported
+  to sing-box.
 
 Provider modules construct their common export envelope through the shared
 contract implementation. Protocol-specific transport data remains owned by
@@ -43,16 +44,26 @@ each provider; consumers select those exports through the public helpers.
 
 The profile publisher normalizes its settings and passes selected typed
 provider exports and per-device bindings to its renderer.
-It renders Mihomo selective/full profiles and publishes a sing-box profile only
-for devices with an eligible Naive provider. Personal proxy domain additions
+It renders Mihomo selective/full profiles and publishes a sing-box profile
+for devices with an eligible Naive or Hysteria2 provider. Personal proxy domain additions
 come from the consumer.
+
+The publisher separates manual availability from automatic protocol selection.
+Sing-box uses independent TCP and UDP selectors; protected UDP uses Hysteria2
+or is rejected when no compatible provider exists. Both formats capture and
+reject external IPv6 while preserving local IPv6 and Tailscale access.
 
 Rendering produces an internal artifact manifest: client templates, output
 formats, structural secret bindings and required public assets. The runtime
 publisher reads that manifest without knowing protocol-specific client fields.
-An explicit asset catalog supplies publication paths, refresh sources and
+An explicit asset catalog supplies opaque publication paths, legacy URL aliases, refresh sources and
 readiness requirements. These are private implementation interfaces, not new
 consumer configuration.
+
+Clients download rule assets directly from the publisher's pinned IPv4 while
+retaining the gateway hostname for HTTPS verification. Downloads do not depend
+on a selected VPN. MRS refresh validates the declared domain/IP behavior with
+the stock Mihomo parser before replacing the persistent cache.
 
 Public rule assets live in persistent state; credentials and
 token-named publication paths live only under `/run`. Initial publication waits

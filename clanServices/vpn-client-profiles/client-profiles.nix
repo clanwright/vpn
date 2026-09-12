@@ -40,11 +40,20 @@ let
     in
     go 0 values;
 
-  secureDnsRuleSetPublicPath = "/assets/v1/catalog/filters.srs";
-  personalProxyDomainsTxtPublicPath = "/assets/v1/catalog/segments.txt";
-  ruleSetMirrorPublicPath = tag: "/assets/v1/catalog/${tag}.srs";
-  ruleSetMirrorMrsPublicPath = tag: "/assets/v1/catalog/${tag}.mrs";
-  secureDnsDomainsTxtPublicPath = "/assets/v1/catalog/secure-dns.txt";
+  opaqueAssetStem =
+    id: builtins.substring 0 32 (builtins.hashString "sha256" "vpn-client-profiles/v1/${id}");
+  opaqueAssetPublicPath = id: extension: "/assets/v1/catalog/${opaqueAssetStem id}.${extension}";
+  opaqueClientCachePath = id: extension: "./ruleset/${opaqueAssetStem id}.${extension}";
+  secureDnsRuleSetPublicPath = opaqueAssetPublicPath "secure-dns-filter" "srs";
+  personalProxyDomainsTxtPublicPath = opaqueAssetPublicPath "personal-proxy-domains" "txt";
+  ruleSetMirrorPublicPath = tag: opaqueAssetPublicPath "sing-box-${tag}" "srs";
+  ruleSetMirrorMrsPublicPath = tag: opaqueAssetPublicPath "mihomo-${tag}" "mrs";
+  secureDnsDomainsTxtPublicPath = opaqueAssetPublicPath "secure-dns-domains" "txt";
+  legacySecureDnsRuleSetPublicPath = "/assets/v1/catalog/filters.srs";
+  legacyPersonalProxyDomainsTxtPublicPath = "/assets/v1/catalog/segments.txt";
+  legacyRuleSetMirrorPublicPath = tag: "/assets/v1/catalog/${tag}.srs";
+  legacyRuleSetMirrorMrsPublicPath = tag: "/assets/v1/catalog/${tag}.mrs";
+  legacySecureDnsDomainsTxtPublicPath = "/assets/v1/catalog/secure-dns.txt";
   personalProxyDomainLines = settings.personalProxyDomains or [ ];
   personalProxyDomainRegex = "^[A-Za-z0-9]([A-Za-z0-9-]*[A-Za-z0-9])?(\\.[A-Za-z0-9]([A-Za-z0-9-]*[A-Za-z0-9])?)+$";
   invalidPersonalProxyDomains = builtins.filter (
@@ -69,7 +78,7 @@ let
 
   mkRuleProvider =
     {
-      name,
+      assetId,
       behavior,
       url,
       proxy,
@@ -83,19 +92,18 @@ let
         format
         ;
       type = "http";
-      path = "./ruleset/${name}.${if format == "mrs" then "mrs" else "txt"}";
+      path = opaqueClientCachePath assetId (if format == "mrs" then "mrs" else "txt");
       interval = 86400;
     };
 
   mkRuleProviders =
-    proxy:
     lib.listToAttrs (
       map (
         ruleSet:
         lib.nameValuePair ruleSet.tag (mkRuleProvider {
-          name = ruleSet.tag;
+          assetId = "mihomo-${ruleSet.tag}";
           inherit (ruleSet) behavior;
-          inherit proxy;
+          proxy = "DIRECT";
           format = "mrs";
           url = "https://${configGatewayDomain}${ruleSetMirrorMrsPublicPath ruleSet.tag}";
         })
@@ -103,17 +111,17 @@ let
     )
     // {
       secure_dns_domains = mkRuleProvider {
-        name = "secure_dns_domains";
+        assetId = "secure-dns-domains";
         behavior = "domain";
-        inherit proxy;
+        proxy = "DIRECT";
         url = "https://${configGatewayDomain}${secureDnsDomainsTxtPublicPath}";
       };
     }
     // lib.optionalAttrs (personalProxyDomains != [ ]) {
       personal_proxy_domains = mkRuleProvider {
-        name = "personal_proxy_domains";
+        assetId = "personal-proxy-domains";
         behavior = "domain";
-        inherit proxy;
+        proxy = "DIRECT";
         url = "https://${configGatewayDomain}${personalProxyDomainsTxtPublicPath}";
       };
     };
@@ -122,16 +130,19 @@ let
     {
       tag,
       url,
-      downloadDetour,
     }:
     {
       type = "remote";
       inherit tag url;
       format = "binary";
       update_interval = "1d";
-    }
-    // lib.optionalAttrs (downloadDetour != null) {
-      download_detour = downloadDetour;
+      http_client = {
+        domain_resolver = {
+          server = "bootstrap-hosts";
+          strategy = "ipv4_only";
+        };
+        tls.server_name = configGatewayDomain;
+      };
     };
 
   upstreamRuleSets = [
@@ -185,6 +196,7 @@ let
       id = "secure-dns-domains";
       filename = "secure-dns.txt";
       publicPath = secureDnsDomainsTxtPublicPath;
+      legacyPublicPaths = [ legacySecureDnsDomainsTxtPublicPath ];
       routePriority = 30;
       contentType = "text/plain; charset=utf-8";
       validator = "nonempty";
@@ -197,6 +209,7 @@ let
       id = "personal-proxy-domains";
       filename = "segments.txt";
       publicPath = personalProxyDomainsTxtPublicPath;
+      legacyPublicPaths = [ legacyPersonalProxyDomainsTxtPublicPath ];
       routePriority = 1;
       contentType = "text/plain; charset=utf-8";
       validator = "nonempty";
@@ -209,6 +222,7 @@ let
       id = "secure-dns-filter";
       filename = "filters.srs";
       publicPath = secureDnsRuleSetPublicPath;
+      legacyPublicPaths = [ legacySecureDnsRuleSetPublicPath ];
       routePriority = 0;
       contentType = "application/octet-stream";
       validator = "srs";
@@ -225,6 +239,7 @@ let
         id = "sing-box-${ruleSet.tag}";
         filename = "${ruleSet.tag}.srs";
         publicPath = ruleSetMirrorPublicPath ruleSet.tag;
+        legacyPublicPaths = [ (legacyRuleSetMirrorPublicPath ruleSet.tag) ];
         routePriority = 10 + index;
         contentType = "application/octet-stream";
         validator = "srs";
@@ -242,9 +257,10 @@ let
         id = "mihomo-${ruleSet.tag}";
         filename = "${ruleSet.tag}.mrs";
         publicPath = ruleSetMirrorMrsPublicPath ruleSet.tag;
+        legacyPublicPaths = [ (legacyRuleSetMirrorMrsPublicPath ruleSet.tag) ];
         routePriority = 20 + index;
         contentType = "application/octet-stream";
-        validator = "nonempty";
+        validator = "mrs-${ruleSet.behavior}";
         source = {
           kind = "download";
           inherit (ruleSet) url;
@@ -253,20 +269,15 @@ let
     }) mihomoMrsUpstream
   );
 
-  # Harbor fetches the upstream .srs on a timer (ruleSetMirrorService). Profiles
-  # with Naive download the mirrored copy through a concrete outbound, avoiding
-  # a cold-start dependency on the censored direct path. Profiles without an
-  # eligible Naive provider use sing-box's default direct downloader.
-  mkSingBoxRuleSets =
-    downloadDetour:
-    map (
-      ruleSet:
-      mkSingBoxRemoteRuleSet {
-        inherit (ruleSet) tag;
-        url = "https://${configGatewayDomain}${ruleSetMirrorPublicPath ruleSet.tag}";
-        inherit downloadDetour;
-      }
-    ) upstreamRuleSets;
+  # The publisher mirrors upstream .srs assets. Clients fetch them from the
+  # pinned config gateway through the explicit HTTP-client resolver above.
+  mkSingBoxRuleSets = map (
+    ruleSet:
+    mkSingBoxRemoteRuleSet {
+      inherit (ruleSet) tag;
+      url = "https://${configGatewayDomain}${ruleSetMirrorPublicPath ruleSet.tag}";
+    }
+  ) upstreamRuleSets;
   singBoxFakeIpDomainRuleSets = [
     "secure_dns_domains"
     "ru_blocked_and_geoblocked_domains"
@@ -279,8 +290,10 @@ let
     "refilter_blocked_domains"
     "refilter_blocked_ips"
   ];
+  protectedRuleSetsWithPersonal =
+    protectedRuleSets ++ lib.optional (personalProxyDomains != [ ]) "personal_proxy_domains";
 
-  baseRules = [
+  localDirectRules = [
     "IP-CIDR,10.0.0.0/8,DIRECT,no-resolve"
     "IP-CIDR,100.64.0.0/10,DIRECT,no-resolve"
     "IP-CIDR,127.0.0.0/8,DIRECT,no-resolve"
@@ -288,8 +301,15 @@ let
     "IP-CIDR,172.16.0.0/12,DIRECT,no-resolve"
     "IP-CIDR,192.168.0.0/16,DIRECT,no-resolve"
     "IP-CIDR,224.0.0.0/4,DIRECT,no-resolve"
+    "IP-CIDR6,::1/128,DIRECT,no-resolve"
     "IP-CIDR6,fc00::/7,DIRECT,no-resolve"
     "IP-CIDR6,fe80::/10,DIRECT,no-resolve"
+    "IP-CIDR6,ff00::/8,DIRECT,no-resolve"
+  ];
+  ipv6RejectRules = [
+    "IP-CIDR6,::/0,REJECT,no-resolve"
+  ];
+  protectedRules = [
     "RULE-SET,secure_dns_domains,PROXY"
     "RULE-SET,ru_blocked_and_geoblocked_domains,PROXY"
     "RULE-SET,refilter_blocked_domains,PROXY"
@@ -423,6 +443,8 @@ let
     let
       basename = "${localMachineName}-${profile.name}";
       profileKind = profile.kind or "mobile";
+      autoProtocols = profile.autoProtocols or profileTypes.protocolValues;
+      autoProtocolEnabled = protocol: builtins.elem protocol autoProtocols;
       isRouterProfile = profileKind == "router";
       profileJsonRequested =
         if (profile.publishProfileJson or null) != null then
@@ -442,7 +464,8 @@ let
       hysteria2Credentials = map (mkHysteria2Credential profile.name) profileHysteria2Providers;
       naiveCredentials = map (mkNaiveCredential profile.name) profileNaiveProviders;
       mieruCredentials = map (mkMieruCredential profile.name) profileMieruProviders;
-      publishProfileJson = profileJsonRequested && naiveCredentials != [ ];
+      publishProfileJson =
+        profileJsonRequested && (naiveCredentials != [ ] || hysteria2Credentials != [ ]);
 
       mkVlessProxy = cred: {
         name = cred.vlessTag;
@@ -482,7 +505,8 @@ let
           "public-key" = cred.serverPublicKey;
           "allowed-ips" = [ "0.0.0.0/0" ];
           udp = true;
-          "persistent-keepalive" = cred.clientPersistentKeepalive or 25;
+          "persistent-keepalive" =
+            if autoProtocolEnabled "amneziawg" then cred.clientPersistentKeepalive or 25 else 0;
           "amnezia-wg-option" = {
             version = cred.generation;
             inherit (cred.profile)
@@ -543,6 +567,17 @@ let
       hysteria2ProxyNames = map (cred: cred.tag) hysteria2Credentials;
       mieruProxyNames = map (cred: cred.tag) mieruCredentials;
       amneziawgProxyNames = map (cred: cred.amneziawgTag) amneziawgCredentials;
+      autoProxyNames =
+        lib.optionals (autoProtocolEnabled "vless-xhttp") vlessProxyNames
+        ++ lib.optionals (autoProtocolEnabled "hysteria2") hysteria2ProxyNames
+        ++ lib.optionals (autoProtocolEnabled "mieru") mieruProxyNames
+        ++ lib.optionals (autoProtocolEnabled "amneziawg") amneziawgProxyNames;
+      udpProxyNames = vlessProxyNames ++ hysteria2ProxyNames ++ mieruProxyNames ++ amneziawgProxyNames;
+      autoUdpProxyNames =
+        lib.optionals (autoProtocolEnabled "vless-xhttp") vlessProxyNames
+        ++ lib.optionals (autoProtocolEnabled "hysteria2") hysteria2ProxyNames
+        ++ lib.optionals (autoProtocolEnabled "mieru") mieruProxyNames
+        ++ lib.optionals (autoProtocolEnabled "amneziawg") amneziawgProxyNames;
       orderedProxyNames =
         if isRouterProfile then
           hysteria2ProxyNames ++ mieruProxyNames ++ amneziawgProxyNames ++ vlessProxyNames
@@ -555,11 +590,7 @@ let
         }) unorderedProxies
       );
       proxies = map (name: proxyByName.${name}) orderedProxyNames;
-      ruleProviderProxy =
-        if orderedProxyNames == [ ] then
-          throw "Mihomo rule-provider requires at least one proxy for ${basename}"
-        else
-          builtins.head orderedProxyNames;
+      publishMihomo = orderedProxyNames != [ ];
       rawPinnedHostEntries = [
         {
           name = localPublicNetwork.domains.edge;
@@ -627,7 +658,7 @@ let
         "log-level" = "info";
         "unified-delay" = true;
         "find-process-mode" = "strict";
-        ipv6 = false;
+        ipv6 = true;
         port = 0;
         "socks-port" = 0;
         "redir-port" = 0;
@@ -642,6 +673,13 @@ let
           "auto-route" = true;
           "auto-detect-interface" = true;
           "strict-route" = true;
+          "inet6-address" = [ "fdfe:dcba:9876::1/126" ];
+          "route-address" = [
+            "0.0.0.0/1"
+            "128.0.0.0/1"
+            "::/1"
+            "8000::/1"
+          ];
           "dns-hijack" = [
             "any:53"
             "tcp://any:53"
@@ -656,6 +694,7 @@ let
             "224.0.0.0/4"
             "fc00::/7"
             "fe80::/10"
+            "ff00::/8"
           ]
           ++ pinnedEdgeRouteExcludes;
         };
@@ -687,22 +726,47 @@ let
           {
             name = modeGroup;
             type = "select";
-            proxies = [ "${modeGroup}-AUTO" ] ++ orderedProxyNames;
+            proxies = lib.optional (autoProxyNames != [ ]) "${modeGroup}-AUTO" ++ orderedProxyNames;
           }
-          {
-            name = "${modeGroup}-AUTO";
-            type = "url-test";
-            url = probeUrl64k;
-            interval = 300;
-            proxies = orderedProxyNames;
-          }
-        ];
+        ]
+        ++ lib.optional (autoProxyNames != [ ]) {
+          name = "${modeGroup}-AUTO";
+          type = "url-test";
+          url = probeUrl64k;
+          interval = 300;
+          proxies = autoProxyNames;
+        }
+        ++ lib.optional (udpProxyNames != [ ]) {
+          name = "UDP";
+          type = "select";
+          proxies = lib.optional (autoUdpProxyNames != [ ]) "UDP-AUTO" ++ udpProxyNames;
+        }
+        ++ lib.optional (autoUdpProxyNames != [ ]) {
+          name = "UDP-AUTO";
+          type = "url-test";
+          url = probeUrl64k;
+          interval = 300;
+          proxies = autoUdpProxyNames;
+        };
 
-        "rule-providers" = mkRuleProviders ruleProviderProxy;
-        rules = map (lib.replaceStrings [ "PROXY" ] [ modeGroup ]) baseRules ++ [ "MATCH,${finalTarget}" ];
+        "rule-providers" = mkRuleProviders;
+        rules =
+          localDirectRules
+          ++ ipv6RejectRules
+          ++ (
+            if finalTarget == "FULL" then
+              [ "NETWORK,UDP,${if udpProxyNames == [ ] then "REJECT" else "UDP"}" ]
+            else
+              map (
+                ruleSet:
+                "AND,((NETWORK,UDP),(RULE-SET,${ruleSet})),${if udpProxyNames == [ ] then "REJECT" else "UDP"}"
+              ) protectedRuleSetsWithPersonal
+          )
+          ++ map (lib.replaceStrings [ "PROXY" ] [ modeGroup ]) protectedRules
+          ++ [ "MATCH,${finalTarget}" ];
       };
-      mihomoSelectiveTemplate = mkMihomoTemplate "SELECTIVE" "DIRECT";
-      mihomoFullTemplate = mkMihomoTemplate "FULL" "FULL";
+      mihomoSelectiveTemplate = if publishMihomo then mkMihomoTemplate "SELECTIVE" "DIRECT" else null;
+      mihomoFullTemplate = if publishMihomo then mkMihomoTemplate "FULL" "FULL" else null;
       proxyIndex = tag: indexOf (candidate: candidate.name == tag) proxies;
       mkBinding = secretName: decoding: targetPath: placeholder: {
         inherit
@@ -778,16 +842,40 @@ let
           server_name = cred.tlsServerName;
         };
       };
+      mkSingBoxHysteria2Outbound = cred: {
+        type = "hysteria2";
+        inherit (cred) tag;
+        server = cred.endpointIPv4;
+        server_port = cred.port;
+        password = "__PROFILE_HY2_PASSWORD_${cred.machineName}_${cred.profileName}__";
+        obfs = {
+          type = "gecko";
+          password =
+            if cred.obfsPasswordSecretName == null then
+              throw "Sing-box Hysteria2 Gecko password is required for ${cred.machineName}/${cred.profileName}"
+            else
+              "__PROFILE_HY2_OBFS_PASSWORD_${cred.machineName}__";
+          min_packet_size = cred.obfsMinPacketSize;
+          max_packet_size = cred.obfsMaxPacketSize;
+        };
+        tls = {
+          enabled = true;
+          server_name = cred.sni;
+          insecure = !cred.tlsVerify;
+          inherit (cred) alpn;
+        };
+      };
       naiveOutboundTags = map (cred: cred.tag) naiveCredentials;
-      firstNaiveOutboundTag = if naiveOutboundTags == [ ] then null else builtins.head naiveOutboundTags;
-      alternateNaiveCredentials = builtins.filter (
-        cred: cred.endpointIPv4 != null && cred.endpointIPv4 != localPublicNetwork.publicIPv4
-      ) naiveCredentials;
-      ruleSetDownloadNaiveTag =
-        if alternateNaiveCredentials != [ ] then
-          (builtins.head alternateNaiveCredentials).tag
-        else
-          firstNaiveOutboundTag;
+      singBoxHysteria2OutboundTags = map (cred: cred.tag) hysteria2Credentials;
+      singBoxTcpOutboundTags = naiveOutboundTags ++ singBoxHysteria2OutboundTags;
+      singBoxAutoTcpOutboundTags =
+        lib.optionals (autoProtocolEnabled "naiveproxy") naiveOutboundTags
+        ++ lib.optionals (autoProtocolEnabled "hysteria2") singBoxHysteria2OutboundTags;
+      singBoxAutoUdpOutboundTags = lib.optionals (autoProtocolEnabled "hysteria2") singBoxHysteria2OutboundTags;
+      mkSingBoxUdpPolicyRule =
+        rule:
+        rule
+        // (if singBoxHysteria2OutboundTags == [ ] then { action = "reject"; } else { outbound = "UDP"; });
       singBoxDohServers = lib.imap0 (index: endpoint: {
         tag = "own-doh-${toString index}";
         type = "https";
@@ -861,12 +949,11 @@ let
               inet4_range = "198.18.0.0/15";
             }
             {
-              # A closed bootstrap resolver for dialers that require a named
-              # resolver. /dev/null suppresses the hosts transport's implicit
-              # platform hosts file while retaining only predefined pins.
+              # Keep the bootstrap portable across Linux, Apple and Windows
+              # clients. Predefined entries pin owned endpoints; omitting path
+              # lets the hosts transport use the platform's normal hosts file.
               tag = "bootstrap-hosts";
               type = "hosts";
-              path = [ "/dev/null" ];
               predefined = pinnedHosts;
             }
           ];
@@ -877,11 +964,13 @@ let
           {
             type = "tun";
             tag = "tun-in";
-            address = [ "172.19.0.1/30" ];
+            address = [
+              "172.19.0.1/30"
+              "fdfe:dcba:9876::1/126"
+            ];
             stack = "system";
             auto_route = true;
             strict_route = true;
-            # This profile is IPv4-only. Do not add partial IPv6 routes here.
             route_exclude_address = [
               "10.0.0.0/8"
               "100.64.0.0/10"
@@ -889,6 +978,10 @@ let
               "172.16.0.0/12"
               "192.168.0.0/16"
               "224.0.0.0/4"
+              "::1/128"
+              "fc00::/7"
+              "fe80::/10"
+              "ff00::/8"
             ];
           }
         ];
@@ -896,43 +989,64 @@ let
           {
             type = "selector";
             tag = "SELECTIVE";
-            # Profiles with Naive stay fail-closed. A profile with no eligible
-            # This placeholder is never exposed when no Naive outbound exists;
-            # publishProfileJson keeps profile.json and its link suppressed.
             outbounds =
-              if naiveOutboundTags == [ ] then [ "DIRECT" ] else [ "SELECTIVE-AUTO" ] ++ naiveOutboundTags;
-            default = if naiveOutboundTags == [ ] then "DIRECT" else "SELECTIVE-AUTO";
+              lib.optional (singBoxAutoTcpOutboundTags != [ ]) "SELECTIVE-AUTO" ++ singBoxTcpOutboundTags;
+            default =
+              if singBoxAutoTcpOutboundTags == [ ] then
+                builtins.head singBoxTcpOutboundTags
+              else
+                "SELECTIVE-AUTO";
           }
           {
             type = "selector";
             tag = "FULL";
-            outbounds = if naiveOutboundTags == [ ] then [ "DIRECT" ] else [ "FULL-AUTO" ] ++ naiveOutboundTags;
-            default = if naiveOutboundTags == [ ] then "DIRECT" else "FULL-AUTO";
+            outbounds = lib.optional (singBoxAutoTcpOutboundTags != [ ]) "FULL-AUTO" ++ singBoxTcpOutboundTags;
+            default =
+              if singBoxAutoTcpOutboundTags == [ ] then builtins.head singBoxTcpOutboundTags else "FULL-AUTO";
           }
         ]
-        ++ lib.optionals (naiveOutboundTags != [ ]) [
+        ++ lib.optionals (singBoxAutoTcpOutboundTags != [ ]) [
           {
             type = "urltest";
             tag = "SELECTIVE-AUTO";
-            outbounds = naiveOutboundTags;
+            outbounds = singBoxAutoTcpOutboundTags;
             url = probeUrl64k;
             interval = "5m";
           }
           {
             type = "urltest";
             tag = "FULL-AUTO";
-            outbounds = naiveOutboundTags;
+            outbounds = singBoxAutoTcpOutboundTags;
             url = probeUrl64k;
             interval = "5m";
           }
         ]
+        ++ lib.optional (singBoxHysteria2OutboundTags != [ ]) {
+          type = "selector";
+          tag = "UDP";
+          outbounds =
+            lib.optional (singBoxAutoUdpOutboundTags != [ ]) "UDP-AUTO" ++ singBoxHysteria2OutboundTags;
+          default =
+            if singBoxAutoUdpOutboundTags == [ ] then
+              builtins.head singBoxHysteria2OutboundTags
+            else
+              "UDP-AUTO";
+        }
+        ++ lib.optional (singBoxAutoUdpOutboundTags != [ ]) {
+          type = "urltest";
+          tag = "UDP-AUTO";
+          outbounds = singBoxAutoUdpOutboundTags;
+          url = probeUrl64k;
+          interval = "5m";
+        }
         ++ [
           {
             type = "direct";
             tag = "DIRECT";
           }
         ]
-        ++ map mkSingBoxNaiveOutbound naiveCredentials;
+        ++ map mkSingBoxNaiveOutbound naiveCredentials
+        ++ map mkSingBoxHysteria2Outbound hysteria2Credentials;
         route = {
           auto_detect_interface = true;
           default_domain_resolver = {
@@ -940,11 +1054,10 @@ let
             strategy = "ipv4_only";
           };
           final = "DIRECT";
-          rule_set = (mkSingBoxRuleSets ruleSetDownloadNaiveTag) ++ [
+          rule_set = mkSingBoxRuleSets ++ [
             (mkSingBoxRemoteRuleSet {
               tag = "secure_dns_domains";
               url = "https://${configGatewayDomain}${secureDnsRuleSetPublicPath}";
-              downloadDetour = ruleSetDownloadNaiveTag;
             })
           ];
           rules = [
@@ -964,11 +1077,17 @@ let
                 "169.254.0.0/16"
                 "172.16.0.0/12"
                 "192.168.0.0/16"
+                "::1/128"
+                "fc00::/7"
+                "fe80::/10"
               ];
               outbound = "DIRECT";
             }
             {
-              ip_cidr = [ "224.0.0.0/4" ];
+              ip_cidr = [
+                "224.0.0.0/4"
+                "ff00::/8"
+              ];
               outbound = "DIRECT";
             }
           ]
@@ -983,31 +1102,34 @@ let
               outbound = "DIRECT";
             }
           ]
-          ++ lib.optional (naiveOutboundTags != [ ]) {
-            clash_mode = "Global";
-            network = "udp";
-            action = "reject";
-          }
+          ++ [
+            {
+              ip_version = 6;
+              action = "reject";
+            }
+          ]
+          ++ [
+            (mkSingBoxUdpPolicyRule {
+              clash_mode = "Global";
+              network = "udp";
+            })
+          ]
           ++ [
             {
               clash_mode = "Global";
               outbound = "FULL";
             }
           ]
-          ++ lib.optional (naiveOutboundTags != [ ]) {
-            # Naive is TCP-only here (UoT and QUIC are disabled). Reject every
-            # UDP flow selected by the protected rule sets instead of allowing
-            # it to fall through to route.final = DIRECT. Private, multicast,
-            # tailnet-admin and DNS rules stay ahead of this policy gate.
-            network = "udp";
-            rule_set = protectedRuleSets;
-            action = "reject";
-          }
-          ++ lib.optional (naiveOutboundTags != [ ] && personalProxyDomains != [ ]) {
+          ++ [
+            (mkSingBoxUdpPolicyRule {
+              network = "udp";
+              rule_set = protectedRuleSets;
+            })
+          ]
+          ++ lib.optional (personalProxyDomains != [ ]) (mkSingBoxUdpPolicyRule {
             network = "udp";
             domain_suffix = personalProxyDomains;
-            action = "reject";
-          }
+          })
           ++ lib.optional (personalProxyDomains != [ ]) {
             domain_suffix = personalProxyDomains;
             outbound = "SELECTIVE";
@@ -1028,63 +1150,90 @@ let
           ];
         };
       };
-      singBoxBindings = map (
-        cred:
-        let
-          outboundIndex = indexOf (
-            candidate: (candidate.tag or null) == cred.tag
-          ) profileJsonTemplate.outbounds;
-        in
-        mkBinding cred.passwordSecretName "literal" [
-          "outbounds"
-          outboundIndex
-          "password"
-        ] "__PROFILE_NAIVE_PASSWORD_${cred.machineName}__"
-      ) naiveCredentials;
+      singBoxBindings =
+        map (
+          cred:
+          let
+            outboundIndex = indexOf (
+              candidate: (candidate.tag or null) == cred.tag
+            ) profileJsonTemplate.outbounds;
+          in
+          mkBinding cred.passwordSecretName "literal" [
+            "outbounds"
+            outboundIndex
+            "password"
+          ] "__PROFILE_NAIVE_PASSWORD_${cred.machineName}__"
+        ) naiveCredentials
+        ++ lib.concatMap (
+          cred:
+          let
+            outboundIndex = indexOf (
+              candidate: (candidate.tag or null) == cred.tag
+            ) profileJsonTemplate.outbounds;
+          in
+          [
+            (mkBinding cred.passwordSecretName "literal" [
+              "outbounds"
+              outboundIndex
+              "password"
+            ] "__PROFILE_HY2_PASSWORD_${cred.machineName}_${cred.profileName}__")
+            (mkBinding cred.obfsPasswordSecretName "literal" [
+              "outbounds"
+              outboundIndex
+              "obfs"
+              "password"
+            ] "__PROFILE_HY2_OBFS_PASSWORD_${cred.machineName}__")
+          ]
+        ) hysteria2Credentials;
       singBoxAssetRefs = [
         "secure-dns-filter"
       ]
       ++ map (ruleSet: "sing-box-${ruleSet.tag}") upstreamRuleSets;
-      selectiveTemplatePath = pkgs.writeText "mihomo-client-${basename}.template.json" (
-        builtins.toJSON mihomoSelectiveTemplate
-      );
-      fullTemplatePath = pkgs.writeText "mihomo-client-${basename}-full.template.json" (
-        builtins.toJSON mihomoFullTemplate
-      );
+      selectiveTemplatePath =
+        if publishMihomo then
+          pkgs.writeText "mihomo-client-${basename}.template.json" (builtins.toJSON mihomoSelectiveTemplate)
+        else
+          null;
+      fullTemplatePath =
+        if publishMihomo then
+          pkgs.writeText "mihomo-client-${basename}-full.template.json" (builtins.toJSON mihomoFullTemplate)
+        else
+          null;
       profileJsonTemplatePath =
         if publishProfileJson then
           pkgs.writeText "client-profile-${basename}.template.json" (builtins.toJSON profileJsonTemplate)
         else
           null;
-      artifacts = [
-        {
-          id = "${profile.name}-mihomo-selective";
-          outputName = "mihomo.yaml";
-          format = "mihomo";
-          template = mihomoSelectiveTemplate;
-          templatePath = selectiveTemplatePath;
-          assetRefs = mihomoAssetRefs;
-          bindings = mihomoBindings;
-        }
-        {
-          id = "${profile.name}-mihomo-full";
-          outputName = "mihomo-full.yaml";
-          format = "mihomo";
-          template = mihomoFullTemplate;
-          templatePath = fullTemplatePath;
-          assetRefs = mihomoAssetRefs;
-          bindings = mihomoBindings;
-        }
-      ]
-      ++ lib.optional publishProfileJson {
-        id = "${profile.name}-sing-box";
-        outputName = "profile.json";
-        format = "json";
-        template = profileJsonTemplate;
-        templatePath = profileJsonTemplatePath;
-        assetRefs = singBoxAssetRefs;
-        bindings = singBoxBindings;
-      };
+      artifacts =
+        lib.optionals publishMihomo [
+          {
+            id = "${profile.name}-mihomo-selective";
+            outputName = "mihomo.yaml";
+            format = "mihomo";
+            template = mihomoSelectiveTemplate;
+            templatePath = selectiveTemplatePath;
+            assetRefs = mihomoAssetRefs;
+            bindings = mihomoBindings;
+          }
+          {
+            id = "${profile.name}-mihomo-full";
+            outputName = "mihomo-full.yaml";
+            format = "mihomo";
+            template = mihomoFullTemplate;
+            templatePath = fullTemplatePath;
+            assetRefs = mihomoAssetRefs;
+            bindings = mihomoBindings;
+          }
+        ]
+        ++ lib.optional publishProfileJson {
+          id = "${profile.name}-sing-box";
+          outputName = "profile.json";
+          format = "json";
+          template = profileJsonTemplate;
+          templatePath = profileJsonTemplatePath;
+          assetRefs = singBoxAssetRefs;
+          bindings = singBoxBindings;
+        };
     in
     {
       inherit

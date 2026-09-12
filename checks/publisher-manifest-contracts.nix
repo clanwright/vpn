@@ -8,6 +8,7 @@ let
     id = "fixture-asset";
     filename = "fixture.srs";
     publicPath = "/assets/v1/catalog/fixture.srs";
+    legacyPublicPaths = [ "/assets/v1/catalog/fixture-legacy.srs" ];
     routePriority = 0;
     contentType = "application/octet-stream";
     validator = "srs";
@@ -70,6 +71,19 @@ let
   };
   publicationSource = builtins.readFile ../clanServices/vpn-client-profiles/runtime-publication.nix;
   assetLifecycleSource = builtins.readFile ../clanServices/vpn-client-profiles/public-assets.nix;
+  sourceIndex =
+    needle:
+    let
+      go =
+        index: lines:
+        if lines == [ ] then
+          -1
+        else if lib.hasInfix needle (builtins.head lines) then
+          index
+        else
+          go (index + 1) (builtins.tail lines);
+    in
+    go 0 (lib.splitString "\n" assetLifecycleSource);
   invalid = change: !(manifestLib.validateManifest (lib.recursiveUpdate manifest change));
   results = {
     validManifestAccepted = manifestLib.validateManifest manifest;
@@ -318,6 +332,63 @@ let
     unsafePublicPathRejected = invalid {
       assetCatalog.fixture-asset.publicPath = "/assets/v1/catalog/../fixture.srs";
     };
+    unsafeLegacyPublicPathRejected = invalid {
+      assetCatalog.fixture-asset.legacyPublicPaths = [ "/assets/v1/catalog/../fixture.srs" ];
+    };
+    canonicalPathRepeatedAsLegacyRejected = invalid {
+      assetCatalog.fixture-asset.legacyPublicPaths = [ asset.publicPath ];
+    };
+    duplicateLegacyPublicPathRejected = invalid {
+      assetCatalog.fixture-asset.legacyPublicPaths = [
+        "/assets/v1/catalog/fixture-legacy.srs"
+        "/assets/v1/catalog/fixture-legacy.srs"
+      ];
+    };
+    canonicalAndLegacyPathCollisionRejected = invalid {
+      assetCatalog.second-asset = asset // {
+        id = "second-asset";
+        filename = "second.srs";
+        publicPath = "/assets/v1/catalog/fixture-legacy.srs";
+        legacyPublicPaths = [ ];
+      };
+      profiles = [
+        (
+          (builtins.head manifest.profiles)
+          // {
+            artifacts = [
+              (
+                artifact
+                // {
+                  assetRefs = [
+                    "fixture-asset"
+                    "second-asset"
+                  ];
+                }
+              )
+            ];
+          }
+        )
+      ];
+    };
+    mrsDomainValidatorAccepted = manifestLib.validateManifest (
+      lib.recursiveUpdate manifest {
+        assetCatalog.fixture-asset.validator = "mrs-domain";
+        assetCatalog.fixture-asset.filename = "fixture.mrs";
+        assetCatalog.fixture-asset.publicPath = "/assets/v1/catalog/fixture.mrs";
+        assetCatalog.fixture-asset.legacyPublicPaths = [ ];
+      }
+    );
+    mrsIpcidrValidatorAccepted = manifestLib.validateManifest (
+      lib.recursiveUpdate manifest {
+        assetCatalog.fixture-asset.validator = "mrs-ipcidr";
+        assetCatalog.fixture-asset.filename = "fixture.mrs";
+        assetCatalog.fixture-asset.publicPath = "/assets/v1/catalog/fixture.mrs";
+        assetCatalog.fixture-asset.legacyPublicPaths = [ ];
+      }
+    );
+    arbitraryMrsValidatorRejected = invalid {
+      assetCatalog.fixture-asset.validator = "mrs";
+    };
     reorderedPhasesRejected = invalid {
       publicationPhases = builtins.tail manifest.publicationPhases ++ [
         (builtins.head manifest.publicationPhases)
@@ -355,6 +426,14 @@ let
           "rule-providers"
           "profileJsonTemplate"
         ];
+    mrsValidationUsesPinnedMihomoBeforePublish =
+      lib.hasInfix "appsPkgs.mihomo" assetLifecycleSource
+      && lib.hasInfix ''mihomo convert-ruleset "$mrs_behavior" mrs "$tmp" "$mrs_output"'' assetLifecycleSource
+      && lib.hasInfix "mrs-domain" assetLifecycleSource
+      && lib.hasInfix "mrs-ipcidr" assetLifecycleSource
+      &&
+        sourceIndex ''mihomo convert-ruleset "$mrs_behavior" mrs "$tmp" "$mrs_output"''
+        < sourceIndex ''publish_file "$tmp" "$name"'';
   };
   contract = builtins.all (value: value) (builtins.attrValues results);
 in

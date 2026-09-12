@@ -131,6 +131,16 @@
               default = true;
               description = "Whether normal AdGuard protection is enabled; private routing and rewrites remain configured.";
             };
+            safeSearch = lib.mkOption {
+              type = lib.types.bool;
+              default = true;
+              description = "Whether to enforce Safe Search for supported public search engines; this does not control YouTube Restricted Mode.";
+            };
+            youtubeRestrictedMode = lib.mkOption {
+              type = lib.types.bool;
+              default = false;
+              description = "Whether AdGuard Home enforces YouTube Restricted Mode independently of public search-engine Safe Search.";
+            };
             userRules = lib.mkOption {
               type = lib.types.listOf lib.types.str;
               default = [ ];
@@ -435,14 +445,14 @@
                   safebrowsing_enabled = false;
                   protection_enabled = settings.filtering.enable;
                   safe_search = {
-                    enabled = true;
-                    bing = true;
-                    duckduckgo = true;
-                    ecosia = true;
-                    google = true;
-                    pixabay = true;
-                    yandex = true;
-                    youtube = false;
+                    enabled = settings.filtering.safeSearch || settings.filtering.youtubeRestrictedMode;
+                    bing = settings.filtering.safeSearch;
+                    duckduckgo = settings.filtering.safeSearch;
+                    ecosia = settings.filtering.safeSearch;
+                    google = settings.filtering.safeSearch;
+                    pixabay = settings.filtering.safeSearch;
+                    yandex = settings.filtering.safeSearch;
+                    youtube = settings.filtering.youtubeRestrictedMode;
                   };
                   blocked_response_ttl = 10;
                 };

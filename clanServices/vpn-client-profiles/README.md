@@ -17,7 +17,7 @@ typed non-secret metadata VPN providers, генерирует профили и 
 `excludedProfileNames`, `tailnetAdminDomains`, `personalProxyDomains`, `profiles`,
 `providerRefs`, `profileLinks` и `linksPage`. Provider refs
 содержат machine, instance и canonical protocol. Publisher profiles содержат
-только `name`, `kind` и optional `publishProfileJson`; имена credential secrets
+`name`, `kind`, optional `publishProfileJson` и `autoProtocols`; имена credential secrets
 приходят исключительно из typed providers.
 
 ## Defaults
@@ -55,9 +55,8 @@ provider refs и профилями. Протокол deprecated и не рек�
 Mieru экспортируется только в Mihomo selective/full YAML: `transport = TCP`,
 `udp = true` (UDP relay внутри TCP), `MULTIPLEXING_LOW` и `HANDSHAKE_STANDARD`.
 Custom traffic pattern и TLS/SNI-параметры не добавляются. Consumer выбирает
-provider refs; выбранный Mieru участвует в обычных ручных selectors и Auto,
-без отдельного ограничения для нового протокола. Sing-box Mieru не поддерживает
-и продолжает публиковаться только при eligible Naive provider.
+provider refs; выбранный Mieru доступен вручную и участвует в Auto, если
+`autoProtocols` содержит `mieru`. Sing-box Mieru не поддерживает.
 
 Mieru credentials выбираются по имени device profile из `secretNames.users`.
 Пароль — 1–64 ASCII-байта из `A-Za-z0-9_-`, без padding, пробелов, NUL и
@@ -90,8 +89,10 @@ Mihomo поступает из `apps-nixpkgs`, а Sing-box — из
 
 Sing-box профиль сохраняет Naive как отдельный HTTPS/H2 outbound с проверкой
 TLS, `quic = false`, `udp_over_tcp = false` и `insecure_concurrency = 0`.
-UDP, совпавший с защищаемыми rule sets, отклоняется до Naive: TCP-only путь не
-получает скрытый DIRECT fallback. Прямые исключения для
+Hysteria2 с существующим Gecko добавляется в sing-box как TCP/UDP outbound;
+требуется core 1.14.0 или новее. TCP и UDP имеют отдельные selectors. Защищённый
+UDP направляется через Hysteria2, а при его отсутствии отклоняется без DIRECT
+fallback. Прямые исключения для
 LAN, router, Tailscale и DNS обрабатываются раньше. Native `Rule`/`Global`
 режимы имеют независимые `SELECTIVE`/`FULL` selectors и Auto selections.
 Mihomo публикуется двумя Rule-mode файлами: `mihomo.yaml` заканчивает обычный
@@ -100,9 +101,44 @@ DIRECT не входит в VPN selectors: при отказе выбранно�
 не переключается автоматически, а отключение VPN остаётся явным действием
 пользователя в клиенте.
 
-Если для публикуемого Sing-box профиля нет eligible Naive provider, renderer
+Если для публикуемого Sing-box профиля нет eligible Naive или Hysteria2 provider, renderer
 не публикует `profile.json` и не добавляет ссылку на него. Mihomo-файлы с
-eligible providers других протоколов продолжают публиковаться.
+eligible providers других протоколов продолжают публиковаться. При наличии
+только Naive публикуется sing-box, а несовместимые Mihomo-файлы и ссылки на них
+не создаются.
+
+`profiles[].autoProtocols` — список canonical protocol IDs, разрешённых для автоматического
+выбора и фоновых URL-проб. Default включает все поддерживаемые протоколы;
+`[]` оставляет ручные selectors без Auto-групп. Например, consumer может задать
+для каждого профиля
+`[ "vless-xhttp" "hysteria2" "naiveproxy" "mieru" ]`, сохранив AWG вручную.
+Для исключённого AWG отключается также persistent keepalive. При отсутствии
+кандидатов Auto соответствующая группа не создаётся; DIRECT в защищённые
+selectors не добавляется. В полностью ручном режиме по умолчанию выбран
+первый совместимый outbound; фоновые URL-пробы не создаются.
+
+```nix
+profiles = map (name: {
+  inherit name;
+  autoProtocols = [ "vless-xhttp" "hysteria2" "naiveproxy" "mieru" ];
+}) [ "device-a" "device-b" ];
+```
+
+Это настройки publisher role. Общий каталог consumer может передать одинаковые
+`profiles`, `providerRefs`, `clientDnsEndpoints` и `personalProxyDomains` каждому
+publisher, меняя его адреса и размещение. Предпочтительный источник подписки
+задаётся в consumer/client; порядок DNS endpoints не задаёт приоритет загрузки
+подписки и не создаёт автоматический failover между её URL.
+
+Оба формата перехватывают внешний IPv6 и отклоняют его явным правилом до
+обычного fallback. Loopback, link-local, ULA, multicast и Tailscale остаются
+локальными исключениями. Это политика запрета внешнего IPv6, а не обещание
+поддержки IPv6 через VPN. DNS upstream использует IPv4.
+
+Публичные URL правил и локальные пути Mihomo cache содержат стабильные
+обезличенные идентификаторы. Прежние `/assets/v1/catalog/<имя>` остаются
+алиасами тех же файлов, поэтому ранее выданные профили сохраняют доступ к
+правилам. Это изменение путей, а не шифрование содержания публичных списков.
 
 Selective policy использует только blocked/geoblocked и dependency rule sets.
 Личные домены задаёт consumer через `personalProxyDomains`; библиотека не
@@ -113,7 +149,7 @@ Selective policy использует только blocked/geoblocked и depende
 элемент содержит `domain`, `ipv4`, `port` (по умолчанию `443`) и `path`
 (по умолчанию `/dns-query`). Домены — уникальные канонические lowercase ASCII
 FQDN, адреса — числовые IPv4; путь не содержит query, fragment или credentials.
-Текущие профили остаются IPv4-only. Число endpoint не фиксировано.
+Upstream DNS остаётся IPv4-only. Число endpoint не фиксировано.
 
 ```nix
 clientDnsEndpoints = [
@@ -138,8 +174,13 @@ Sing-box 1.14 использует собственные DoH через `evalua
 
 Для обязательного dialer resolver Sing-box использует статические bootstrap
 записи; обычные DIRECT-запросы проходят через общий набор DoH до подключения.
-Bootstrap hosts transport читает `/dev/null` вместо системного hosts-файла;
-эта конфигурация рассчитана на Linux, Android и Apple clients.
+Bootstrap не использует Unix-specific путь `/dev/null`; точные записи
+собственных endpoint задаются в профиле и имеют приоритет перед системным
+hosts-файлом. Непредопределённые имена hosts transport может искать в системном
+hosts; обычное разрешение клиентского трафика использует собственные DoH.
+Загрузка rule sets выполняется напрямую
+через закреплённый IPv4 publisher с сохранением HTTPS hostname и TLS verification,
+без зависимости от выбранного VPN.
 
 При транспортном отказе отдельных DoH остаются остальные собственные endpoint.
 Если все недоступны, запросы, которым нужен upstream DNS, завершаются ошибкой.
@@ -152,6 +193,11 @@ Consumer отвечает за доступность каждого DoH с кл
 
 Семантика upstream: [Mihomo DNS](https://wiki.metacubex.one/en/config/dns/),
 [Sing-box DNS actions](https://sing-box.sagernet.org/configuration/dns/rule_action/).
+
+Gecko и HTTP bootstrap сверены с sing-box 1.14.0:
+[Hysteria2](https://sing-box.sagernet.org/configuration/outbound/hysteria2/),
+[HTTP client](https://sing-box.sagernet.org/configuration/shared/http-client/),
+[hosts transport](https://sing-box.sagernet.org/configuration/dns/server/hosts/).
 
 Naive credentials выбираются по именам профилей из provider export. Карта не
 ограничена встроенными device names, а probe публикуется только если consumer
@@ -204,10 +250,12 @@ consumer также учитывает результат refresh unit. Лока
 Нужные файлы, refresh actions, readiness paths и Caddy asset routes выводятся
 из ссылок артефактов на единый внутренний asset catalog. Lifecycle не исследует
 дерево Mihomo и не определяет необходимость assets по наличию `rule-providers`.
-При runtime-загрузке SRS проходит проверку штатным sing-box; для MRS и
+При runtime-загрузке SRS проходит проверку штатным sing-box, а MRS —
+декодирование штатным Mihomo с проверкой ожидаемого `domain` или `ipcidr`
+behavior до атомарной замены кэша. Ошибка сохраняет предыдущий файл. Для
 текстовых upstream-списков принятие ограничено успешным HTTP-ответом и
-непустым файлом. Cache не является доказательством корректности всех rule sets
-для реального клиента.
+непустым файлом. Repository checks проверяют генерацию этих действий, не
+запуская parser или приложения.
 
 `secure-dns.txt` загружается из официального HaGeZi
 [`wildcard/doh-onlydomains.txt`](https://raw.githubusercontent.com/hagezi/dns-blocklists/main/wildcard/doh-onlydomains.txt)

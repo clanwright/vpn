@@ -47,6 +47,12 @@ decoders, unknown asset references and invalid publication phase order. The
 runtime script is rendered from those phases; static guards also inspect the
 resulting script. Separate consumer fixtures cover a disabled publisher, an
 enabled publisher with minimal dependencies and complete composition.
+Profile policy fixtures cover synthetic users, publishers and protocol
+compatibility, including single-protocol profiles, manual-only selection,
+three own DoH endpoints, protected UDP and IPv6 local exceptions. Asset checks
+cover opaque canonical paths, legacy alias collisions and MRS validation before
+cache replacement. AdGuard checks cover all four Safe Search/YouTube combinations
+and unchanged private DNS routing and rewrites.
 The asset contracts check refresh-before-publication ordering, the complete
 required-file guard after local asset synchronization, retention of cached
 downloads on failure and retry declarations for recovery. Empty-cache and

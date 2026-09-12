@@ -275,7 +275,10 @@ in
               }
 
               ${lib.concatMapStringsSep "\n" (
-                asset: assetRoute asset.publicPath asset.filename asset.contentType
+                asset:
+                lib.concatMapStringsSep "\n" (path: assetRoute path asset.filename asset.contentType) (
+                  [ asset.publicPath ] ++ asset.legacyPublicPaths
+                )
               ) publicAssets.referencedAssets}
             '';
             integration = {
