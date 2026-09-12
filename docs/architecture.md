@@ -20,8 +20,10 @@ The flake does not import a consumer checkout. TCP tuning belongs to the consume
   or on an optional loopback listener behind consumer-owned TCP passthrough.
   Public profile addresses and ports are independent of that local listener;
   the consumer owns shared-port SNI routing and HTTPS composition.
-- Hysteria2 runs in a separate Mihomo service with Gecko obfuscation and serves
-  static masquerade content from a consumer-supplied store directory.
+- Deprecated Hysteria2 runs in a separate Mihomo service with Gecko obfuscation
+  and serves static masquerade content from a consumer-supplied store directory.
+  It is retained for compatibility and discouraged for new use after a
+  user report of blocked client connections.
 - AmneziaWG runs as a userspace generation-3 UDP gateway with a runtime
   header-protection key and individual peer keys.
 - NaiveProxy contributes a Caddy `forward_proxy` fragment to a consumer-selected

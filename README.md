@@ -5,7 +5,7 @@ Seven VPN and DNS modules for Clan/NixOS on `x86_64-linux`.
 | Module | Implementation |
 | --- | --- |
 | [VLESS/XHTTP](clanServices/mihomo-vless-xhttp/README.md) | Xray with REALITY |
-| [Hysteria2](clanServices/mihomo-hysteria2/README.md) | Mihomo with Gecko obfuscation |
+| [Hysteria2](clanServices/mihomo-hysteria2/README.md) | **Deprecated**; Mihomo with Gecko, retained for compatibility |
 | [AmneziaWG](clanServices/amneziawg/README.md) | Userspace AmneziaWG 3 |
 | [NaiveProxy](clanServices/naiveproxy/README.md) | Caddy forward proxy |
 | [Client profiles](clanServices/vpn-client-profiles/README.md) | Mihomo and sing-box profile publisher |

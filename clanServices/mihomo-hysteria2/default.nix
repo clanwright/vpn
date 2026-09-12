@@ -41,13 +41,13 @@ in
   _class = "clan.service";
   manifest = {
     name = "@clanwright/vpn-mihomo-hysteria2";
-    description = "Independent Mihomo Hysteria2 gateway";
+    description = "Deprecated Mihomo Hysteria2 gateway retained for compatibility";
     readme = builtins.readFile ./README.md;
     exports.out = [ "vpnProvider" ];
   };
 
   roles.gateway = {
-    description = "Independent public Hysteria2 UDP gateway";
+    description = "Deprecated public Hysteria2 UDP gateway retained for compatibility";
     interface =
       { lib, ... }:
       {
@@ -296,7 +296,7 @@ in
 
               systemd.services = lib.optionalAttrs active {
                 ${serviceName} = {
-                  description = "Independent Mihomo Hysteria2 gateway";
+                  description = "Deprecated Mihomo Hysteria2 gateway retained for compatibility";
                   after = [ "network-online.target" ] ++ sopsUnits;
                   wants = [ "network-online.target" ] ++ sopsUnits;
                   wantedBy = [ "multi-user.target" ];

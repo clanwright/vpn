@@ -8,7 +8,7 @@ the settings documented on each module page.
 | Stable module ID | Settings and integration |
 | --- | --- |
 | `@clanwright/vpn-mihomo-vless-xhttp` | [VLESS/XHTTP](../clanServices/mihomo-vless-xhttp/README.md) |
-| `@clanwright/vpn-mihomo-hysteria2` | [Hysteria2](../clanServices/mihomo-hysteria2/README.md) |
+| `@clanwright/vpn-mihomo-hysteria2` | [Hysteria2](../clanServices/mihomo-hysteria2/README.md) (**deprecated**; retained for compatibility) |
 | `@clanwright/vpn-amneziawg` | [AmneziaWG](../clanServices/amneziawg/README.md) |
 | `@clanwright/vpn-naiveproxy` | [NaiveProxy](../clanServices/naiveproxy/README.md) |
 | `@clanwright/vpn-client-profiles` | [Client profiles](../clanServices/vpn-client-profiles/README.md) |
@@ -16,6 +16,8 @@ the settings documented on each module page.
 | `@clanwright/dns-unbound` | [Unbound](../clanServices/unbound/README.md) |
 
 The VLESS module ID contains `mihomo` for identity stability; its runtime is Xray.
+Hysteria2 is discouraged for new use after user-reported blocking of client
+connections.
 
 ## Exports and helpers
 

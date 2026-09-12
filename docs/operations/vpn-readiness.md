@@ -32,6 +32,9 @@ routing/NAT change.
 
 ## Hysteria2
 
+Hysteria2 is deprecated, retained for compatibility and discouraged for new
+use after user-reported blocking of client connections.
+
 Use synthetic TLS materials delivered through the real unit's `LoadCredential`
 mechanism, preserving its service identity and sandbox. Verify that the TLS
 paths and `SAFE_PATHS` refer to the same service credential directory, and that

@@ -39,6 +39,10 @@ exports и `clanLib.selectExports`: `naiveproxy` требует addon, а
 `providerRefs.profileNames` сужает их `profileNames` без промежуточных
 protocol-specific adapter shapes.
 
+Поддержка `hysteria2` сохранена только для совместимости с существующими
+provider refs и профилями. Протокол deprecated и не рекомендуется для новых
+профилей после пользовательского сообщения о блокировке клиентских подключений.
+
 Имена proxies включают полный canonical machine ID и instance ID. Компоненты
 кодируются с длиной, поэтому разные пары machine/instance не могут дать одно
 имя. Compatibility aliases для прежних имён без `-grosbeak` не создаются.
