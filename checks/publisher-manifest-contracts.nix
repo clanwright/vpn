@@ -372,18 +372,22 @@ let
     };
     mrsDomainValidatorAccepted = manifestLib.validateManifest (
       lib.recursiveUpdate manifest {
-        assetCatalog.fixture-asset.validator = "mrs-domain";
-        assetCatalog.fixture-asset.filename = "fixture.mrs";
-        assetCatalog.fixture-asset.publicPath = "/assets/v1/catalog/fixture.mrs";
-        assetCatalog.fixture-asset.legacyPublicPaths = [ ];
+        assetCatalog.fixture-asset = {
+          validator = "mrs-domain";
+          filename = "fixture.mrs";
+          publicPath = "/assets/v1/catalog/fixture.mrs";
+          legacyPublicPaths = [ ];
+        };
       }
     );
     mrsIpcidrValidatorAccepted = manifestLib.validateManifest (
       lib.recursiveUpdate manifest {
-        assetCatalog.fixture-asset.validator = "mrs-ipcidr";
-        assetCatalog.fixture-asset.filename = "fixture.mrs";
-        assetCatalog.fixture-asset.publicPath = "/assets/v1/catalog/fixture.mrs";
-        assetCatalog.fixture-asset.legacyPublicPaths = [ ];
+        assetCatalog.fixture-asset = {
+          validator = "mrs-ipcidr";
+          filename = "fixture.mrs";
+          publicPath = "/assets/v1/catalog/fixture.mrs";
+          legacyPublicPaths = [ ];
+        };
       }
     );
     arbitraryMrsValidatorRejected = invalid {
