@@ -22,6 +22,7 @@ let
   amneziawgProviders = providersFor "amneziawg";
   hysteria2Providers = providersFor "hysteria2";
   naiveProviders = providersFor "naiveproxy";
+  mieruProviders = providersFor "mieru";
   providerId = profileTypes.providerNamespace;
   profilePolicy = profileName: provider: builtins.elem profileName provider.profileNames;
 
@@ -315,6 +316,21 @@ let
       inherit passwordSecretName;
     };
 
+  mkMieruCredential =
+    profileName: provider:
+    let
+      machineName = providerId provider;
+    in
+    {
+      inherit machineName profileName;
+      endpointIPv4 = provider.endpoint.ipv4;
+      port = provider.endpoint.port;
+      tag = "${machineName}-${profileName}-mieru";
+      passwordSecretName =
+        provider.secretNames.users.${profileName}
+          or (throw "Mieru password secret name is required for ${machineName}/${profileName}");
+    };
+
   mkProfile =
     profile:
     let
@@ -333,10 +349,12 @@ let
       profileAmneziawgProviders = builtins.filter (profilePolicy profile.name) amneziawgProviders;
       profileHysteria2Providers = builtins.filter (profilePolicy profile.name) hysteria2Providers;
       profileNaiveProviders = builtins.filter (profilePolicy profile.name) naiveProviders;
+      profileMieruProviders = builtins.filter (profilePolicy profile.name) mieruProviders;
       upstreamCredentials = map (mkVlessCredential profile.name) profileVlessProviders;
       amneziawgCredentials = map (mkAmneziawgCredential profile.name) profileAmneziawgProviders;
       hysteria2Credentials = map (mkHysteria2Credential profile.name) profileHysteria2Providers;
       naiveCredentials = map (mkNaiveCredential profile.name) profileNaiveProviders;
+      mieruCredentials = map (mkMieruCredential profile.name) profileMieruProviders;
       publishProfileJson = profileJsonRequested && naiveCredentials != [ ];
 
       mkVlessProxy = cred: {
@@ -415,19 +433,34 @@ let
         "skip-cert-verify" = !cred.tlsVerify;
       };
 
+      mkMieruProxy = cred: {
+        name = cred.tag;
+        type = "mieru";
+        server = cred.endpointIPv4;
+        inherit (cred) port;
+        username = cred.profileName;
+        password = "__MIHOMO_MIERU_PASSWORD_${cred.machineName}_${cred.profileName}__";
+        transport = "TCP";
+        multiplexing = "MULTIPLEXING_LOW";
+        "handshake-mode" = "HANDSHAKE_STANDARD";
+        udp = true;
+      };
+
       unorderedProxies =
         (map mkVlessProxy upstreamCredentials)
         ++ (map mkHysteria2Proxy hysteria2Credentials)
+        ++ (map mkMieruProxy mieruCredentials)
         ++ (map mkAmneziawgProxy amneziawgCredentials);
 
       vlessProxyNames = map (cred: cred.vlessTag) upstreamCredentials;
       hysteria2ProxyNames = map (cred: cred.tag) hysteria2Credentials;
+      mieruProxyNames = map (cred: cred.tag) mieruCredentials;
       amneziawgProxyNames = map (cred: cred.amneziawgTag) amneziawgCredentials;
       orderedProxyNames =
         if isRouterProfile then
-          hysteria2ProxyNames ++ amneziawgProxyNames ++ vlessProxyNames
+          hysteria2ProxyNames ++ mieruProxyNames ++ amneziawgProxyNames ++ vlessProxyNames
         else
-          vlessProxyNames ++ hysteria2ProxyNames ++ amneziawgProxyNames;
+          vlessProxyNames ++ hysteria2ProxyNames ++ mieruProxyNames ++ amneziawgProxyNames;
       proxyByName = builtins.listToAttrs (
         map (proxy: {
           inherit (proxy) name;
@@ -858,6 +891,7 @@ let
         amneziawgCredentials
         hysteria2Credentials
         naiveCredentials
+        mieruCredentials
         ;
       inherit (profile) name;
       inherit publishProfileJson;

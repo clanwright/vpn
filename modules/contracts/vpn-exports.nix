@@ -75,6 +75,7 @@ let
           "vless-xhttp"
           "hysteria2"
           "amneziawg"
+          "mieru"
         ]
       );
       tlsServerName = lib.mkOption {
@@ -198,6 +199,11 @@ let
       "generation"
       "profile"
     ];
+    mieru = [
+      "protocol"
+      "userNames"
+      "credentialEncoding"
+    ];
   };
   validMetadataShape =
     value:
@@ -253,6 +259,7 @@ let
       "clientPrivateKey"
       "headerProtectionKey"
     ];
+    mieru = [ "users" ];
   };
   validSecretNamesShape =
     value:
@@ -262,44 +269,54 @@ let
     );
   secretNamesType = types.addCheck (types.submodule secretNamesModule) validSecretNamesShape;
 
-  endpointModule = mkSubmodule {
-    domain = mkOption nonEmptyStr;
-    ipv4 = mkOption nullableNonEmptyStr;
-    port = mkOption types.port;
-    transport = mkOption (
-      types.enum [
-        "tcp"
-        "udp"
-      ]
-    );
-  };
-
-  vpnProviderModule = {
-    options = {
-      schemaVersion = mkOption (fixed 2);
-      instanceId = mkOption safeIdentityType;
-      machine = mkOption safeIdentityType;
-      role = mkOption (
-        types.enum [
-          "gateway"
-          "addon"
-        ]
+  endpointModule =
+    protocol:
+    mkSubmodule {
+      domain = mkOption (if protocol == "mieru" then fixed null else nonEmptyStr);
+      ipv4 = mkOption (
+        if protocol == "mieru" then types.addCheck nonEmptyStr validIPv4 else nullableNonEmptyStr
       );
-      protocol = mkOption (
-        types.enum [
-          "naiveproxy"
-          "vless-xhttp"
-          "hysteria2"
-          "amneziawg"
-        ]
+      port = mkOption types.port;
+      transport = mkOption (
+        if protocol == "mieru" then
+          fixed "tcp"
+        else
+          types.enum [
+            "tcp"
+            "udp"
+          ]
       );
-      enabled = mkOption (fixed true);
-      endpoint = mkOption (types.submodule endpointModule);
-      transportMetadata = mkOption metadataType;
-      profileNames = mkOption (nonEmptyListOf safeIdentityType);
-      secretNames = mkOption secretNamesType;
     };
-  };
+
+  vpnProviderModule =
+    { config, ... }:
+    {
+      options = {
+        schemaVersion = mkOption (fixed 2);
+        instanceId = mkOption safeIdentityType;
+        machine = mkOption safeIdentityType;
+        role = mkOption (
+          types.enum [
+            "gateway"
+            "addon"
+          ]
+        );
+        protocol = mkOption (
+          types.enum [
+            "naiveproxy"
+            "vless-xhttp"
+            "hysteria2"
+            "amneziawg"
+            "mieru"
+          ]
+        );
+        enabled = mkOption (fixed true);
+        endpoint = mkOption (types.submodule (endpointModule config.protocol));
+        transportMetadata = mkOption metadataType;
+        profileNames = mkOption (nonEmptyListOf safeIdentityType);
+        secretNames = mkOption secretNamesType;
+      };
+    };
 
   profileLinkModule = mkSubmodule {
     name = mkOption safeIdentityType;
@@ -326,6 +343,7 @@ let
     vless-xhttp = "gateway";
     hysteria2 = "gateway";
     amneziawg = "gateway";
+    mieru = "gateway";
   };
 
   protocolServices = {
@@ -333,6 +351,7 @@ let
     vless-xhttp = "@clanwright/vpn-mihomo-vless-xhttp";
     hysteria2 = "@clanwright/vpn-mihomo-hysteria2";
     amneziawg = "@clanwright/vpn-amneziawg";
+    mieru = "@clanwright/vpn-mieru";
   };
 
   fail =
@@ -367,6 +386,17 @@ let
     && values != [ ]
     && builtins.all safeIdentity values
     && values == lib.unique values;
+  validIPv4Octet =
+    value: builtins.match "(0|[1-9][0-9]{0,2})" value != null && lib.toInt value <= 255;
+  validIPv4 =
+    value:
+    builtins.isString value
+    && (
+      let
+        octets = lib.splitString "." value;
+      in
+      builtins.length octets == 4 && builtins.all validIPv4Octet octets
+    );
 
   validAwgProfile =
     value:
@@ -540,6 +570,14 @@ let
       )
     then
       fail context "AmneziaWG public transport metadata is incomplete"
+    else if
+      protocol == "mieru"
+      && (
+        !allSafeIdentities (metadata.userNames or [ ])
+        || (metadata.credentialEncoding or null) != "base64url"
+      )
+    then
+      fail context "Mieru public transport metadata is incomplete"
     else
       metadata;
 
@@ -599,6 +637,8 @@ let
           else if protocol == "amneziawg" then
             credentialMapExact (raw.profileNames or [ ]) secretNames.clientPrivateKey
             && safeSecretName (secretNames.headerProtectionKey or null)
+          else if protocol == "mieru" then
+            credentialMapExact metadata.userNames secretNames.users
           else
             false
         );
@@ -613,10 +653,16 @@ let
         && raw.enabled == true
         && builtins.isAttrs endpoint
         && attrsHaveExactly [ "domain" "ipv4" "port" "transport" ] endpoint
-        && isNonEmptyString endpoint.domain
-        && (builtins.isNull endpoint.ipv4 || isNonEmptyString endpoint.ipv4)
+        && (
+          if protocol == "mieru" then
+            builtins.isNull endpoint.domain && validIPv4 endpoint.ipv4
+          else
+            isNonEmptyString endpoint.domain
+            && (builtins.isNull endpoint.ipv4 || isNonEmptyString endpoint.ipv4)
+        )
         && builtins.isInt endpoint.port
         && endpoint.port > 0
+        && endpoint.port <= 65535
         &&
           endpoint.transport == (
             if
@@ -642,6 +688,7 @@ let
           )
         )
         && (protocol != "hysteria2" || metadata.userNames == raw.profileNames)
+        && (protocol != "mieru" || metadata.userNames == raw.profileNames)
         && (
           protocol != "naiveproxy"
           || (

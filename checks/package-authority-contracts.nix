@@ -32,6 +32,10 @@ let
       package = modernAppsPkgs.sing-box;
       version = "1.14.0";
     };
+    mieru = {
+      package = modernAppsPkgs.mieru;
+      version = "3.36.0";
+    };
     amneziawg-go = {
       package = modernAppsPkgs.amneziawg-go;
       version = "3.1.20260828";

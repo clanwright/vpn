@@ -35,7 +35,7 @@ only tracked and non-ignored untracked files. The snapshot excludes `.git`,
 extensions before Nix copies the source into its store. The script removes the
 snapshot on exit.
 
-The evaluation suite covers the seven stable module IDs, closed schemas,
+The evaluation suite covers the eight stable module IDs, closed schemas,
 negative security overrides, generated server and client configuration
 structures, service isolation, package authority, secret/template wiring and
 combined Clan composition. Publisher checks cover static log suppression,

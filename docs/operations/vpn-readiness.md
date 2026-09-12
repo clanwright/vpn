@@ -1,6 +1,6 @@
 # VPN startup readiness and consumer acceptance
 
-AWG and Hysteria2 startup guards check local configuration readiness during
+AWG, Hysteria2 and Mieru startup guards check local configuration readiness during
 `ExecStartPost`. A failed guard fails activation and invokes the service's
 restart policy. An `active` state is not evidence of an external handshake or
 working data transfer, and startup guards are not continuous health monitoring.
@@ -52,3 +52,11 @@ After deployment, independently verify external Hysteria2 authentication and
 TCP/UDP relay using the intended consumer profile. A local UDP socket alone
 does not establish TLS correctness, authentication, firewall reachability or
 working transfer.
+
+## Mieru
+
+Mieru's management RPC can remain alive even if the proxy fails to bind. Its
+startup guard therefore checks that the main service process owns the TCP
+listener on the configured port. A different process's socket must not satisfy
+readiness. Runtime firewall, authentication, relay and restart acceptance is
+specified in [Mieru operations](mieru.md); none is executed by this repository.

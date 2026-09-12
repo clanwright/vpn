@@ -52,7 +52,7 @@
             dnsproxy
             xray
             ;
-          inherit (modernAppsPkgs) amneziawg-go amneziawg-tools;
+          inherit (modernAppsPkgs) amneziawg-go amneziawg-tools mieru;
           unbound = appsPkgs.unbound-with-systemd;
         };
       vpnExports = { lib }: import ./modules/contracts/vpn-exports.nix { inherit lib; };
@@ -76,6 +76,10 @@
           "@clanwright/vpn-mihomo-hysteria2" = service ./clanServices/mihomo-hysteria2/default.nix {
             inherit lib;
             mihomoPackageFor = system: self.packages.${system}.mihomo;
+          };
+          "@clanwright/vpn-mieru" = service ./clanServices/mieru/default.nix {
+            inherit lib;
+            mieruPackageFor = system: self.packages.${system}.mieru;
           };
           "@clanwright/vpn-amneziawg" = service ./clanServices/amneziawg/default.nix {
             inherit lib;

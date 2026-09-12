@@ -25,6 +25,7 @@ let
       ++ map (cred: cred.clientPrivateKeySecretName) profile.amneziawgCredentials
       ++ map (cred: cred.headerProtectionKeySecretName) profile.amneziawgCredentials
       ++ map (cred: cred.passwordSecretName) profile.hysteria2Credentials
+      ++ map (cred: cred.passwordSecretName) profile.mieruCredentials
       ++ map (cred: cred.obfsPasswordSecretName) (
         builtins.filter (cred: cred.obfsPasswordSecretName != null) profile.hysteria2Credentials
       )
@@ -130,13 +131,31 @@ let
       filter = ''(.outbounds[] | select(.tag == "${cred.tag}").password) = $naive_password_${machineId}'';
     };
 
+  mkMieruCred =
+    cred:
+    let
+      machineId = toIdent cred.machineName;
+      profileId = toIdent cred.profileName;
+    in
+    {
+      decl = ''
+        make_secret_file mieru_password_${machineId}_${profileId}_file
+        read_base64url_secret ${
+          lib.escapeShellArg config.sops.secrets.${cred.passwordSecretName}.path
+        } > "$mieru_password_${machineId}_${profileId}_file"
+      '';
+      arg = ''--rawfile mieru_password_${machineId}_${profileId} "$mieru_password_${machineId}_${profileId}_file"'';
+      filter = ''(.proxies[] | select(.name == "${cred.tag}").password) = $mieru_password_${machineId}_${profileId}'';
+    };
+
   profileCase =
     profile:
     let
       yamlCredArtifacts =
         map mkUpstreamCred profile.upstreamCredentials
         ++ map mkAmneziawgCred profile.amneziawgCredentials
-        ++ map mkHysteria2Cred profile.hysteria2Credentials;
+        ++ map mkHysteria2Cred profile.hysteria2Credentials
+        ++ map mkMieruCred profile.mieruCredentials;
       jqSecretFileDecls = lib.concatStringsSep "\n" (map (a: lib.strings.trim a.decl) yamlCredArtifacts);
       jqArgs = lib.concatStringsSep " \\\n          " (map (a: lib.strings.trim a.arg) yamlCredArtifacts);
       jqFilterItems = map (a: a.filter) yamlCredArtifacts;
@@ -349,6 +368,21 @@ in
             value="$(read_secret "$2")"
             decoded_len="$(printf '%s' "$value" | base64 -d 2>/dev/null | wc -c)"
             test "$decoded_len" = 32
+            printf '%s' "$value"
+          }
+          read_base64url_secret() {
+            local value byte_count value_count
+            value="$(cat "$1")"
+            byte_count="$(LC_ALL=C wc -c < "$1")"
+            byte_count="''${byte_count//[[:space:]]/}"
+            value_count="$(LC_ALL=C printf '%s' "$value" | wc -c)"
+            value_count="''${value_count//[[:space:]]/}"
+            if [ -z "$value" ] \
+              || [ "$byte_count" -ne "$value_count" ] \
+              || [ "$value_count" -gt 64 ] \
+              || [[ ! "$value" =~ ^[A-Za-z0-9_-]+$ ]]; then
+              return 1
+            fi
             printf '%s' "$value"
           }
 

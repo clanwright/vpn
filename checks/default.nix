@@ -64,6 +64,14 @@ let
         system
         ;
     };
+    mieru-contracts = import ./mieru-contracts.nix {
+      inherit
+        inputs
+        pkgs
+        self
+        system
+        ;
+    };
     awg-contracts = import ./awg-contracts.nix {
       inherit
         inputs

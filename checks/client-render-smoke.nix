@@ -6,6 +6,7 @@
 }:
 let
   lib = inputs.nixpkgs.lib;
+  vpnExports = import ../modules/contracts/vpn-exports.nix { inherit lib; };
   profileTypes = import ../clanServices/vpn-client-profiles/types.nix { inherit lib; };
   clientDnsResults = import ./client-dns-contracts.nix { inherit lib profileTypes; };
   allBooleansTrue =
@@ -307,6 +308,106 @@ let
         };
       }
     );
+  selectMieruExport =
+    raw:
+    vpnExports.selectVpnProvider {
+      providerInstanceId = "vpn-mieru";
+      providerMachine = fixtureMachineName;
+      protocol = "mieru";
+      consumerInstanceId = "vpn-client-profiles";
+      exports.selected.vpnProvider = raw;
+      selectExports = _predicate: exports: exports;
+    };
+  validMieruExport = {
+    schemaVersion = 2;
+    instanceId = "vpn-mieru";
+    machine = fixtureMachineName;
+    role = "gateway";
+    protocol = "mieru";
+    enabled = true;
+    endpoint = {
+      domain = null;
+      ipv4 = "192.0.2.13";
+      port = 8443;
+      transport = "tcp";
+    };
+    transportMetadata = {
+      protocol = "mieru";
+      userNames = [ "cHJvYmU" ];
+      credentialEncoding = "base64url";
+    };
+    profileNames = [ "cHJvYmU" ];
+    secretNames.users.cHJvYmU = "fixture-mieru-password";
+  };
+  evalProviderExportType =
+    raw:
+    (lib.evalModules {
+      modules = [
+        {
+          options.value = lib.mkOption {
+            type = lib.types.submodule vpnExports.vpnProviderModule;
+          };
+          config.value = raw;
+        }
+      ];
+    }).config.value;
+  validNaiveExport = {
+    schemaVersion = 2;
+    instanceId = "vpn-naiveproxy";
+    machine = fixtureMachineName;
+    role = "addon";
+    protocol = "naiveproxy";
+    enabled = true;
+    endpoint = {
+      domain = "site.example.invalid";
+      ipv4 = "192.0.2.10";
+      port = 443;
+      transport = "tcp";
+    };
+    transportMetadata = {
+      protocol = "naiveproxy";
+      tlsServerName = "site.example.invalid";
+      userNames = [ "cHJvYmU" ];
+      port = 443;
+    };
+    profileNames = [ "cHJvYmU" ];
+    secretNames.password.cHJvYmU = "fixture-naive-password";
+  };
+  rejectsMieruExport =
+    raw: !(builtins.tryEval (builtins.deepSeq (selectMieruExport raw) true)).success;
+  mieruContractResults = {
+    typeAcceptsDomainFreeMieru = (evalProviderExportType validMieruExport).endpoint.domain == null;
+    typeRejectsDomainFreeExistingProtocol =
+      !(builtins.tryEval (
+        builtins.deepSeq (evalProviderExportType (
+          lib.recursiveUpdate validNaiveExport { endpoint.domain = null; }
+        )) true
+      )).success;
+    validDomainFreeExportAccepted =
+      (selectMieruExport validMieruExport).endpoint == validMieruExport.endpoint;
+    domainRejected = rejectsMieruExport (
+      lib.recursiveUpdate validMieruExport { endpoint.domain = "mieru.example.invalid"; }
+    );
+    invalidIpv4Rejected = rejectsMieruExport (
+      lib.recursiveUpdate validMieruExport { endpoint.ipv4 = "192.0.2.999"; }
+    );
+    udpTransportRejected = rejectsMieruExport (
+      lib.recursiveUpdate validMieruExport { endpoint.transport = "udp"; }
+    );
+    unknownEndpointFieldRejected = rejectsMieruExport (
+      lib.recursiveUpdate validMieruExport { endpoint.serverName = "example.invalid"; }
+    );
+    unknownMetadataRejected = rejectsMieruExport (
+      lib.recursiveUpdate validMieruExport { transportMetadata.sni = "example.invalid"; }
+    );
+    unknownSecretFieldRejected = rejectsMieruExport (
+      lib.recursiveUpdate validMieruExport { secretNames.password.cHJvYmU = "unexpected-secret"; }
+    );
+    mismatchedUserNamesRejected = rejectsMieruExport (
+      lib.recursiveUpdate validMieruExport { transportMetadata.userNames = [ "other" ]; }
+    );
+  };
+  mieruExportContract = builtins.all (value: value) (builtins.attrValues mieruContractResults);
   conflictingDnsPinCaseRejected = rejectsInstances "conflicting-dns-pin-case" (
     publisherWith (
       publisherSettings
@@ -370,6 +471,9 @@ let
   );
   awg = builtins.head (
     builtins.filter (proxy: proxy.type == "wireguard") rendered.mihomoSelectiveTemplate.proxies
+  );
+  mieru = builtins.head (
+    builtins.filter (proxy: proxy.type == "mieru") rendered.mihomoSelectiveTemplate.proxies
   );
   selector =
     tag: config: builtins.head (builtins.filter (outbound: outbound.tag == tag) config.outbounds);
@@ -570,6 +674,7 @@ let
       "vless"
       "hysteria2"
       "wireguard"
+      "mieru"
     ]
     &&
       selectiveGroups == [
@@ -587,6 +692,12 @@ let
     && !(builtins.elem "DIRECT" selectiveAuto.proxies)
     && !(builtins.elem "DIRECT" fullManual.proxies)
     && !(builtins.elem "DIRECT" fullAuto.proxies)
+    && builtins.all (group: builtins.elem mieru.name group.proxies) [
+      selectiveManual
+      selectiveAuto
+      fullManual
+      fullAuto
+    ]
     && lib.last rendered.mihomoSelectiveTemplate.rules == "MATCH,DIRECT"
     && lib.last rendered.mihomoFullTemplate.rules == "MATCH,FULL"
     && vless.uuid == "__MIHOMO_VLESS_UUID_11-vpn-fixture-22-vpn-mihomo-vless-xhttp__"
@@ -594,6 +705,18 @@ let
     && hysteria."obfs-min-packet-size" == 512
     && hysteria."obfs-max-packet-size" == 1200
     && hysteria.password == "__MIHOMO_HY2_PASSWORD_11-vpn-fixture-20-vpn-mihomo-hysteria2_cHJvYmU__"
+    && mieru.name == "11-vpn-fixture-9-vpn-mieru-cHJvYmU-mieru"
+    && mieru.server == "192.0.2.13"
+    && mieru.port == 8443
+    && mieru.username == "cHJvYmU"
+    && mieru.password == "__MIHOMO_MIERU_PASSWORD_11-vpn-fixture-9-vpn-mieru_cHJvYmU__"
+    && mieru.transport == "TCP"
+    && mieru.multiplexing == "MULTIPLEXING_LOW"
+    && mieru."handshake-mode" == "HANDSHAKE_STANDARD"
+    && mieru.udp
+    && !(mieru ? "traffic-pattern")
+    && !(mieru ? tls)
+    && !(mieru ? sni)
     && awg."private-key" == "__MIHOMO_AMNEZIAWG_PRIVATE_KEY_11-vpn-fixture-13-vpn-amneziawg__"
     && awg."amnezia-wg-option".version == 3
     &&
@@ -716,6 +839,15 @@ let
       ;
     tokenLengthValidationPresent = lib.hasInfix "wc -c" publicationScript;
     tokenPatternValidationPresent = lib.hasInfix "^[A-Za-z0-9_-]{32,128}$" publicationScript;
+    base64urlCredentialValidationPresent = lib.hasInfix "^[A-Za-z0-9_-]+$" publicationScript;
+    base64urlCredentialLengthValidationPresent = lib.hasInfix "value_count\" -gt 64" publicationScript;
+    explicitMieruCredentialBinding =
+      lib.sort builtins.lessThan consumerMachine.sops.secrets."fixture-mieru-password".restartUnits
+      == lib.sort builtins.lessThan [
+        "mita.service"
+        "${publicationUnitName}.service"
+      ]
+      && lib.hasInfix consumerMachine.sops.secrets."fixture-mieru-password".path publicationScript;
     explicitAwgClientKeyBinding =
       consumerMachine.sops.secrets."fixture-awg-client-private-key".restartUnits
       == [ "${publicationUnitName}.service" ]
@@ -728,6 +860,7 @@ let
     clientDnsContract
     && clientDnsRenderVariantsContract
     && mihomoContract
+    && mieruExportContract
     && singBoxContract
     && routeContract
     && dnsContract
@@ -748,6 +881,8 @@ if !contract then
         disjointPublisherContract
         disjointPublisherResults
         mihomoContract
+        mieruContractResults
+        mieruExportContract
         namespaceContract
         namespaceResults
         negativeContract
@@ -771,6 +906,8 @@ else
       disjointPublisherContract
       disjointPublisherResults
       mihomoContract
+      mieruContractResults
+      mieruExportContract
       namespaceContract
       namespaceResults
       negativeContract

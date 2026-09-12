@@ -1,6 +1,6 @@
 # Clanwright VPN
 
-Seven VPN and DNS modules for Clan/NixOS on `x86_64-linux`.
+Eight VPN and DNS modules for Clan/NixOS on `x86_64-linux`.
 
 | Module | Implementation |
 | --- | --- |
@@ -8,6 +8,7 @@ Seven VPN and DNS modules for Clan/NixOS on `x86_64-linux`.
 | [Hysteria2](clanServices/mihomo-hysteria2/README.md) | **Deprecated**; Mihomo with Gecko, retained for compatibility |
 | [AmneziaWG](clanServices/amneziawg/README.md) | Userspace AmneziaWG 3 |
 | [NaiveProxy](clanServices/naiveproxy/README.md) | Caddy forward proxy |
+| [Mieru](clanServices/mieru/README.md) | Native mita, TCP with UDP relay |
 | [Client profiles](clanServices/vpn-client-profiles/README.md) | Mihomo and sing-box profile publisher |
 | [AdGuard Home](clanServices/adguardhome/README.md) | DNS/DoH front end and dnsproxy reserve |
 | [Unbound](clanServices/unbound/README.md) | Loopback recursive DNS backend |

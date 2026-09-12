@@ -1,6 +1,6 @@
 # Architecture
 
-The seven modules are independently selectable and share one versioned flake.
+The eight modules are independently selectable and share one versioned flake.
 Their public entrypoints are listed in [contracts](contracts.md).
 
 ## Ownership
@@ -29,6 +29,13 @@ The flake does not import a consumer checkout. TCP tuning belongs to the consume
 - NaiveProxy contributes a Caddy `forward_proxy` fragment to a consumer-selected
   public site. The consumer supplies Network's Caddy package with the required
   plugins.
+- Mieru runs stock native `mita` in its own service, with a TCP transport and
+  UDP relay over TCP. It requires no domain or certificate. The process binds
+  its port on wildcard addresses; module firewall guards restrict ingress to
+  the consumer-selected IPv4 and restrict service-originated destinations.
+  Consumer supplies the system resolver addresses and owns host DNS configuration.
+  Mieru is selectable in both Mihomo profiles, including their ordinary Auto
+  groups when the consumer includes the provider. It is not exported to sing-box.
 
 The profile publisher passes selected typed provider exports and per-device
 bindings directly to its renderer.

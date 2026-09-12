@@ -170,6 +170,7 @@ let
           "vless-xhttp"
           "hysteria2"
           "amneziawg"
+          "mieru"
         ];
       };
       profileNames = lib.mkOption {

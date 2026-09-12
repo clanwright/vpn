@@ -32,6 +32,7 @@ let
   publicationUnit = units.${publicationUnitName};
   refreshUnit = units.${refreshUnitName};
   caddyUnit = units.caddy;
+  mieruPasswordSecret = machine.sops.secrets."fixture-mieru-password";
   pathTokenSecret = machine.sops.secrets."mihomo-client-fixture-cHJvYmU-path-token";
   tmpfilesRules = machine.systemd.tmpfiles.rules;
   afterFinalPrivateReset = lib.last (lib.splitString "private_tmp_files=()" publicationUnit.script);
@@ -88,11 +89,25 @@ let
   contract =
     builtins.attrNames config.inventory.instances
     == lib.sort builtins.lessThan (supportNames ++ serviceNames)
-    && builtins.length (builtins.attrNames config._services.allServices) == 10
+    && builtins.length (builtins.attrNames config._services.allServices) == 11
     && machine.services.xray.enable
     && units ? xray
     && units ? mihomo-hysteria2
     && machine.sops.templates ? "mihomo-hysteria2.json"
+    && units ? mita
+    && machine.sops.templates ? "mita.json"
+    && machine.sops.templates."mita.json".owner == "mita"
+    && machine.sops.templates."mita.json".group == "mita"
+    && machine.sops.templates."mita.json".mode == "0400"
+    && machine.sops.templates."mita.json".restartUnits == [ "mita.service" ]
+    && mieruPasswordSecret.owner == "root"
+    && mieruPasswordSecret.group == "root"
+    && mieruPasswordSecret.mode == "0400"
+    &&
+      lib.sort builtins.lessThan mieruPasswordSecret.restartUnits == lib.sort builtins.lessThan [
+        "mita.service"
+        publisherIntegration.publicationUnit
+      ]
     && !((machine.networkCore.mihomo or { }) ? vlessXhttp)
     && !((machine.networkCore.mihomo or { }) ? hysteria2)
     && !(units ? mihomo-gateway)

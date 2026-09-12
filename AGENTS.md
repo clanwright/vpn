@@ -1,7 +1,7 @@
 # Repository instructions
 
 This repository owns the public implementation, defaults, typed contracts,
-exact packages and checks for its seven VPN/DNS Clan modules. Preserve stable
+exact packages and checks for its eight VPN/DNS Clan modules. Preserve stable
 module IDs and reject consumer-internal imports, package substitution and
 reverse dependencies on a consumer checkout.
 

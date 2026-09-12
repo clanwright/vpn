@@ -12,6 +12,7 @@ let
   serviceSpecs = {
     vpn-mihomo-vless-xhttp.role = "gateway";
     vpn-mihomo-hysteria2.role = "gateway";
+    vpn-mieru.role = "gateway";
     vpn-amneziawg.role = "gateway";
     vpn-naiveproxy.role = "addon";
     vpn-client-profiles.role = "publisher";
@@ -42,6 +43,10 @@ let
     vpn-mihomo-hysteria2 = {
       role = "gateway";
       protocol = "hysteria2";
+    };
+    vpn-mieru = {
+      role = "gateway";
+      protocol = "mieru";
     };
     vpn-amneziawg = {
       role = "gateway";
@@ -167,6 +172,42 @@ let
         lib.recursiveUpdate awgProvider { endpoint.transport = "tcp"; }
       )) true
     )).success;
+  mieruProvider = providerExports.vpn-mieru;
+  selectMieruProvider = raw: selectProvider "vpn-mieru" raw;
+  mieruEndpointContract =
+    mieruProvider.endpoint.domain == null
+    && mieruProvider.endpoint.ipv4 == "192.0.2.13"
+    && mieruProvider.endpoint.port == 8443
+    && mieruProvider.endpoint.transport == "tcp"
+    && builtins.deepSeq (selectMieruProvider mieruProvider) true
+    && !(builtins.tryEval (
+      builtins.deepSeq (selectMieruProvider (
+        lib.recursiveUpdate mieruProvider { endpoint.domain = "mieru.example.invalid"; }
+      )) true
+    )).success
+    && !(builtins.tryEval (
+      builtins.deepSeq (selectMieruProvider (
+        mieruProvider
+        // {
+          endpoint = builtins.removeAttrs mieruProvider.endpoint [ "ipv4" ];
+        }
+      )) true
+    )).success
+    && !(builtins.tryEval (
+      builtins.deepSeq (selectMieruProvider (
+        lib.recursiveUpdate mieruProvider { endpoint.unexpected = true; }
+      )) true
+    )).success
+    && !(builtins.tryEval (
+      builtins.deepSeq (selectMieruProvider (
+        lib.recursiveUpdate mieruProvider { endpoint.ipv4 = "192.0.2.999"; }
+      )) true
+    )).success
+    && !(builtins.tryEval (
+      builtins.deepSeq (selectProvider "vpn-mihomo-vless-xhttp" (
+        lib.recursiveUpdate providerExports.vpn-mihomo-vless-xhttp { endpoint.domain = null; }
+      )) true
+    )).success;
   naiveSettings =
     (lib.evalModules {
       modules = [
@@ -288,6 +329,7 @@ let
       (settingsFor "vpn-mihomo-vless-xhttp" "gateway") // { port = "443"; }
     ))
     (schemaResult "vpn-amneziawg" ((settingsFor "vpn-amneziawg" "gateway") // { peers = "fixture"; }))
+    (schemaResult "vpn-mieru" ((settingsFor "vpn-mieru" "gateway") // { port = "8443"; }))
     (schemaResult "dns-unbound" (
       (settingsFor "dns-unbound" "recursive-backend")
       // {
@@ -319,6 +361,7 @@ let
         machine.systemd.services ? mihomo-hysteria2
         && machine.sops.templates ? "mihomo-hysteria2.json"
         && !((machine.networkCore.mihomo or { }) ? hysteria2);
+      vpn-mieru = machine.systemd.services ? mita && machine.sops.templates ? "mita.json";
       vpn-amneziawg =
         machine.systemd.services ? wireguard-awg-fixture
         && !(machine.networking.wireguard.interfaces ? awg-fixture);
@@ -456,6 +499,7 @@ let
     && independentPlacements
     && combinedClanFixture.contract
     && awgTransportContract
+    && mieruEndpointContract
     && naiveProviderContract
     && packageAuthority
     && dnsStatePreserved;
@@ -466,6 +510,7 @@ if !contract then
       inherit
         closedSchemas
         awgTransportContract
+        mieruEndpointContract
         naiveProviderContract
         naiveProviderResults
         awgOverrideRejected
@@ -496,6 +541,7 @@ else
     inherit
       closedSchemas
       awgTransportContract
+      mieruEndpointContract
       naiveProviderContract
       naiveProviderResults
       dnsStatePreserved

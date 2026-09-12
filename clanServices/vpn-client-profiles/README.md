@@ -33,7 +33,7 @@ Publisher `enable = false`, `secretPrefix` и gateway address fields пусты
 
 Role экспортирует `vpnPublisher` и выбирает providers через raw Clan
 exports и `clanLib.selectExports`: `naiveproxy` требует addon, а
-`vless-xhttp`, `hysteria2`, `amneziawg` — gateway. Отсутствующий,
+`vless-xhttp`, `hysteria2`, `amneziawg`, `mieru` — gateway. Отсутствующий,
 выключенный, неоднозначный или несоответствующий provider блокирует
 генерацию. Renderer принимает выбранные typed `vpnProvider` exports напрямую;
 `providerRefs.profileNames` сужает их `profileNames` без промежуточных
@@ -42,6 +42,18 @@ protocol-specific adapter shapes.
 Поддержка `hysteria2` сохранена только для совместимости с существующими
 provider refs и профилями. Протокол deprecated и не рекомендуется для новых
 профилей после пользовательского сообщения о блокировке клиентских подключений.
+
+Mieru экспортируется только в Mihomo selective/full YAML: `transport = TCP`,
+`udp = true` (UDP relay внутри TCP), `MULTIPLEXING_LOW` и `HANDSHAKE_STANDARD`.
+Custom traffic pattern и TLS/SNI-параметры не добавляются. Consumer выбирает
+provider refs; выбранный Mieru участвует в обычных ручных selectors и Auto,
+без отдельного ограничения для нового протокола. Sing-box Mieru не поддерживает
+и продолжает публиковаться только при eligible Naive provider.
+
+Mieru credentials выбираются по имени device profile из `secretNames.users`.
+Пароль — 1–64 ASCII-байта из `A-Za-z0-9_-`, без padding, пробелов, NUL и
+переводов строк. Publisher проверяет raw bytes до подстановки, не обрезая их;
+невалидный пароль блокирует публикацию. Это совпадает с серверным контрактом.
 
 Имена proxies включают полный canonical machine ID и instance ID. Компоненты
 кодируются с длиной, поэтому разные пары machine/instance не могут дать одно

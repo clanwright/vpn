@@ -26,6 +26,7 @@ in
 rec {
   machine = {
     imports = [
+      ({ lib, ... }: { networking.nameservers = lib.mkDefault [ "127.0.0.1" ]; })
       (
         { lib, options, ... }:
         {
@@ -219,6 +220,19 @@ rec {
       obfsPasswordSecretName = "fixture-hysteria-obfs-password";
     };
 
+    vpn-mieru = vpnInstance "vpn-mieru" "gateway" {
+      enable = true;
+      ingressIPv4 = "192.0.2.13";
+      port = 8443;
+      users = [
+        {
+          name = "cHJvYmU";
+          passwordSecretName = "fixture-mieru-password";
+        }
+      ];
+      dnsResolverIPv4s = [ "127.0.0.1" ];
+    };
+
     vpn-amneziawg = vpnInstance "vpn-amneziawg" "gateway" {
       enable = true;
       interfaceName = "awg-fixture";
@@ -311,6 +325,12 @@ rec {
           instanceId = "vpn-mihomo-hysteria2";
           machine = machineName;
           protocol = "hysteria2";
+          profileNames = [ "cHJvYmU" ];
+        }
+        {
+          instanceId = "vpn-mieru";
+          machine = machineName;
+          protocol = "mieru";
           profileNames = [ "cHJvYmU" ];
         }
         {

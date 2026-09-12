@@ -11,6 +11,7 @@ the settings documented on each module page.
 | `@clanwright/vpn-mihomo-hysteria2` | [Hysteria2](../clanServices/mihomo-hysteria2/README.md) (**deprecated**; retained for compatibility) |
 | `@clanwright/vpn-amneziawg` | [AmneziaWG](../clanServices/amneziawg/README.md) |
 | `@clanwright/vpn-naiveproxy` | [NaiveProxy](../clanServices/naiveproxy/README.md) |
+| `@clanwright/vpn-mieru` | [Mieru](../clanServices/mieru/README.md) |
 | `@clanwright/vpn-client-profiles` | [Client profiles](../clanServices/vpn-client-profiles/README.md) |
 | `@clanwright/dns-adguardhome` | [AdGuard Home](../clanServices/adguardhome/README.md) |
 | `@clanwright/dns-unbound` | [Unbound](../clanServices/unbound/README.md) |
@@ -38,6 +39,15 @@ protocol; callers do not supply a separate role mapping.
 public keys have one canonical representation in `transportMetadata.peers`.
 Each AWG peer supplies `clientPrivateKeySecretName`; its exact consumer binding
 is exported through `secretNames.clientPrivateKey`.
+
+Mieru extends provider version 2 with protocol `mieru` and role `gateway`.
+Its endpoint requires numeric IPv4 and TCP; `domain = null` is permitted only
+for Mieru. Existing protocols still require their domain field. Its exact
+transport metadata contains `protocol`, `userNames` and
+`credentialEncoding = "base64url"`; `secretNames.users` maps those identities
+to consumer-owned secrets. No TLS or arbitrary transport attributes are accepted.
+Clients require an updated publisher to consume the new protocol; existing
+provider exports retain their schema and behavior.
 
 Consumers must use public attributes, without importing internal files under
 `modules/`, `packages/`, `checks/` or `clanServices/`. Extending the interface
