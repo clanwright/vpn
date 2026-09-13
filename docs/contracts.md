@@ -8,7 +8,6 @@ the settings documented on each module page.
 | Stable module ID | Settings and integration |
 | --- | --- |
 | `@clanwright/vpn-mihomo-vless-xhttp` | [VLESS/XHTTP](../clanServices/mihomo-vless-xhttp/README.md) |
-| `@clanwright/vpn-mihomo-hysteria2` | [Hysteria2](../clanServices/mihomo-hysteria2/README.md) (**deprecated**; retained for compatibility) |
 | `@clanwright/vpn-amneziawg` | [AmneziaWG](../clanServices/amneziawg/README.md) |
 | `@clanwright/vpn-naiveproxy` | [NaiveProxy](../clanServices/naiveproxy/README.md) |
 | `@clanwright/vpn-mieru` | [Mieru](../clanServices/mieru/README.md) |
@@ -19,8 +18,6 @@ the settings documented on each module page.
 | `@clanwright/dns-unbound` | [Unbound](../clanServices/unbound/README.md) |
 
 The VLESS module ID contains `mihomo` for identity stability; its runtime is Xray.
-Hysteria2 is discouraged for new use after user-reported blocking of client
-connections.
 
 ## Exports and helpers
 
@@ -96,7 +93,7 @@ SOPS bindings and declared runtime paths. Module pages specify each secret's
 format; literal template substitution does not escape arbitrary values.
 
 The consumer also supplies addresses, interfaces, certificates, Caddy site
-claims and personal domain/filter rules. Direct Xray, Hysteria2 and AmneziaWG scoped
+claims and personal domain/filter rules. Direct Xray and AmneziaWG scoped
 ingress requires an enabled nftables firewall; those roles assert that backend.
 
 Xray's optional `localListener` binds only to IPv4 loopback behind a
@@ -105,9 +102,7 @@ continue to define the provider endpoint; provider schema version 2 is unchanged
 The local mode creates no ingress firewall rule. SNI routing, public exposure
 and web-server composition belong to the consumer; TLS must reach Xray intact.
 
-Hysteria2 requires the NixOS option
-`clanwright.vpn.hysteria2.masqueradeRoot` to name an absolute Nix store directory
-containing public static content. NaiveProxy requires one explicit listener on
+NaiveProxy requires one explicit listener on
 its selected public-site claim, matching the declared bind address. The consumer
 supplies AdGuard's Unbound upstream binding and any systemd startup relationship
 between the two services.
@@ -155,7 +150,8 @@ machine; one static route configuration belongs to one Caddy virtual host.
 
 The profile renderer is internal. Consumers use the publisher role and its
 integration output rather than importing renderer files. See the
-[migration procedure](operations/migrate-contracts.md) for the breaking changes.
+[migration procedure](operations/migrate-contracts.md) for provider schema 2 and
+the separated publication/exposure contracts.
 
 Roles with an `enable` setting use it alone to control their declarations.
 Disabled roles do not retain service or secret declarations; credential storage
@@ -176,7 +172,7 @@ settings therefore keep their enabled behavior when this setting is omitted.
 | --- | --- |
 | `/<token>/mihomo.yaml` | Selective routing in Rule mode. |
 | `/<token>/mihomo-full.yaml` | Full routing in Rule mode with private DIRECT exceptions. |
-| `/<token>/profile.json` | sing-box Rule/Global modes with separate TCP/UDP selectors; present with an eligible Naive, Hysteria2 or AnyTLS provider. |
+| `/<token>/profile.json` | sing-box Rule/Global modes with separate TCP/UDP selectors; present with an eligible Naive or AnyTLS provider. |
 
 These are templates, not live profile URLs. Per-device eligibility, DNS and
 routing policy are documented in [client profiles](../clanServices/vpn-client-profiles/README.md).

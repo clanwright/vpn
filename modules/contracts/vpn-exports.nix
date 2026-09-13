@@ -105,26 +105,6 @@ let
           type = types.nullOr (types.submodule dohModule);
           default = null;
         };
-        sni = lib.mkOption {
-          type = nullableNonEmptyStr;
-          default = null;
-        };
-        alpn = lib.mkOption {
-          type = policyType "alpn" (types.nullOr (nonEmptyListOf nonEmptyStr));
-          default = null;
-        };
-        obfsName = lib.mkOption {
-          type = policyType "obfsName" nullableNonEmptyStr;
-          default = null;
-        };
-        obfsMinPacketSize = lib.mkOption {
-          type = policyType "obfsMinPacketSize" (types.nullOr types.int);
-          default = null;
-        };
-        obfsMaxPacketSize = lib.mkOption {
-          type = policyType "obfsMaxPacketSize" (types.nullOr types.int);
-          default = null;
-        };
         tlsVerify = lib.mkOption {
           type = policyType "tlsVerify" (types.nullOr types.bool);
           default = null;
@@ -185,17 +165,6 @@ let
       "fingerprint"
       "doh"
     ];
-    hysteria2 = [
-      "protocol"
-      "sni"
-      "alpn"
-      "userNames"
-      "obfsName"
-      "obfsMinPacketSize"
-      "obfsMaxPacketSize"
-      "tlsVerify"
-      "credentialEncoding"
-    ];
     amneziawg = [
       "protocol"
       "serverPublicKey"
@@ -255,10 +224,6 @@ let
         type = types.nullOr (types.attrsOf safeSecretNameType);
         default = null;
       };
-      obfsPassword = lib.mkOption {
-        type = types.nullOr safeSecretNameType;
-        default = null;
-      };
       clientPrivateKey = lib.mkOption {
         type = types.nullOr (types.attrsOf safeSecretNameType);
         default = null;
@@ -274,10 +239,6 @@ let
     vless-xhttp = [
       "realityPrivateKey"
       "vlessUuid"
-    ];
-    hysteria2 = [
-      "users"
-      "obfsPassword"
     ];
     amneziawg = [
       "clientPrivateKey"
@@ -327,7 +288,6 @@ let
           types.enum [
             "naiveproxy"
             "vless-xhttp"
-            "hysteria2"
             "amneziawg"
             "mieru"
             "anytls"
@@ -539,22 +499,6 @@ let
     then
       fail context "VLESS/XHTTP public transport metadata is incomplete"
     else if
-      protocol == "hysteria2"
-      && (
-        !isNonEmptyString (metadata.sni or null)
-        || !allStrings (metadata.alpn or [ ])
-        || metadata.alpn != fixedPolicy.alpn
-        || !allStrings (metadata.userNames or [ ])
-        || !isNonEmptyString (metadata.obfsName or null)
-        || (metadata.obfsName or null) != fixedPolicy.obfsName
-        || (metadata.obfsMinPacketSize or null) != fixedPolicy.obfsMinPacketSize
-        || (metadata.obfsMaxPacketSize or null) != fixedPolicy.obfsMaxPacketSize
-        || (metadata.tlsVerify or null) != fixedPolicy.tlsVerify
-        || (metadata.credentialEncoding or null) != fixedPolicy.credentialEncoding
-      )
-    then
-      fail context "Hysteria2 public transport metadata is incomplete"
-    else if
       protocol == "amneziawg"
       && (
         !isNonEmptyString (metadata.serverPublicKey or null)
@@ -651,9 +595,6 @@ let
           else if protocol == "vless-xhttp" then
             safeSecretName (secretNames.realityPrivateKey or null)
             && credentialMapExact (raw.profileNames or [ ]) secretNames.vlessUuid
-          else if protocol == "hysteria2" then
-            safeSecretName (secretNames.obfsPassword or null)
-            && credentialMapExact metadata.userNames secretNames.users
           else if protocol == "amneziawg" then
             credentialMapExact (raw.profileNames or [ ]) secretNames.clientPrivateKey
             && safeSecretName (secretNames.headerProtectionKey or null)
@@ -704,7 +645,6 @@ let
             peerNames == raw.profileNames && peerNames == lib.unique peerNames
           )
         )
-        && (protocol != "hysteria2" || metadata.userNames == raw.profileNames)
         && (protocol != "mieru" || metadata.userNames == raw.profileNames)
         && (protocol != "anytls" || metadata.userNames == raw.profileNames)
         && (protocol != "anytls" || metadata.tlsServerName == endpoint.domain)

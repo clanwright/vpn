@@ -72,16 +72,6 @@ let
             vlessUuid = secretMap "vless-${machine}" profileNames;
           };
         };
-        hysteria2 = {
-          transportMetadata = {
-            sni = domain;
-            userNames = profileNames;
-          };
-          secretNames = {
-            users = secretMap "hy2-${machine}" profileNames;
-            obfsPassword = "fixture-hy2-obfs-${machine}";
-          };
-        };
         amneziawg = {
           transportMetadata = {
             serverPublicKey = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=";
@@ -190,7 +180,6 @@ let
     autoProtocols = [
       "naiveproxy"
       "vless-xhttp"
-      "hysteria2"
       "mieru"
       "anytls"
       "trusttunnel"
@@ -212,7 +201,6 @@ let
         {
           naiveproxy = "edge";
           vless-xhttp = "vless";
-          hysteria2 = "hysteria2";
           amneziawg = "amneziawg";
           mieru = "mieru";
           anytls = "anytls";
@@ -237,7 +225,6 @@ let
           outbound:
           builtins.elem outbound.type [
             "naive"
-            "hysteria2"
             "anytls"
           ]
         ) renderedProfile.profileJsonTemplate.outbounds
@@ -269,7 +256,6 @@ let
             map (providerTag user) (
               eligible user [
                 "vless-xhttp"
-                "hysteria2"
                 "amneziawg"
                 "mieru"
                 "anytls"
@@ -282,7 +268,6 @@ let
             map (providerTag user) (
               eligible user [
                 "naiveproxy"
-                "hysteria2"
                 "anytls"
               ]
             )
@@ -370,7 +355,6 @@ let
           && renderedProfile.mihomoFullTemplate == null
         else if
           builtins.elem protocol [
-            "hysteria2"
             "anytls"
           ]
         then
@@ -478,7 +462,6 @@ let
         expectedTcp = map (providerTag "alice") (
           eligible "alice" [
             "vless-xhttp"
-            "hysteria2"
             "mieru"
             "anytls"
             "trusttunnel"
@@ -502,13 +485,11 @@ let
         expectedTcp = map (providerTag "alice") (
           eligible "alice" [
             "naiveproxy"
-            "hysteria2"
             "anytls"
           ]
         );
         expectedUdp = map (providerTag "alice") (
           eligible "alice" [
-            "hysteria2"
             "anytls"
           ]
         );
@@ -552,8 +533,8 @@ let
       !(profileSchemaAccepts {
         name = "schema-duplicate";
         autoProtocols = [
-          "hysteria2"
-          "hysteria2"
+          "anytls"
+          "anytls"
         ];
       });
     unknownRejected =

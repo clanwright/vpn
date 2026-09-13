@@ -13,11 +13,6 @@ let
       service = "@clanwright/vpn-mihomo-vless-xhttp";
       transport = "tcp";
     };
-    hysteria2 = {
-      role = "gateway";
-      service = "@clanwright/vpn-mihomo-hysteria2";
-      transport = "udp";
-    };
     amneziawg = {
       role = "gateway";
       service = "@clanwright/vpn-amneziawg";
@@ -64,14 +59,6 @@ let
   fixedTransportMetadata = {
     naiveproxy = { };
     vless-xhttp = { };
-    hysteria2 = {
-      alpn = [ "h3" ];
-      obfsName = "gecko";
-      obfsMinPacketSize = 512;
-      obfsMaxPacketSize = 1200;
-      tlsVerify = true;
-      credentialEncoding = "base64url";
-    };
     amneziawg = {
       generation = 3;
       profile = awgProfile;

@@ -39,7 +39,6 @@ let
   protocolValues = [
     "naiveproxy"
     "vless-xhttp"
-    "hysteria2"
     "amneziawg"
     "mieru"
     "anytls"

@@ -59,7 +59,7 @@ only tracked and non-ignored untracked files. The snapshot excludes `.git`,
 extensions before Nix copies the source into its store. The script removes the
 snapshot on exit.
 
-The evaluation suite covers the ten stable module IDs, closed schemas,
+The evaluation suite covers the nine stable module IDs, closed schemas,
 negative security overrides, generated server and client configuration
 structures, service isolation, package authority, secret/template wiring and
 combined Clan composition. Publisher checks cover static log suppression,
@@ -120,7 +120,7 @@ start, DNS answers or fallback behave at runtime, VPN authentication or relay
 works, or any consumer machine adopted the change. Those runtime properties
 remain unverified under the defined test boundary.
 
-AWG and Hysteria2 startup guard failure scenarios and external acceptance are
-listed in [VPN readiness](vpn-readiness.md). Their pure Nix contracts inspect
+AWG startup guard failure scenarios and external acceptance are listed in
+[VPN readiness](vpn-readiness.md). Its pure Nix contracts inspect
 the generated guards; passing those contracts does not prove that the guards
 execute correctly under systemd.

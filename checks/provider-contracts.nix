@@ -38,25 +38,6 @@ let
     };
   };
 
-  validHysteria = providerEnvelope.mkProvider {
-    protocol = "hysteria2";
-    instanceId = "fixture.hysteria";
-    machine = "fixture.machine";
-    endpoint = {
-      domain = "hysteria.example.invalid";
-      ipv4 = "192.0.2.11";
-      port = 443;
-    };
-    transportMetadata = {
-      sni = "hysteria.example.invalid";
-      userNames = [ "device.one" ];
-    };
-    profileNames = [ "device.one" ];
-    secretNames = {
-      users."device.one" = "fixture/device.one-hysteria-password";
-      obfsPassword = "fixture/hysteria-obfs-password";
-    };
-  };
   validMieru = providerEnvelope.mkProvider {
     protocol = "mieru";
     instanceId = "fixture.mieru";
@@ -184,40 +165,10 @@ let
     endpoint.transport = "udp";
   };
   wrongMetadataProtocol = lib.recursiveUpdate validProvider {
-    transportMetadata.protocol = "hysteria2";
+    transportMetadata.protocol = "anytls";
   };
 
   fixedPolicyCases = [
-    {
-      name = "hysteriaAlpn";
-      protocol = "hysteria2";
-      value = lib.recursiveUpdate validHysteria { transportMetadata.alpn = [ "h2" ]; };
-    }
-    {
-      name = "hysteriaObfsName";
-      protocol = "hysteria2";
-      value = lib.recursiveUpdate validHysteria { transportMetadata.obfsName = "salamander"; };
-    }
-    {
-      name = "hysteriaObfsMinPacketSize";
-      protocol = "hysteria2";
-      value = lib.recursiveUpdate validHysteria { transportMetadata.obfsMinPacketSize = 511; };
-    }
-    {
-      name = "hysteriaObfsMaxPacketSize";
-      protocol = "hysteria2";
-      value = lib.recursiveUpdate validHysteria { transportMetadata.obfsMaxPacketSize = 1201; };
-    }
-    {
-      name = "hysteriaTlsVerify";
-      protocol = "hysteria2";
-      value = lib.recursiveUpdate validHysteria { transportMetadata.tlsVerify = false; };
-    }
-    {
-      name = "hysteriaCredentialEncoding";
-      protocol = "hysteria2";
-      value = lib.recursiveUpdate validHysteria { transportMetadata.credentialEncoding = "plain"; };
-    }
     {
       name = "mieruCredentialEncoding";
       protocol = "mieru";
@@ -286,7 +237,7 @@ let
       transport = "udp";
     };
     transportMetadata = {
-      protocol = "hysteria2";
+      protocol = "anytls";
       userNames = [ "device.one" ];
       credentialEncoding = "plain";
     };
@@ -306,11 +257,6 @@ let
     amneziawg = {
       role = "gateway";
       service = "@clanwright/vpn-amneziawg";
-      transport = "udp";
-    };
-    hysteria2 = {
-      role = "gateway";
-      service = "@clanwright/vpn-mihomo-hysteria2";
       transport = "udp";
     };
     mieru = {
@@ -391,7 +337,6 @@ let
   typeContract = builtins.all (value: value) (builtins.attrValues typeResults);
   selectorResults = {
     validVless = selectorAccepts "vless-xhttp" validProvider;
-    validHysteria = selectorAccepts "hysteria2" validHysteria;
     validMieru = selectorAccepts "mieru" validMieru;
     validAnytls = selectorAccepts "anytls" validAnytls;
     validTrustTunnel = selectorAccepts "trusttunnel" validTrustTunnel;

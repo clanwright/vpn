@@ -1,6 +1,6 @@
 # Architecture
 
-The ten modules are independently selectable and share one versioned flake.
+The nine modules are independently selectable and share one versioned flake.
 Their public entrypoints are listed in [contracts](contracts.md).
 
 ## Ownership
@@ -20,10 +20,6 @@ The flake does not import a consumer checkout. TCP tuning belongs to the consume
   or on an optional loopback listener behind consumer-owned TCP passthrough.
   Public profile addresses and ports are independent of that local listener;
   the consumer owns shared-port SNI routing and HTTPS composition.
-- Deprecated Hysteria2 runs in a separate Mihomo service with Gecko obfuscation
-  and serves static masquerade content from a consumer-supplied store directory.
-  It is retained for compatibility and discouraged for new use after a
-  user report of blocked client connections.
 - AmneziaWG runs as a userspace generation-3 UDP gateway with a runtime
   header-protection key and individual peer keys.
 - NaiveProxy contributes a Caddy `forward_proxy` fragment to a consumer-selected
@@ -69,11 +65,11 @@ each provider; consumers select those exports through the public helpers.
 The profile publisher normalizes its settings and passes selected typed
 provider exports and per-device bindings to its renderer.
 It renders Mihomo selective/full profiles and publishes a sing-box profile
-for devices with an eligible Naive, Hysteria2 or AnyTLS provider. Personal proxy domain additions
+for devices with an eligible Naive or AnyTLS provider. Personal proxy domain additions
 come from the consumer.
 
 The publisher separates manual availability from automatic protocol selection.
-Sing-box uses independent TCP and UDP selectors; protected UDP uses Hysteria2 or AnyTLS
+Sing-box uses independent TCP and UDP selectors; protected UDP uses AnyTLS
 or is rejected when no compatible provider exists. Both formats capture and
 reject external IPv6 while preserving local IPv6 and Tailscale access.
 

@@ -11,7 +11,6 @@ let
   consume = import ./lib/consumer.nix { inherit inputs root self; };
   serviceSpecs = {
     vpn-mihomo-vless-xhttp.role = "gateway";
-    vpn-mihomo-hysteria2.role = "gateway";
     vpn-mieru.role = "gateway";
     vpn-anytls.role = "gateway";
     vpn-trusttunnel.role = "gateway";
@@ -42,10 +41,6 @@ let
     vpn-mihomo-vless-xhttp = {
       role = "gateway";
       protocol = "vless-xhttp";
-    };
-    vpn-mihomo-hysteria2 = {
-      role = "gateway";
-      protocol = "hysteria2";
     };
     vpn-mieru = {
       role = "gateway";
@@ -385,10 +380,6 @@ let
         machine.services.xray.enable
         && machine.systemd.services ? xray
         && !((machine.networkCore.mihomo or { }) ? vlessXhttp);
-      vpn-mihomo-hysteria2 =
-        machine.systemd.services ? mihomo-hysteria2
-        && machine.sops.templates ? "mihomo-hysteria2.json"
-        && !((machine.networkCore.mihomo or { }) ? hysteria2);
       vpn-mieru = machine.systemd.services ? mita && machine.sops.templates ? "mita.json";
       vpn-anytls = machine.systemd.services ? anytls && machine.sops.templates ? "anytls.json";
       vpn-trusttunnel =
@@ -413,7 +404,6 @@ let
           (builtins.elem name [
             "vpn-anytls"
             "vpn-trusttunnel"
-            "vpn-mihomo-hysteria2"
           ])
           {
             security.acme = {
@@ -497,8 +487,7 @@ let
     minimalProviderPresent =
       minimalPublisher.machine.services.xray.enable && minimalPublisherUnits ? xray;
     minimalHasNoUnrelatedServices =
-      !(minimalPublisherUnits ? mihomo-hysteria2)
-      && !(minimalPublisherUnits ? mita)
+      !(minimalPublisherUnits ? mita)
       && !(minimalPublisherUnits ? trusttunnel)
       && !(minimalPublisherUnits ? wireguard-awg-fixture)
       && !(minimalPublisherUnits ? caddy)

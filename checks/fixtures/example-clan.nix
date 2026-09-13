@@ -27,22 +27,6 @@ rec {
   machine = {
     imports = [
       ({ lib, ... }: { networking.nameservers = lib.mkDefault [ "127.0.0.1" ]; })
-      (
-        { lib, options, ... }:
-        {
-          config =
-            lib.optionalAttrs
-              (lib.hasAttrByPath [
-                "clanwright"
-                "vpn"
-                "hysteria2"
-                "masqueradeRoot"
-              ] options)
-              {
-                clanwright.vpn.hysteria2.masqueradeRoot = "/nix/store/00000000000000000000000000000000-hysteria-static-cover/share/hysteria";
-              };
-        }
-      )
     ];
     nixpkgs.hostPlatform = "x86_64-linux";
     boot.isContainer = true;
@@ -205,21 +189,6 @@ rec {
       profiles = map (profile: profile // { realityShortId = "0123456789abcdef"; }) profiles;
     };
 
-    vpn-mihomo-hysteria2 = vpnInstance "vpn-mihomo-hysteria2" "gateway" {
-      enable = true;
-      listenIPv4 = "192.0.2.11";
-      port = 443;
-      serverName = "hysteria.example.invalid";
-      users = [
-        {
-          name = "cHJvYmU";
-          passwordSecretName = "fixture-hysteria-password";
-        }
-      ];
-      acmeCertName = "fixture";
-      obfsPasswordSecretName = "fixture-hysteria-obfs-password";
-    };
-
     vpn-mieru = vpnInstance "vpn-mieru" "gateway" {
       enable = true;
       ingressIPv4 = "192.0.2.13";
@@ -354,12 +323,6 @@ rec {
           instanceId = "vpn-mihomo-vless-xhttp";
           machine = machineName;
           protocol = "vless-xhttp";
-          profileNames = [ "cHJvYmU" ];
-        }
-        {
-          instanceId = "vpn-mihomo-hysteria2";
-          machine = machineName;
-          protocol = "hysteria2";
           profileNames = [ "cHJvYmU" ];
         }
         {

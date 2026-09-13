@@ -75,14 +75,6 @@ let
         system
         ;
     };
-    hysteria-contracts = import ./hysteria-contracts.nix {
-      inherit
-        inputs
-        pkgs
-        self
-        system
-        ;
-    };
     mieru-contracts = import ./mieru-contracts.nix {
       inherit
         inputs

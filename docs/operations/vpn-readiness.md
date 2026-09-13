@@ -1,6 +1,6 @@
 # VPN startup readiness and consumer acceptance
 
-AWG, Hysteria2 and Mieru startup guards check local configuration readiness during
+AWG and Mieru startup guards check local configuration readiness during
 `ExecStartPost`. A failed guard fails activation and invokes the service's
 restart policy. An `active` state is not evidence of an external handshake or
 working data transfer, and startup guards are not continuous health monitoring.
@@ -29,29 +29,6 @@ After deployment, independently verify handshake and data transfer for every
 intended peer. Failure of a peer that was installed successfully requires its
 own diagnosis; missing other peers does not establish its cause or justify a
 routing/NAT change.
-
-## Hysteria2
-
-Hysteria2 is deprecated, retained for compatibility and discouraged for new
-use after user-reported blocking of client connections.
-
-Use synthetic TLS materials delivered through the real unit's `LoadCredential`
-mechanism, preserving its service identity and sandbox. Verify that the TLS
-paths and `SAFE_PATHS` refer to the same service credential directory, and that
-the main Mihomo process owns a UDP socket on the exact configured IPv4 and port
-before activation completes.
-
-Independently test rejected TLS paths, invalid TLS materials and a running
-Mihomo process without the intended listener. Each must fail activation within
-the bounded startup interval. A socket owned by another process, or one bound
-to a different address or port, must not satisfy readiness. Retain sanitized
-service status and the guard's diagnostic reason without copying credentials
-or rendered secret configuration into reports.
-
-After deployment, independently verify external Hysteria2 authentication and
-TCP/UDP relay using the intended consumer profile. A local UDP socket alone
-does not establish TLS correctness, authentication, firewall reachability or
-working transfer.
 
 ## Mieru
 

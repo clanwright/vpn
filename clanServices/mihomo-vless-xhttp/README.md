@@ -3,8 +3,7 @@
 ## Purpose and role
 
 The stable module ID `@clanwright/vpn-mihomo-vless-xhttp` provides one independent stock Xray
-VLESS/REALITY/XHTTP gateway. It does not share process, configuration, package,
-or restart state with Hysteria2.
+VLESS/REALITY/XHTTP gateway.
 
 ## Settings
 

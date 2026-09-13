@@ -33,7 +33,7 @@ Publisher `enable = false`, `secretPrefix` и gateway address fields пусты
 
 Role экспортирует `vpnPublisher` и выбирает providers через raw Clan
 exports и `clanLib.selectExports`: `naiveproxy` требует addon, а
-`vless-xhttp`, `hysteria2`, `amneziawg`, `mieru`, `anytls`, `trusttunnel` — gateway. Отсутствующий,
+`vless-xhttp`, `amneziawg`, `mieru`, `anytls`, `trusttunnel` — gateway. Отсутствующий,
 выключенный, неоднозначный или несоответствующий provider блокирует
 генерацию. Renderer принимает выбранные typed `vpnProvider` exports напрямую;
 `providerRefs.profileNames` сужает их `profileNames` без промежуточных
@@ -47,10 +47,6 @@ name, одно из закрытых правил чтения (`literal`, `wire
 каждый placeholder связан ровно один раз, target существует, а asset reference
 есть в каталоге. Publication применяет этот manifest без protocol branches и
 без знания полей конкретного client format.
-
-Поддержка `hysteria2` сохранена только для совместимости с существующими
-provider refs и профилями. Протокол deprecated и не рекомендуется для новых
-профилей после пользовательского сообщения о блокировке клиентских подключений.
 
 Mieru экспортируется только в Mihomo selective/full YAML: `transport = TCP`,
 `udp = true` (UDP relay внутри TCP), `MULTIPLEXING_LOW` и `HANDSHAKE_STANDARD`.
@@ -107,9 +103,9 @@ Mihomo поступает из `apps-nixpkgs`, а Sing-box — из
 
 Sing-box профиль сохраняет Naive как отдельный HTTPS/H2 outbound с проверкой
 TLS, `quic = false`, `udp_over_tcp = false` и `insecure_concurrency = 0`.
-Hysteria2 с существующим Gecko и AnyTLS добавляются в sing-box как TCP/UDP outbounds;
-требуется core 1.14.0 или новее. TCP и UDP имеют отдельные selectors. Защищённый
-UDP направляется через Hysteria2 или AnyTLS, а при отсутствии обоих отклоняется без DIRECT
+AnyTLS добавляется в sing-box как TCP/UDP outbound; требуется core 1.14.0 или
+новее. TCP и UDP имеют отдельные selectors. Защищённый UDP направляется через
+AnyTLS, а при его отсутствии отклоняется без DIRECT
 fallback. Прямые исключения для
 LAN, router, Tailscale и DNS обрабатываются раньше. Native `Rule`/`Global`
 режимы имеют независимые `SELECTIVE`/`FULL` selectors и Auto selections.
@@ -119,7 +115,7 @@ DIRECT не входит в VPN selectors: при отказе выбранно�
 не переключается автоматически, а отключение VPN остаётся явным действием
 пользователя в клиенте.
 
-Если для публикуемого Sing-box профиля нет eligible Naive, Hysteria2 или AnyTLS provider, renderer
+Если для публикуемого Sing-box профиля нет eligible Naive или AnyTLS provider, renderer
 не публикует `profile.json` и не добавляет ссылку на него. Mihomo-файлы с
 eligible providers других протоколов продолжают публиковаться. При наличии
 только Naive публикуется sing-box, а несовместимые Mihomo-файлы и ссылки на них
@@ -129,7 +125,7 @@ eligible providers других протоколов продолжают пуб
 выбора и фоновых URL-проб. Default включает все поддерживаемые протоколы;
 `[]` оставляет ручные selectors без Auto-групп. Например, consumer может задать
 для каждого профиля
-`[ "vless-xhttp" "hysteria2" "naiveproxy" "mieru" "anytls" "trusttunnel" ]`, сохранив AWG вручную.
+`[ "vless-xhttp" "naiveproxy" "mieru" "anytls" "trusttunnel" ]`, сохранив AWG вручную.
 Для исключённого AWG отключается также persistent keepalive. При отсутствии
 кандидатов Auto соответствующая группа не создаётся; DIRECT в защищённые
 selectors не добавляется. В полностью ручном режиме по умолчанию выбран
@@ -138,7 +134,7 @@ selectors не добавляется. В полностью ручном реж
 ```nix
 profiles = map (name: {
   inherit name;
-  autoProtocols = [ "vless-xhttp" "hysteria2" "naiveproxy" "mieru" "anytls" "trusttunnel" ];
+  autoProtocols = [ "vless-xhttp" "naiveproxy" "mieru" "anytls" "trusttunnel" ];
 }) [ "device-a" "device-b" ];
 ```
 
@@ -212,8 +208,7 @@ Consumer отвечает за доступность каждого DoH с кл
 Семантика upstream: [Mihomo DNS](https://wiki.metacubex.one/en/config/dns/),
 [Sing-box DNS actions](https://sing-box.sagernet.org/configuration/dns/rule_action/).
 
-Gecko и HTTP bootstrap сверены с sing-box 1.14.0:
-[Hysteria2](https://sing-box.sagernet.org/configuration/outbound/hysteria2/),
+HTTP bootstrap сверен с sing-box 1.14.0:
 [HTTP client](https://sing-box.sagernet.org/configuration/shared/http-client/),
 [hosts transport](https://sing-box.sagernet.org/configuration/dns/server/hosts/).
 

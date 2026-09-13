@@ -1,6 +1,8 @@
 # Adopt the revised integration contracts
 
-This is a breaking source API change. Stable Clan module IDs are unchanged.
+This procedure covers provider schema 2 and the separated publication/exposure contracts.
+Use only the module IDs and protocols listed in the current [contracts](../contracts.md);
+remove consumer instances and profile selections outside that catalog before evaluation.
 Publishing a release, editing a consumer and deploying it remain separate
 authorized operations. Repository evaluation does not adopt the change anywhere.
 

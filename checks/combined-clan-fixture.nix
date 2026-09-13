@@ -133,11 +133,9 @@ let
   contract =
     builtins.attrNames config.inventory.instances
     == lib.sort builtins.lessThan (supportNames ++ serviceNames)
-    && builtins.length (builtins.attrNames config._services.allServices) == 13
+    && builtins.length (builtins.attrNames config._services.allServices) == 12
     && machine.services.xray.enable
     && units ? xray
-    && units ? mihomo-hysteria2
-    && machine.sops.templates ? "mihomo-hysteria2.json"
     && units ? mita
     && machine.sops.templates ? "mita.json"
     && machine.sops.templates."mita.json".owner == "mita"
@@ -181,7 +179,6 @@ let
         publisherIntegration.publicationUnit
       ]
     && !((machine.networkCore.mihomo or { }) ? vlessXhttp)
-    && !((machine.networkCore.mihomo or { }) ? hysteria2)
     && !(units ? mihomo-gateway)
     && machine.sops.templates ? "naiveproxy-vpn-fixture.caddy"
     && machine.sops.templates."naiveproxy-vpn-fixture.caddy".reloadUnits == [ "caddy.service" ]

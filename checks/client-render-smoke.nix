@@ -567,13 +567,9 @@ let
   clientDnsEndpoints = profileTypes.normalizeClientDnsEndpoints publisherSettings;
   naiveOutbounds = builtins.filter (outbound: outbound.type == "naive") profile.outbounds;
   naive = builtins.head naiveOutbounds;
-  singBoxHysteria = selector hysteria.name profile;
   singBoxAnytls = selector anytls.name profile;
   vless = builtins.head (
     builtins.filter (proxy: proxy.type == "vless") rendered.mihomoSelectiveTemplate.proxies
-  );
-  hysteria = builtins.head (
-    builtins.filter (proxy: proxy.type == "hysteria2") rendered.mihomoSelectiveTemplate.proxies
   );
   awg = builtins.head (
     builtins.filter (proxy: proxy.type == "wireguard") rendered.mihomoSelectiveTemplate.proxies
@@ -785,7 +781,6 @@ let
       };
     canonicalTags =
       vless.name == "11-vpn-fixture-22-vpn-mihomo-vless-xhttp-cHJvYmU-vless"
-      && hysteria.name == "11-vpn-fixture-20-vpn-mihomo-hysteria2-cHJvYmU-hysteria2"
       && awg.name == "11-vpn-fixture-13-vpn-amneziawg-cHJvYmU-amneziawg"
       && naive.tag == "11-vpn-fixture-14-vpn-naiveproxy-cHJvYmU-edge";
   };
@@ -793,7 +788,6 @@ let
   mihomoContract =
     builtins.all (type: builtins.elem type mihomoTypes) [
       "vless"
-      "hysteria2"
       "wireguard"
       "mieru"
       "anytls"
@@ -841,9 +835,6 @@ let
     && lib.last rendered.mihomoFullTemplate.rules == "MATCH,FULL"
     && vless.uuid == "__MIHOMO_VLESS_UUID_11-vpn-fixture-22-vpn-mihomo-vless-xhttp__"
     && vless."reality-opts"."short-id" == "0123456789abcdef"
-    && hysteria."obfs-min-packet-size" == 512
-    && hysteria."obfs-max-packet-size" == 1200
-    && hysteria.password == "__MIHOMO_HY2_PASSWORD_11-vpn-fixture-20-vpn-mihomo-hysteria2_cHJvYmU__"
     && mieru.name == "11-vpn-fixture-9-vpn-mieru-cHJvYmU-mieru"
     && mieru.server == "192.0.2.13"
     && mieru.port == 8443
@@ -915,12 +906,6 @@ let
     && !naive.quic
     && naive.tls.enabled
     && naive.tls.server_name == "site.example.invalid"
-    && singBoxHysteria.type == "hysteria2"
-    && singBoxHysteria.obfs.type == "gecko"
-    && singBoxHysteria.obfs.min_packet_size == 512
-    && singBoxHysteria.obfs.max_packet_size == 1200
-    && singBoxHysteria.tls.enabled
-    && !singBoxHysteria.tls.insecure
     && singBoxAnytls.type == "anytls"
     && singBoxAnytls.server == "192.0.2.14"
     && singBoxAnytls.server_port == 9443
@@ -945,7 +930,6 @@ let
       (selector "SELECTIVE" profile).outbounds == [
         "SELECTIVE-AUTO"
         naive.tag
-        hysteria.name
         anytls.name
       ]
     && (selector "FULL" profile).default == "FULL-AUTO"
@@ -953,7 +937,6 @@ let
       (selector "FULL" profile).outbounds == [
         "FULL-AUTO"
         naive.tag
-        hysteria.name
         anytls.name
       ]
     && builtins.length (urlTests profile) == 3
@@ -962,24 +945,20 @@ let
     &&
       (selector "SELECTIVE-AUTO" profile).outbounds == [
         naive.tag
-        hysteria.name
         anytls.name
       ]
     &&
       (selector "FULL-AUTO" profile).outbounds == [
         naive.tag
-        hysteria.name
         anytls.name
       ]
     &&
       (selector "UDP" profile).outbounds == [
         "UDP-AUTO"
-        hysteria.name
         anytls.name
       ]
     &&
       (selector "UDP-AUTO" profile).outbounds == [
-        hysteria.name
         anytls.name
       ]
     && builtins.all (
@@ -1053,9 +1032,9 @@ let
     mihomoLinksRetained =
       lib.hasInfix "/mihomo.yaml" zeroNaivePublicationScript
       && lib.hasInfix "/mihomo-full.yaml" zeroNaivePublicationScript;
-    hysteriaProfileLinkRetained = lib.hasInfix "/profile.json" zeroNaivePublicationScript;
-    hysteriaPublicationEnabled = zeroNaiveRendered.publishProfileJson;
-    hysteriaTemplateRetained = zeroNaiveRendered.profileJsonTemplate != null;
+    anytlsProfileLinkRetained = lib.hasInfix "/profile.json" zeroNaivePublicationScript;
+    anytlsPublicationEnabled = zeroNaiveRendered.publishProfileJson;
+    anytlsTemplateRetained = zeroNaiveRendered.profileJsonTemplate != null;
     manifestIncludesProfileJson =
       map (artifact: artifact.outputName) zeroNaiveArtifacts == [
         "mihomo.yaml"

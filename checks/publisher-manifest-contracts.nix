@@ -412,7 +412,6 @@ let
     };
     publicationHasNoProtocolBranches = builtins.all (token: !(lib.hasInfix token publicationSource)) [
       "vless-xhttp"
-      "hysteria2Credentials"
       "amneziawgCredentials"
       "naiveCredentials"
       "mieruCredentials"
