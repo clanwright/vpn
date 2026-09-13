@@ -7,10 +7,11 @@
 sing-box 1.14.0 по решениям 12 сентября 2026. Профиль TrustTunnel согласован
 13 сентября; реализация и критерии приёмки отслеживаются в
 [#1](https://github.com/clanwright/vpn/issues/1). Sudoku остаётся
-**запланированным для отдельного обсуждения и внедрения**.
+**отложенным до появления stock-пакета в nixpkgs и подтверждения его кешированного
+выхода**; по решению владельца от 13 сентября дальнейшая работа остановлена.
 Release и активация сервисов не входят в согласованный объём.
 Исследование upstream — 8 сентября, уточнение Mieru, AnyTLS и TrustTunnel —
-12 сентября 2026.
+12 сентября 2026; дополнительное исследование Sudoku — 13 сентября 2026.
 
 Серверная архитектура проектируется первой; старые клиенты не ограничивают
 выбор. При этом клиентский экспорт и проверка совместимости входят в результат
@@ -222,6 +223,19 @@ UDP timeout cleanup и global IPv6 classification, но не заявляет и
 
 ### Sudoku: самостоятельный сервер, ограниченное испытание
 
+**Отложено по решению владельца от 13.09.2026.** При проверке трёх текущих
+nixpkgs-пинов репозитория и официального nixpkgs `master` пакет прокси
+SUDOKU-ASCII/sudoku не найден (пакет игры `gnome-sudoku` к нему не относится).
+Подходящий stock output из NixOS cache не установлен. По
+[package authority](package-authority.md) собственная derivation, override
+или обёртка upstream-бинарника не являются допустимым обходом.
+
+Условие возобновления: официальный stock-пакет нужной версии в nixpkgs,
+точная ревизия и подтверждённый кешированный output для `x86_64-linux`.
+Подготовка upstream-пакета остаётся возможным следующим шагом, но сейчас
+не выполняется. Реализация модуля, публикация и развёртывание не начаты.
+При возобновлении перепроверить версии и завершить обсуждение решений ниже.
+
 **Задача:** добавить canonical **SUDOKU-ASCII/sudoku v0.5.0** (05.09.2026).
 Не подменять его несовместимым Xray `finalmask`. В 0.5.0 исправлены обрывы
 mux при высокой конкуренции и удалены устаревшие реализации HTTPMask.
@@ -241,11 +255,29 @@ mux при высокой конкуренции и удалены устаре�
   клиентскому полю `tls` и не обещать HTTPS-маскировку голого TCP endpoint.
 - TCP relay и UDP через UoT; отдельный публичный UDP listener не нужен.
 
-Перед фиксацией конфигурации реализации сверить template/schema именно с
-тегом 0.5.0: текущая документация изменяемая, а минимальный client example
-использует HTTPMask `ws`, когда server example — `auto`. Проверить их
-совместимость, место TLS termination, модель ключей и индивидуального отзыва;
-не обещать per-device credentials до подтверждения серверной схемой.
+Исследование исходников тега 0.5.0 от 13.09.2026 уточнило ограничения:
+
+- Один сервер принимает один master public key. Разные клиентские private keys
+  не дают индивидуального отзыва: смена master требует обновить все клиенты.
+  Допустимость общей ротации остаётся несогласованной.
+- `httpmask.tls` — клиентская настройка; сервер не завершает TLS и слушает
+  wildcard `:<local_port>` без настройки bind address. WSS требует внешнего
+  consumer-owned TLS proxy. Выбор direct TCP, WSS или обоих режимов не сделан.
+  Модуль должен ограничивать ingress и доступ к private/metadata/IPv6-назначениям
+  по образцу Mieru; upstream не предоставляет нужной фильтрации назначений.
+- Fallback должен вести на отдельный локальный decoy, а не обратно в Sudoku
+  или frontend-маршрут, возвращающий запрос в него. Consumer задаёт decoy и DNS;
+  модуль ограничивает соответствующие исключения сетевой защиты.
+- `path_root` требует одинакового допустимого сегмента на клиенте и сервере;
+  неверное значение upstream молча превращает в пустое. Контракт должен
+  отклонять такие значения.
+- Server template использует HTTPMask `auto`, client example — `ws`.
+  Закреплённый Mihomo 1.19.30 использует Sudoku 0.4.8; совместимость с сервером
+  0.5.0 остаётся предметом consumer runtime-приёмки. Клиентский охват и изменение
+  политики Auto не согласованы; исходная рекомендация ручного trial сохраняется.
+- Подробных испытаний с указанием российского оператора, региона и версии
+  в исследованных источниках не найдено. Заявления upstream не подтверждают
+  доступность на Дом.ру, Т-Мобайл и Yota.
 
 Приемка: неправильный ключ/AEAD, устойчивость fallback к probing без раскрытия
 служебных ошибок, HTTPMask interop, UDP relay, reconnect и длительная нагрузка.
@@ -254,9 +286,13 @@ mux при высокой конкуренции и удалены устаре�
 
 Источники: [релиз 0.5.0](https://github.com/SUDOKU-ASCII/sudoku/releases/tag/v0.5.0),
 [canonical upstream](https://github.com/SUDOKU-ASCII/sudoku),
-[configuration guide](https://github.com/SUDOKU-ASCII/sudoku/blob/main/configs/README.md),
-[server template](https://github.com/SUDOKU-ASCII/sudoku/blob/main/configs/server.config.json),
-[Mihomo Sudoku schema](https://wiki.metacubex.one/en/config/proxies/sudoku/).
+[configuration guide 0.5.0](https://github.com/SUDOKU-ASCII/sudoku/blob/v0.5.0/configs/README.md),
+[server template 0.5.0](https://github.com/SUDOKU-ASCII/sudoku/blob/v0.5.0/configs/server.config.json),
+[server source](https://github.com/SUDOKU-ASCII/sudoku/blob/v0.5.0/internal/app/server.go),
+[fallback source](https://github.com/SUDOKU-ASCII/sudoku/blob/v0.5.0/internal/handler/fallback.go),
+[Mihomo Sudoku schema](https://wiki.metacubex.one/en/config/proxies/sudoku/),
+[Mihomo upstream sync](https://github.com/MetaCubeX/mihomo/pull/2966),
+[официальный nixpkgs](https://github.com/NixOS/nixpkgs).
 
 ### Что решить при подключении к consumer
 
