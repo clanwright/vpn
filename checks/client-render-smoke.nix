@@ -564,6 +564,10 @@ let
     builtins.filter (group: group.name == "FULL-AUTO") rendered.mihomoFullTemplate."proxy-groups"
   );
   profile = rendered.profileJsonTemplate;
+  expectedSingBoxCacheFile = {
+    enabled = true;
+    store_fakeip = true;
+  };
   clientDnsEndpoints = profileTypes.normalizeClientDnsEndpoints publisherSettings;
   naiveOutbounds = builtins.filter (outbound: outbound.type == "naive") profile.outbounds;
   naive = builtins.head naiveOutbounds;
@@ -910,6 +914,7 @@ let
     && mihomoDirectIndex < mihomoProtectedIndex;
   singBoxContract =
     rendered.publishProfileJson
+    && profile.experimental.cache_file == expectedSingBoxCacheFile
     && profile.experimental.clash_api.default_mode == "Rule"
     && builtins.length naiveOutbounds == 1
     && naive.server == "192.0.2.10"
@@ -982,6 +987,20 @@ let
       && ruleSet.http_client.domain_resolver.server == "bootstrap-hosts"
       && ruleSet.http_client.tls.server_name == publisherSettings.configGatewayDomain
     ) (remoteRuleSets profile);
+  fakeIpPersistenceResults = {
+    generatedCacheFileExact = profile.experimental.cache_file == expectedSingBoxCacheFile;
+    stableAcrossProfileRefreshInputs =
+      builtins.all
+        (candidate: candidate.profileJsonTemplate.experimental.cache_file == expectedSingBoxCacheFile)
+        [
+          oneDnsRendered
+          legacyDnsRendered
+          zeroNaiveRendered
+        ];
+  };
+  fakeIpPersistenceContract = builtins.all (value: value) (
+    builtins.attrValues fakeIpPersistenceResults
+  );
   routeContract =
     udpRejects profile == [ ]
     && builtins.length resolveRules == 2
@@ -1123,6 +1142,7 @@ let
   contract =
     clientDnsContract
     && clientPolicyContract
+    && fakeIpPersistenceContract
     && clientDnsRenderVariantsContract
     && mihomoContract
     && mieruExportContract
@@ -1146,6 +1166,8 @@ if !contract then
         clientPolicyContract
         clientPolicyResults
         dnsContract
+        fakeIpPersistenceContract
+        fakeIpPersistenceResults
         disjointPublisherContract
         disjointPublisherResults
         mihomoContract
@@ -1173,6 +1195,8 @@ else
       clientDnsRenderVariantsContract
       clientDnsResults
       dnsContract
+      fakeIpPersistenceContract
+      fakeIpPersistenceResults
       disjointPublisherContract
       disjointPublisherResults
       mihomoContract

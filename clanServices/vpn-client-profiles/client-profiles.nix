@@ -981,7 +981,10 @@ let
           level = "info";
           timestamp = true;
         };
-        experimental.cache_file.enabled = true;
+        experimental.cache_file = {
+          enabled = true;
+          store_fakeip = true;
+        };
         experimental.clash_api.default_mode = "Rule";
         dns = {
           servers = singBoxDohServers ++ [
