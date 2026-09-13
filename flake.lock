@@ -32,6 +32,22 @@
         "type": "github"
       }
     },
+    "trusttunnel-nixpkgs": {
+      "locked": {
+        "lastModified": 1788966235,
+        "narHash": "sha256-ged6dYAQSNsuMqcs2eHgSUvfZMgL8Tq4+gwMg+8EiPo=",
+        "owner": "NixOS",
+        "repo": "nixpkgs",
+        "rev": "6078dc4f4fcbcf4ac59499e7b80826379078d344",
+        "type": "github"
+      },
+      "original": {
+        "owner": "NixOS",
+        "repo": "nixpkgs",
+        "rev": "6078dc4f4fcbcf4ac59499e7b80826379078d344",
+        "type": "github"
+      }
+    },
     "clan-core": {
       "inputs": {
         "data-mesher": [
@@ -330,7 +346,8 @@
         "data-mesher": "data-mesher",
         "modern-apps-nixpkgs": "modern-apps-nixpkgs",
         "network": "network",
-        "nixpkgs": "nixpkgs_2"
+        "nixpkgs": "nixpkgs_2",
+        "trusttunnel-nixpkgs": "trusttunnel-nixpkgs"
       }
     },
     "sops-nix": {

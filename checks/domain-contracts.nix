@@ -14,6 +14,7 @@ let
     vpn-mihomo-hysteria2.role = "gateway";
     vpn-mieru.role = "gateway";
     vpn-anytls.role = "gateway";
+    vpn-trusttunnel.role = "gateway";
     vpn-amneziawg.role = "gateway";
     vpn-naiveproxy.role = "addon";
     vpn-client-profiles.role = "publisher";
@@ -53,6 +54,10 @@ let
     vpn-anytls = {
       role = "gateway";
       protocol = "anytls";
+    };
+    vpn-trusttunnel = {
+      role = "gateway";
+      protocol = "trusttunnel";
     };
     vpn-amneziawg = {
       role = "gateway";
@@ -214,6 +219,21 @@ let
         lib.recursiveUpdate providerExports.vpn-mihomo-vless-xhttp { endpoint.domain = null; }
       )) true
     )).success;
+  trustTunnelProvider = providerExports.vpn-trusttunnel;
+  selectTrustTunnelProvider = raw: selectProvider "vpn-trusttunnel" raw;
+  trustTunnelEndpointContract =
+    trustTunnelProvider.endpoint.domain == "trusttunnel.example.invalid"
+    && trustTunnelProvider.endpoint.ipv4 == "192.0.2.15"
+    && trustTunnelProvider.endpoint.port == 10443
+    && trustTunnelProvider.endpoint.transport == "tcp"
+    && trustTunnelProvider.transportMetadata.protocol == "trusttunnel"
+    && trustTunnelProvider.transportMetadata.userNames == [ "cHJvYmU" ]
+    && trustTunnelProvider.transportMetadata.tlsServerName == "trusttunnel.example.invalid"
+    && trustTunnelProvider.transportMetadata.tlsVerify
+    && trustTunnelProvider.transportMetadata.credentialEncoding == "base64url"
+    && trustTunnelProvider.transportMetadata.upstreamProtocol == "http2"
+    && trustTunnelProvider.secretNames.users.cHJvYmU == "fixture-trusttunnel-password"
+    && builtins.deepSeq (selectTrustTunnelProvider trustTunnelProvider) true;
   naiveSettings =
     (lib.evalModules {
       modules = [
@@ -337,6 +357,7 @@ let
     (schemaResult "vpn-amneziawg" ((settingsFor "vpn-amneziawg" "gateway") // { peers = "fixture"; }))
     (schemaResult "vpn-mieru" ((settingsFor "vpn-mieru" "gateway") // { port = "8443"; }))
     (schemaResult "vpn-anytls" ((settingsFor "vpn-anytls" "gateway") // { port = "9443"; }))
+    (schemaResult "vpn-trusttunnel" ((settingsFor "vpn-trusttunnel" "gateway") // { port = "10443"; }))
     (schemaResult "dns-unbound" (
       (settingsFor "dns-unbound" "recursive-backend")
       // {
@@ -370,6 +391,8 @@ let
         && !((machine.networkCore.mihomo or { }) ? hysteria2);
       vpn-mieru = machine.systemd.services ? mita && machine.sops.templates ? "mita.json";
       vpn-anytls = machine.systemd.services ? anytls && machine.sops.templates ? "anytls.json";
+      vpn-trusttunnel =
+        machine.systemd.services ? trusttunnel && machine.sops.templates ? "trusttunnel.toml";
       vpn-amneziawg =
         machine.systemd.services ? wireguard-awg-fixture
         && !(machine.networking.wireguard.interfaces ? awg-fixture);
@@ -389,6 +412,7 @@ let
         lib.optionalAttrs
           (builtins.elem name [
             "vpn-anytls"
+            "vpn-trusttunnel"
             "vpn-mihomo-hysteria2"
           ])
           {
@@ -475,6 +499,7 @@ let
     minimalHasNoUnrelatedServices =
       !(minimalPublisherUnits ? mihomo-hysteria2)
       && !(minimalPublisherUnits ? mita)
+      && !(minimalPublisherUnits ? trusttunnel)
       && !(minimalPublisherUnits ? wireguard-awg-fixture)
       && !(minimalPublisherUnits ? caddy)
       && !minimalPublisher.machine.services.adguardhome.enable
@@ -573,6 +598,7 @@ let
     && combinedClanFixture.contract
     && awgTransportContract
     && mieruEndpointContract
+    && trustTunnelEndpointContract
     && naiveProviderContract
     && packageAuthority
     && dnsStatePreserved;
@@ -584,6 +610,7 @@ if !contract then
         closedSchemas
         awgTransportContract
         mieruEndpointContract
+        trustTunnelEndpointContract
         naiveProviderContract
         naiveProviderResults
         awgOverrideRejected
@@ -617,6 +644,7 @@ else
       closedSchemas
       awgTransportContract
       mieruEndpointContract
+      trustTunnelEndpointContract
       naiveProviderContract
       naiveProviderResults
       dnsStatePreserved

@@ -253,6 +253,21 @@ rec {
       };
     };
 
+    vpn-trusttunnel = vpnInstance "vpn-trusttunnel" "gateway" {
+      enable = true;
+      bindIPv4 = "192.0.2.15";
+      domain = "trusttunnel.example.invalid";
+      port = 10443;
+      acmeCertName = "fixture";
+      users = [
+        {
+          name = "cHJvYmU";
+          passwordSecretName = "fixture-trusttunnel-password";
+        }
+      ];
+      dnsResolverIPv4s = [ "127.0.0.1" ];
+    };
+
     vpn-amneziawg = vpnInstance "vpn-amneziawg" "gateway" {
       enable = true;
       interfaceName = "awg-fixture";
@@ -357,6 +372,12 @@ rec {
           instanceId = "vpn-anytls";
           machine = machineName;
           protocol = "anytls";
+          profileNames = [ "cHJvYmU" ];
+        }
+        {
+          instanceId = "vpn-trusttunnel";
+          machine = machineName;
+          protocol = "trusttunnel";
           profileNames = [ "cHJvYmU" ];
         }
         {

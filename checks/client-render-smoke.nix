@@ -584,6 +584,9 @@ let
   anytls = builtins.head (
     builtins.filter (proxy: proxy.type == "anytls") rendered.mihomoSelectiveTemplate.proxies
   );
+  trustTunnel = builtins.head (
+    builtins.filter (proxy: proxy.type == "trusttunnel") rendered.mihomoSelectiveTemplate.proxies
+  );
   selector =
     tag: config: builtins.head (builtins.filter (outbound: outbound.tag == tag) config.outbounds);
   urlTests = config: builtins.filter (outbound: outbound.type == "urltest") config.outbounds;
@@ -794,6 +797,7 @@ let
       "wireguard"
       "mieru"
       "anytls"
+      "trusttunnel"
     ]
     &&
       selectiveGroups == [
@@ -822,6 +826,12 @@ let
       fullAuto
     ]
     && builtins.all (group: builtins.elem anytls.name group.proxies) [
+      selectiveManual
+      selectiveAuto
+      fullManual
+      fullAuto
+    ]
+    && builtins.all (group: builtins.elem trustTunnel.name group.proxies) [
       selectiveManual
       selectiveAuto
       fullManual
@@ -860,6 +870,22 @@ let
     && !(anytls ? "idle-session-check-interval")
     && !(anytls ? "idle-session-timeout")
     && !(anytls ? "min-idle-session")
+    && trustTunnel.name == "11-vpn-fixture-15-vpn-trusttunnel-cHJvYmU-trusttunnel"
+    && trustTunnel.server == "192.0.2.15"
+    && trustTunnel.port == 10443
+    && trustTunnel.username == "cHJvYmU"
+    &&
+      trustTunnel.password == "__MIHOMO_TRUSTTUNNEL_PASSWORD_11-vpn-fixture-15-vpn-trusttunnel_cHJvYmU__"
+    && trustTunnel.sni == "trusttunnel.example.invalid"
+    && !trustTunnel."skip-cert-verify"
+    && trustTunnel."client-fingerprint" == "chrome"
+    && !trustTunnel.quic
+    && trustTunnel.udp
+    && !(trustTunnel ? alpn)
+    && !(trustTunnel ? "health-check")
+    && !(trustTunnel ? "max-connections")
+    && !(trustTunnel ? "min-streams")
+    && !(trustTunnel ? "max-streams")
     && awg."private-key" == "__MIHOMO_AMNEZIAWG_PRIVATE_KEY_11-vpn-fixture-13-vpn-amneziawg__"
     && awg."amnezia-wg-option".version == 3
     &&
@@ -913,6 +939,7 @@ let
     && !(singBoxAnytls ? idle_session_check_interval)
     && !(singBoxAnytls ? idle_session_timeout)
     && !(singBoxAnytls ? min_idle_session)
+    && builtins.all (outbound: outbound.type != "trusttunnel") profile.outbounds
     && (selector "SELECTIVE" profile).default == "SELECTIVE-AUTO"
     &&
       (selector "SELECTIVE" profile).outbounds == [
@@ -1077,6 +1104,13 @@ let
         "${publicationUnitName}.service"
       ]
       && lib.hasInfix consumerMachine.sops.secrets."fixture-anytls-password".path publicationScript;
+    explicitTrustTunnelCredentialBinding =
+      lib.sort builtins.lessThan consumerMachine.sops.secrets."fixture-trusttunnel-password".restartUnits
+      == lib.sort builtins.lessThan [
+        "trusttunnel.service"
+        "${publicationUnitName}.service"
+      ]
+      && lib.hasInfix consumerMachine.sops.secrets."fixture-trusttunnel-password".path publicationScript;
     explicitAwgClientKeyBinding =
       consumerMachine.sops.secrets."fixture-awg-client-private-key".restartUnits
       == [ "${publicationUnitName}.service" ]

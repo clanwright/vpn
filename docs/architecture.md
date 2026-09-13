@@ -1,6 +1,6 @@
 # Architecture
 
-The nine modules are independently selectable and share one versioned flake.
+The ten modules are independently selectable and share one versioned flake.
 Their public entrypoints are listed in [contracts](contracts.md).
 
 ## Ownership
@@ -47,6 +47,20 @@ The flake does not import a consumer checkout. TCP tuning belongs to the consume
   the certificate and placement; host DNS configuration stays independent. Both
   Mihomo and sing-box profiles include AnyTLS in ordinary manual and Auto
   selection when permitted by the consumer's existing policy.
+
+- TrustTunnel runs stock endpoint 1.1.0 in its own service and Unix identity,
+  accepting HTTP/2 on a consumer-selected IPv4 TCP endpoint. TCP and UDP travel
+  inside H2; HTTP/3 and ICMP are disabled. Each device has a runtime password,
+  and invalid authentication receives HTTP 404. The endpoint uses a verified
+  TLS identity, but does not serve a cover website on the tunnel hostname.
+  Native destination checks and process-scoped network rules deny internal
+  destinations; address-family restrictions and an IPv6 egress rule enforce
+  IPv4-only beyond the upstream `ipv6_available` flag. DNS uses the host resolver;
+  the consumer directs that resolver to its own AdGuard and supplies numeric
+  DNS addresses for narrow process-guard exceptions. Host DNS stays consumer
+  owned. Mihomo profiles include TrustTunnel in manual and policy-controlled
+  Auto selection, including protected UDP; official sing-box has no matching
+  outbound. See the [module](../clanServices/trusttunnel/README.md).
 
 Provider modules construct their common export envelope through the shared
 contract implementation. Protocol-specific transport data remains owned by

@@ -86,6 +86,22 @@ let
     profileNames = [ "device.one" ];
     secretNames.users."device.one" = "fixture/device.one-anytls-password";
   };
+  validTrustTunnel = providerEnvelope.mkProvider {
+    protocol = "trusttunnel";
+    instanceId = "fixture.trusttunnel";
+    machine = "fixture.machine";
+    endpoint = {
+      domain = "trusttunnel.example.invalid";
+      ipv4 = "192.0.2.15";
+      port = 443;
+    };
+    transportMetadata = {
+      tlsServerName = "trusttunnel.example.invalid";
+      userNames = [ "device.one" ];
+    };
+    profileNames = [ "device.one" ];
+    secretNames.users."device.one" = "fixture/device.one-trusttunnel-password";
+  };
   validAwg = providerEnvelope.mkProvider {
     protocol = "amneziawg";
     instanceId = "fixture.awg";
@@ -223,6 +239,21 @@ let
       value = lib.recursiveUpdate validAnytls { transportMetadata.credentialEncoding = "plain"; };
     }
     {
+      name = "trustTunnelTlsVerify";
+      protocol = "trusttunnel";
+      value = lib.recursiveUpdate validTrustTunnel { transportMetadata.tlsVerify = false; };
+    }
+    {
+      name = "trustTunnelCredentialEncoding";
+      protocol = "trusttunnel";
+      value = lib.recursiveUpdate validTrustTunnel { transportMetadata.credentialEncoding = "plain"; };
+    }
+    {
+      name = "trustTunnelUpstreamProtocol";
+      protocol = "trusttunnel";
+      value = lib.recursiveUpdate validTrustTunnel { transportMetadata.upstreamProtocol = "http3"; };
+    }
+    {
       name = "awgGeneration";
       protocol = "amneziawg";
       value = lib.recursiveUpdate validAwg { transportMetadata.generation = 2; };
@@ -292,6 +323,11 @@ let
       service = "@clanwright/vpn-naiveproxy";
       transport = "tcp";
     };
+    trusttunnel = {
+      role = "gateway";
+      service = "@clanwright/vpn-trusttunnel";
+      transport = "tcp";
+    };
     vless-xhttp = {
       role = "gateway";
       service = "@clanwright/vpn-mihomo-vless-xhttp";
@@ -331,10 +367,21 @@ let
         tlsMinVersion = "1.3";
         credentialEncoding = "base64url";
       }
+    && validTrustTunnel.endpoint.transport == "tcp"
+    &&
+      validTrustTunnel.transportMetadata == {
+        protocol = "trusttunnel";
+        userNames = [ "device.one" ];
+        tlsServerName = "trusttunnel.example.invalid";
+        tlsVerify = true;
+        credentialEncoding = "base64url";
+        upstreamProtocol = "http2";
+      }
     && !unsupportedConstructor.success;
   typeResults = {
     valid = typeAccepts validProvider;
     validAnytls = typeAccepts validAnytls;
+    validTrustTunnel = typeAccepts validTrustTunnel;
     wrongMode = !(typeAccepts wrongMode);
     wrongRole = !(typeAccepts wrongRole);
     wrongTransport = !(typeAccepts wrongTransport);
@@ -347,6 +394,7 @@ let
     validHysteria = selectorAccepts "hysteria2" validHysteria;
     validMieru = selectorAccepts "mieru" validMieru;
     validAnytls = selectorAccepts "anytls" validAnytls;
+    validTrustTunnel = selectorAccepts "trusttunnel" validTrustTunnel;
     validAwg = selectorAccepts "amneziawg" validAwg;
     anytlsMissingIpv4 =
       !(selectorAccepts "anytls" (
@@ -375,6 +423,48 @@ let
     anytlsSecretMapMismatch =
       !(selectorAccepts "anytls" (
         lib.recursiveUpdate validAnytls { secretNames.users.other = "fixture/other-anytls-password"; }
+      ));
+    trustTunnelMissingIpv4 =
+      !(selectorAccepts "trusttunnel" (
+        validTrustTunnel // { endpoint = builtins.removeAttrs validTrustTunnel.endpoint [ "ipv4" ]; }
+      ));
+    trustTunnelMissingDomain =
+      !(selectorAccepts "trusttunnel" (
+        validTrustTunnel // { endpoint = builtins.removeAttrs validTrustTunnel.endpoint [ "domain" ]; }
+      ));
+    trustTunnelWrongIpv4 =
+      !(selectorAccepts "trusttunnel" (
+        lib.recursiveUpdate validTrustTunnel { endpoint.ipv4 = "192.0.2.999"; }
+      ));
+    trustTunnelSniMismatch =
+      !(selectorAccepts "trusttunnel" (
+        lib.recursiveUpdate validTrustTunnel {
+          transportMetadata.tlsServerName = "other.example.invalid";
+        }
+      ));
+    trustTunnelUdpTransportRejected =
+      !(selectorAccepts "trusttunnel" (
+        lib.recursiveUpdate validTrustTunnel { endpoint.transport = "udp"; }
+      ));
+    trustTunnelUnknownTopLevelRejected =
+      !(selectorAccepts "trusttunnel" (validTrustTunnel // { unexpected = true; }));
+    trustTunnelUnknownEndpointRejected =
+      !(selectorAccepts "trusttunnel" (
+        lib.recursiveUpdate validTrustTunnel { endpoint.path = "/unexpected"; }
+      ));
+    trustTunnelUnknownMetadataRejected =
+      !(selectorAccepts "trusttunnel" (
+        lib.recursiveUpdate validTrustTunnel { transportMetadata.alpn = [ "h2" ]; }
+      ));
+    trustTunnelUsersMismatch =
+      !(selectorAccepts "trusttunnel" (
+        lib.recursiveUpdate validTrustTunnel { transportMetadata.userNames = [ "other" ]; }
+      ));
+    trustTunnelSecretMapMismatch =
+      !(selectorAccepts "trusttunnel" (
+        lib.recursiveUpdate validTrustTunnel {
+          secretNames.users.other = "fixture/other-trusttunnel-password";
+        }
       ));
     dottedIdentity = (selectProvider "vless-xhttp" validProvider).profileNames == [ "device.one" ];
     wrongMode = !(selectorAccepts "vless-xhttp" wrongMode);

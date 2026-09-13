@@ -59,7 +59,7 @@ only tracked and non-ignored untracked files. The snapshot excludes `.git`,
 extensions before Nix copies the source into its store. The script removes the
 snapshot on exit.
 
-The evaluation suite covers the nine stable module IDs, closed schemas,
+The evaluation suite covers the ten stable module IDs, closed schemas,
 negative security overrides, generated server and client configuration
 structures, service isolation, package authority, secret/template wiring and
 combined Clan composition. Publisher checks cover static log suppression,
@@ -81,6 +81,13 @@ AnyTLS checks cover its separate stock sing-box service, TLS 1.3 policy,
 runtime credentials, scoped ingress and process egress guard, plus both client
 formats with AnyTLS-only and manual-only selection. UoT v2 relay, certificate
 renewal and target-network availability remain consumer runtime acceptance.
+TrustTunnel checks cover the stock 1.1.0 package, standalone H2-only listener,
+runtime TOML credentials and certificate bindings, native private-destination
+denial, IPv4-only process restrictions and DNS-scoped guard exceptions. Provider
+and profile contracts cover its closed export schema, Mihomo TCP/UDP selection,
+single-protocol and manual-only cases, and exclusion from sing-box. Runtime TOML
+parsing, HTTP 404 authentication compatibility, TLS renewal, UDP cleanup,
+memory bounds and reconnect remain separate consumer acceptance.
 The asset contracts check refresh-before-publication ordering, the complete
 required-file guard after local asset synchronization, retention of cached
 downloads on failure and retry declarations for recovery. Empty-cache and

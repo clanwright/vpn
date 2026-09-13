@@ -6,6 +6,7 @@
     nixpkgs.url = "https://releases.nixos.org/nixpkgs/nixpkgs-26.11pre1044894.59ea0b1c043c/nixexprs.tar.xz";
     apps-nixpkgs.url = "github:NixOS/nixpkgs/c27cdad491a991b11ed731760aa2ef8db0cb0410";
     modern-apps-nixpkgs.url = "github:NixOS/nixpkgs/f3afd85cd82edf71f2dea9b96dcda2d6a64f26f4";
+    trusttunnel-nixpkgs.url = "github:NixOS/nixpkgs/6078dc4f4fcbcf4ac59499e7b80826379078d344";
     # Test/integration dependency only; VPN does not re-export or enable it.
     network.url = "github:clanwright/network/v1.0.0";
     data-mesher.url = "path:./stubs/data-mesher";
@@ -23,6 +24,7 @@
       clan-core,
       modern-apps-nixpkgs,
       nixpkgs,
+      trusttunnel-nixpkgs,
       ...
     }:
     let
@@ -35,6 +37,7 @@
       forAllSystems = lib.genAttrs systems;
       appsPkgsFor = system: import apps-nixpkgs { inherit system; };
       modernAppsPkgsFor = system: import modern-apps-nixpkgs { inherit system; };
+      trustTunnelPkgsFor = system: import trusttunnel-nixpkgs { inherit system; };
       service = path: args: lib.modules.importApply path args;
       packageSet =
         system:
@@ -53,6 +56,7 @@
             xray
             ;
           inherit (modernAppsPkgs) amneziawg-go amneziawg-tools mieru;
+          inherit (trustTunnelPkgsFor system) trusttunnel-endpoint;
           unbound = appsPkgs.unbound-with-systemd;
         };
       vpnExports = { lib }: import ./modules/contracts/vpn-exports.nix { inherit lib; };
@@ -84,6 +88,10 @@
           "@clanwright/vpn-anytls" = service ./clanServices/anytls/default.nix {
             inherit lib;
             singBoxPackageFor = system: self.packages.${system}.sing-box;
+          };
+          "@clanwright/vpn-trusttunnel" = service ./clanServices/trusttunnel/default.nix {
+            inherit lib;
+            trustTunnelPackageFor = system: self.packages.${system}.trusttunnel-endpoint;
           };
           "@clanwright/vpn-amneziawg" = service ./clanServices/amneziawg/default.nix {
             inherit lib;

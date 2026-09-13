@@ -1,6 +1,6 @@
 # Clanwright VPN
 
-Nine VPN and DNS modules for Clan/NixOS on `x86_64-linux`.
+Ten VPN and DNS modules for Clan/NixOS on `x86_64-linux`.
 
 | Module | Implementation |
 | --- | --- |
@@ -10,6 +10,7 @@ Nine VPN and DNS modules for Clan/NixOS on `x86_64-linux`.
 | [NaiveProxy](clanServices/naiveproxy/README.md) | Caddy forward proxy |
 | [Mieru](clanServices/mieru/README.md) | Native mita, TCP with UDP relay |
 | [AnyTLS](clanServices/anytls/README.md) | Standalone sing-box, TLS 1.3/TCP with UoT v2 |
+| [TrustTunnel](clanServices/trusttunnel/README.md) | Standalone endpoint, HTTP/2 with TCP and UDP relay |
 | [Client profiles](clanServices/vpn-client-profiles/README.md) | Mihomo and sing-box profile publisher |
 | [AdGuard Home](clanServices/adguardhome/README.md) | DNS/DoH front end and dnsproxy reserve |
 | [Unbound](clanServices/unbound/README.md) | Loopback recursive DNS backend |

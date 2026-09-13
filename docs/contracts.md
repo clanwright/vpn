@@ -13,6 +13,7 @@ the settings documented on each module page.
 | `@clanwright/vpn-naiveproxy` | [NaiveProxy](../clanServices/naiveproxy/README.md) |
 | `@clanwright/vpn-mieru` | [Mieru](../clanServices/mieru/README.md) |
 | `@clanwright/vpn-anytls` | [AnyTLS](../clanServices/anytls/README.md) |
+| `@clanwright/vpn-trusttunnel` | [TrustTunnel](../clanServices/trusttunnel/README.md) |
 | `@clanwright/vpn-client-profiles` | [Client profiles](../clanServices/vpn-client-profiles/README.md) |
 | `@clanwright/dns-adguardhome` | [AdGuard Home](../clanServices/adguardhome/README.md) |
 | `@clanwright/dns-unbound` | [Unbound](../clanServices/unbound/README.md) |
@@ -65,6 +66,23 @@ that own DoH endpoint, retaining its verified hostname while connecting to
 the numeric address. System DNS configuration is independent, with no local
 or third-party resolver fallback. Private/reserved IPv4 endpoints are rejected;
 the process egress guard has no DNS exceptions into internal networks.
+
+TrustTunnel extends provider version 2 with protocol `trusttunnel`, role
+`gateway`, and a TCP endpoint requiring a domain and numeric IPv4. Its exact
+transport metadata includes `protocol`, `userNames`, `tlsServerName`,
+`tlsVerify = true`, `upstreamProtocol = "http2"`, and
+`credentialEncoding = "base64url"`; `secretNames.users` maps device identities
+to consumer-owned password secrets. The server uses stock TLS defaults rather
+than advertising an unsupported TLS-version setting. Mihomo selective/full
+profiles support this provider and its UDP relay; official sing-box does not.
+Consumers must update the publisher before selecting TrustTunnel exports.
+
+The TrustTunnel gateway requires explicit `dnsResolverIPv4s` for narrow TCP/UDP
+port 53 exceptions in its process guard. This list does not configure the host
+resolver. The consumer owns resolver configuration through its own AdGuard,
+including any local stub and fallback policy. Native destination checks still
+deny tunneled access to internal DNS addresses. IPv4-only is enforced beyond
+`ipv6_available = false`, which does not block all upstream literal IPv6 paths.
 
 Consumers must use public attributes, without importing internal files under
 `modules/`, `packages/`, `checks/` or `clanServices/`. Extending the interface

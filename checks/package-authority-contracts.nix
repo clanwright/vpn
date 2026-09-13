@@ -7,6 +7,7 @@ let
   lib = inputs.nixpkgs.lib;
   appsPkgs = import inputs.apps-nixpkgs { inherit system; };
   modernAppsPkgs = import inputs.modern-apps-nixpkgs { inherit system; };
+  trustTunnelPkgs = import inputs.trusttunnel-nixpkgs { inherit system; };
   packageSpecs = {
     mihomo = {
       package = appsPkgs.mihomo;
@@ -43,6 +44,10 @@ let
     amneziawg-tools = {
       package = modernAppsPkgs.amneziawg-tools;
       version = "3.1.20260812";
+    };
+    trusttunnel-endpoint = {
+      package = trustTunnelPkgs.trusttunnel-endpoint;
+      version = "1.1.0";
     };
   };
   expectedNames = lib.sort builtins.lessThan (builtins.attrNames packageSpecs);

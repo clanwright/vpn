@@ -64,6 +64,7 @@ let
   caddyUnit = units.caddy;
   mieruPasswordSecret = machine.sops.secrets."fixture-mieru-password";
   anytlsPasswordSecret = machine.sops.secrets."fixture-anytls-password";
+  trustTunnelPasswordSecret = machine.sops.secrets."fixture-trusttunnel-password";
   pathTokenSecret = machine.sops.secrets."mihomo-client-fixture-cHJvYmU-path-token";
   tmpfilesRules = machine.systemd.tmpfiles.rules;
   afterFinalPrivateReset = lib.last (lib.splitString "private_tmp_files=()" publicationUnit.script);
@@ -132,7 +133,7 @@ let
   contract =
     builtins.attrNames config.inventory.instances
     == lib.sort builtins.lessThan (supportNames ++ serviceNames)
-    && builtins.length (builtins.attrNames config._services.allServices) == 12
+    && builtins.length (builtins.attrNames config._services.allServices) == 13
     && machine.services.xray.enable
     && units ? xray
     && units ? mihomo-hysteria2
@@ -149,6 +150,20 @@ let
     &&
       lib.sort builtins.lessThan mieruPasswordSecret.restartUnits == lib.sort builtins.lessThan [
         "mita.service"
+        publisherIntegration.publicationUnit
+      ]
+    && units ? trusttunnel
+    && machine.sops.templates ? "trusttunnel.toml"
+    && machine.sops.templates."trusttunnel.toml".owner == "trusttunnel"
+    && machine.sops.templates."trusttunnel.toml".group == "trusttunnel"
+    && machine.sops.templates."trusttunnel.toml".mode == "0400"
+    && machine.sops.templates."trusttunnel.toml".restartUnits == [ "trusttunnel.service" ]
+    && trustTunnelPasswordSecret.owner == "root"
+    && trustTunnelPasswordSecret.group == "root"
+    && trustTunnelPasswordSecret.mode == "0400"
+    &&
+      lib.sort builtins.lessThan trustTunnelPasswordSecret.restartUnits == lib.sort builtins.lessThan [
+        "trusttunnel.service"
         publisherIntegration.publicationUnit
       ]
     && units ? anytls

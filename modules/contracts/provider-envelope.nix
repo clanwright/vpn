@@ -33,6 +33,11 @@ let
       service = "@clanwright/vpn-anytls";
       transport = "tcp";
     };
+    trusttunnel = {
+      role = "gateway";
+      service = "@clanwright/vpn-trusttunnel";
+      transport = "tcp";
+    };
   };
 
   protocolRoles = lib.mapAttrs (_protocol: metadata: metadata.role) protocols;
@@ -78,6 +83,11 @@ let
       tlsVerify = true;
       tlsMinVersion = "1.3";
       credentialEncoding = "base64url";
+    };
+    trusttunnel = {
+      tlsVerify = true;
+      credentialEncoding = "base64url";
+      upstreamProtocol = "http2";
     };
   };
 

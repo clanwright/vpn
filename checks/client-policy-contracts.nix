@@ -111,6 +111,13 @@ let
           };
           secretNames.users = secretMap "anytls-${machine}" profileNames;
         };
+        trusttunnel = {
+          transportMetadata = {
+            tlsServerName = domain;
+            userNames = profileNames;
+          };
+          secretNames.users = secretMap "trusttunnel-${machine}" profileNames;
+        };
       };
     in
     providerEnvelope.mkProvider (common // protocolData.${protocol});
@@ -186,6 +193,7 @@ let
       "hysteria2"
       "mieru"
       "anytls"
+      "trusttunnel"
     ];
   };
   matrixRenders = lib.mapAttrs (
@@ -208,6 +216,7 @@ let
           amneziawg = "amneziawg";
           mieru = "mieru";
           anytls = "anytls";
+          trusttunnel = "trusttunnel";
         }
         .${provider.protocol};
     in
@@ -264,6 +273,7 @@ let
                 "amneziawg"
                 "mieru"
                 "anytls"
+                "trusttunnel"
               ]
             )
           );
@@ -349,7 +359,8 @@ let
     let
       candidate = render publishers.publisher-a [ (mkProvider "edge-a" protocol) ] [ (profile "alice") ];
       renderedProfile = builtins.head candidate.renderedProfiles;
-      outputs = map (artifact: artifact.outputName) (builtins.head candidate.manifest.profiles).artifacts;
+      inherit (builtins.head candidate.manifest.profiles) artifacts;
+      outputs = map (artifact: artifact.outputName) artifacts;
     in
     {
       artifactCompatibility =
@@ -374,6 +385,49 @@ let
             "mihomo-full.yaml"
           ]
           && renderedProfile.profileJsonTemplate == null;
+      trustTunnelOnlyMihomoShape =
+        protocol != "trusttunnel"
+        || (
+          let
+            proxy = builtins.head renderedProfile.mihomoSelectiveTemplate.proxies;
+            manualGroups = builtins.filter (group: group.type == "select") (
+              renderedProfile.mihomoSelectiveTemplate."proxy-groups"
+              ++ renderedProfile.mihomoFullTemplate."proxy-groups"
+            );
+            autoGroups = builtins.filter (group: group.type == "url-test") (
+              renderedProfile.mihomoSelectiveTemplate."proxy-groups"
+              ++ renderedProfile.mihomoFullTemplate."proxy-groups"
+            );
+          in
+          proxy.type == "trusttunnel"
+          && proxy.server == "192.0.2.21"
+          && proxy.port == 443
+          && proxy.username == "alice"
+          && proxy.password == "__MIHOMO_TRUSTTUNNEL_PASSWORD_6-edge-a-18-trusttunnel-edge-a_alice__"
+          && proxy.sni == "trusttunnel-edge-a.example.invalid"
+          && !proxy."skip-cert-verify"
+          && proxy."client-fingerprint" == "chrome"
+          && !proxy.quic
+          && proxy.udp
+          && builtins.all (
+            artifact:
+            artifact.bindings == [
+              {
+                secretName = "fixture-trusttunnel-edge-a-alice";
+                decoding = "base64url";
+                targetPath = [
+                  "proxies"
+                  0
+                  "password"
+                ];
+                placeholder = "__MIHOMO_TRUSTTUNNEL_PASSWORD_6-edge-a-18-trusttunnel-edge-a_alice__";
+              }
+            ]
+          ) artifacts
+          && builtins.all (group: group.proxies == [ proxy.name ]) autoGroups
+          && builtins.all (group: builtins.elem proxy.name group.proxies) manualGroups
+          && renderedProfile.profileJsonTemplate == null
+        );
       naiveOnlyProtectedUdpRejects =
         protocol != "naiveproxy"
         || builtins.any (
@@ -427,6 +481,7 @@ let
             "hysteria2"
             "mieru"
             "anytls"
+            "trusttunnel"
             "amneziawg"
           ]
         );

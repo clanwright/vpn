@@ -33,7 +33,7 @@ Publisher `enable = false`, `secretPrefix` и gateway address fields пусты
 
 Role экспортирует `vpnPublisher` и выбирает providers через raw Clan
 exports и `clanLib.selectExports`: `naiveproxy` требует addon, а
-`vless-xhttp`, `hysteria2`, `amneziawg`, `mieru`, `anytls` — gateway. Отсутствующий,
+`vless-xhttp`, `hysteria2`, `amneziawg`, `mieru`, `anytls`, `trusttunnel` — gateway. Отсутствующий,
 выключенный, неоднозначный или несоответствующий provider блокирует
 генерацию. Renderer принимает выбранные typed `vpnProvider` exports напрямую;
 `providerRefs.profileNames` сужает их `profileNames` без промежуточных
@@ -71,6 +71,15 @@ core не имеет полей ограничения версии TLS для A
 берётся из точного `secretNames.users` map и подставляется через generic manifest
 binding с `base64url`. Custom padding, session metadata, idle-session overrides,
 ciphers, ALPN, TFO и client fingerprint не добавляются.
+
+TrustTunnel экспортируется только в Mihomo selective/full YAML. Для точного
+Mihomo 1.19.30 renderer использует числовой IPv4 endpoint, `type = trusttunnel`,
+имя device profile как `username`, проверяемый SNI, `skip-cert-verify = false`,
+`client-fingerprint = chrome`, `quic = false` и `udp = true`. Это H2-профиль:
+H3/QUIC, ClientRandom, health checks и pool tuning не добавляются. Пароль берётся
+из точного `secretNames.users` map и остаётся runtime-only через manifest binding
+с `base64url`. Sing-box TrustTunnel outbound и официальный client export не
+публикуются.
 
 Имена proxies включают полный canonical machine ID и instance ID. Компоненты
 кодируются с длиной, поэтому разные пары machine/instance не могут дать одно
@@ -120,7 +129,7 @@ eligible providers других протоколов продолжают пуб
 выбора и фоновых URL-проб. Default включает все поддерживаемые протоколы;
 `[]` оставляет ручные selectors без Auto-групп. Например, consumer может задать
 для каждого профиля
-`[ "vless-xhttp" "hysteria2" "naiveproxy" "mieru" "anytls" ]`, сохранив AWG вручную.
+`[ "vless-xhttp" "hysteria2" "naiveproxy" "mieru" "anytls" "trusttunnel" ]`, сохранив AWG вручную.
 Для исключённого AWG отключается также persistent keepalive. При отсутствии
 кандидатов Auto соответствующая группа не создаётся; DIRECT в защищённые
 selectors не добавляется. В полностью ручном режиме по умолчанию выбран
@@ -129,7 +138,7 @@ selectors не добавляется. В полностью ручном реж
 ```nix
 profiles = map (name: {
   inherit name;
-  autoProtocols = [ "vless-xhttp" "hysteria2" "naiveproxy" "mieru" "anytls" ];
+  autoProtocols = [ "vless-xhttp" "hysteria2" "naiveproxy" "mieru" "anytls" "trusttunnel" ];
 }) [ "device-a" "device-b" ];
 ```
 

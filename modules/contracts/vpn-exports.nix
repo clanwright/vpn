@@ -137,6 +137,10 @@ let
           type = policyType "credentialEncoding" nullableNonEmptyStr;
           default = null;
         };
+        upstreamProtocol = lib.mkOption {
+          type = policyType "upstreamProtocol" nullableNonEmptyStr;
+          default = null;
+        };
         generation = lib.mkOption {
           type = policyType "generation" (types.nullOr types.int);
           default = null;
@@ -215,6 +219,14 @@ let
       "tlsMinVersion"
       "credentialEncoding"
     ];
+    trusttunnel = [
+      "protocol"
+      "userNames"
+      "tlsServerName"
+      "tlsVerify"
+      "credentialEncoding"
+      "upstreamProtocol"
+    ];
   };
   validMetadataShape =
     value:
@@ -273,6 +285,7 @@ let
     ];
     mieru = [ "users" ];
     anytls = [ "users" ];
+    trusttunnel = [ "users" ];
   };
   validSecretNamesShape =
     value:
@@ -291,6 +304,7 @@ let
           builtins.elem protocol [
             "mieru"
             "anytls"
+            "trusttunnel"
           ]
         then
           types.addCheck nonEmptyStr validIPv4
@@ -317,6 +331,7 @@ let
             "amneziawg"
             "mieru"
             "anytls"
+            "trusttunnel"
           ]
         );
         enabled = mkOption (fixed true);
@@ -572,6 +587,17 @@ let
       )
     then
       fail context "AnyTLS public transport metadata is incomplete"
+    else if
+      protocol == "trusttunnel"
+      && (
+        !allSafeIdentities (metadata.userNames or [ ])
+        || !isNonEmptyString (metadata.tlsServerName or null)
+        || (metadata.tlsVerify or null) != fixedPolicy.tlsVerify
+        || (metadata.credentialEncoding or null) != fixedPolicy.credentialEncoding
+        || (metadata.upstreamProtocol or null) != fixedPolicy.upstreamProtocol
+      )
+    then
+      fail context "TrustTunnel public transport metadata is incomplete"
     else
       metadata;
 
@@ -635,6 +661,8 @@ let
             credentialMapExact metadata.userNames secretNames.users
           else if protocol == "anytls" then
             credentialMapExact metadata.userNames secretNames.users
+          else if protocol == "trusttunnel" then
+            credentialMapExact metadata.userNames secretNames.users
           else
             false
         );
@@ -653,6 +681,8 @@ let
           if protocol == "mieru" then
             builtins.isNull endpoint.domain && validIPv4 endpoint.ipv4
           else if protocol == "anytls" then
+            isNonEmptyString endpoint.domain && validIPv4 endpoint.ipv4
+          else if protocol == "trusttunnel" then
             isNonEmptyString endpoint.domain && validIPv4 endpoint.ipv4
           else
             isNonEmptyString endpoint.domain
@@ -678,6 +708,8 @@ let
         && (protocol != "mieru" || metadata.userNames == raw.profileNames)
         && (protocol != "anytls" || metadata.userNames == raw.profileNames)
         && (protocol != "anytls" || metadata.tlsServerName == endpoint.domain)
+        && (protocol != "trusttunnel" || metadata.userNames == raw.profileNames)
+        && (protocol != "trusttunnel" || metadata.tlsServerName == endpoint.domain)
         && (
           protocol != "naiveproxy"
           || (

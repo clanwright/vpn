@@ -25,6 +25,7 @@ let
   naiveProviders = providersFor "naiveproxy";
   mieruProviders = providersFor "mieru";
   anytlsProviders = providersFor "anytls";
+  trusttunnelProviders = providersFor "trusttunnel";
   providerId = profileTypes.providerNamespace;
   profilePolicy = profileName: provider: builtins.elem profileName provider.profileNames;
   indexOf =
@@ -462,6 +463,29 @@ let
           or (throw "AnyTLS password secret name is required for ${machineName}/${profileName}");
     };
 
+  mkTrustTunnelCredential =
+    profileName: provider:
+    let
+      metadata = provider.transportMetadata;
+      machineName = providerId provider;
+    in
+    {
+      inherit machineName profileName;
+      endpointDomain = provider.endpoint.domain;
+      endpointIPv4 = provider.endpoint.ipv4;
+      port = provider.endpoint.port;
+      inherit (metadata)
+        tlsServerName
+        tlsVerify
+        credentialEncoding
+        upstreamProtocol
+        ;
+      tag = "${machineName}-${profileName}-trusttunnel";
+      passwordSecretName =
+        provider.secretNames.users.${profileName}
+          or (throw "TrustTunnel password secret name is required for ${machineName}/${profileName}");
+    };
+
   mkProfile =
     profile:
     let
@@ -484,12 +508,14 @@ let
       profileNaiveProviders = builtins.filter (profilePolicy profile.name) naiveProviders;
       profileMieruProviders = builtins.filter (profilePolicy profile.name) mieruProviders;
       profileAnytlsProviders = builtins.filter (profilePolicy profile.name) anytlsProviders;
+      profileTrustTunnelProviders = builtins.filter (profilePolicy profile.name) trusttunnelProviders;
       upstreamCredentials = map (mkVlessCredential profile.name) profileVlessProviders;
       amneziawgCredentials = map (mkAmneziawgCredential profile.name) profileAmneziawgProviders;
       hysteria2Credentials = map (mkHysteria2Credential profile.name) profileHysteria2Providers;
       naiveCredentials = map (mkNaiveCredential profile.name) profileNaiveProviders;
       mieruCredentials = map (mkMieruCredential profile.name) profileMieruProviders;
       anytlsCredentials = map (mkAnytlsCredential profile.name) profileAnytlsProviders;
+      trusttunnelCredentials = map (mkTrustTunnelCredential profile.name) profileTrustTunnelProviders;
       publishProfileJson =
         profileJsonRequested
         && (naiveCredentials != [ ] || hysteria2Credentials != [ ] || anytlsCredentials != [ ]);
@@ -595,44 +621,69 @@ let
         "skip-cert-verify" = !cred.tlsVerify;
       };
 
+      mkTrustTunnelProxy = cred: {
+        name = cred.tag;
+        type = "trusttunnel";
+        server = cred.endpointIPv4;
+        inherit (cred) port;
+        username = cred.profileName;
+        password = "__MIHOMO_TRUSTTUNNEL_PASSWORD_${cred.machineName}_${cred.profileName}__";
+        sni = cred.tlsServerName;
+        "skip-cert-verify" = !cred.tlsVerify;
+        "client-fingerprint" = "chrome";
+        quic = false;
+        udp = true;
+      };
+
       unorderedProxies =
         (map mkVlessProxy upstreamCredentials)
         ++ (map mkHysteria2Proxy hysteria2Credentials)
         ++ (map mkMieruProxy mieruCredentials)
         ++ (map mkAnytlsProxy anytlsCredentials)
+        ++ (map mkTrustTunnelProxy trusttunnelCredentials)
         ++ (map mkAmneziawgProxy amneziawgCredentials);
 
       vlessProxyNames = map (cred: cred.vlessTag) upstreamCredentials;
       hysteria2ProxyNames = map (cred: cred.tag) hysteria2Credentials;
       mieruProxyNames = map (cred: cred.tag) mieruCredentials;
       anytlsProxyNames = map (cred: cred.tag) anytlsCredentials;
+      trusttunnelProxyNames = map (cred: cred.tag) trusttunnelCredentials;
       amneziawgProxyNames = map (cred: cred.amneziawgTag) amneziawgCredentials;
       autoProxyNames =
         lib.optionals (autoProtocolEnabled "vless-xhttp") vlessProxyNames
         ++ lib.optionals (autoProtocolEnabled "hysteria2") hysteria2ProxyNames
         ++ lib.optionals (autoProtocolEnabled "mieru") mieruProxyNames
         ++ lib.optionals (autoProtocolEnabled "anytls") anytlsProxyNames
+        ++ lib.optionals (autoProtocolEnabled "trusttunnel") trusttunnelProxyNames
         ++ lib.optionals (autoProtocolEnabled "amneziawg") amneziawgProxyNames;
       udpProxyNames =
         vlessProxyNames
         ++ hysteria2ProxyNames
         ++ mieruProxyNames
         ++ anytlsProxyNames
+        ++ trusttunnelProxyNames
         ++ amneziawgProxyNames;
       autoUdpProxyNames =
         lib.optionals (autoProtocolEnabled "vless-xhttp") vlessProxyNames
         ++ lib.optionals (autoProtocolEnabled "hysteria2") hysteria2ProxyNames
         ++ lib.optionals (autoProtocolEnabled "mieru") mieruProxyNames
         ++ lib.optionals (autoProtocolEnabled "anytls") anytlsProxyNames
+        ++ lib.optionals (autoProtocolEnabled "trusttunnel") trusttunnelProxyNames
         ++ lib.optionals (autoProtocolEnabled "amneziawg") amneziawgProxyNames;
       orderedProxyNames =
         if isRouterProfile then
-          hysteria2ProxyNames ++ mieruProxyNames ++ anytlsProxyNames ++ amneziawgProxyNames ++ vlessProxyNames
+          hysteria2ProxyNames
+          ++ mieruProxyNames
+          ++ anytlsProxyNames
+          ++ trusttunnelProxyNames
+          ++ amneziawgProxyNames
+          ++ vlessProxyNames
         else
           vlessProxyNames
           ++ hysteria2ProxyNames
           ++ mieruProxyNames
           ++ anytlsProxyNames
+          ++ trusttunnelProxyNames
           ++ amneziawgProxyNames;
       proxyByName = builtins.listToAttrs (
         map (proxy: {
@@ -683,7 +734,7 @@ let
           name = cred.endpointDomain;
           value = cred.endpointIPv4;
         }
-      ) (hysteria2Credentials ++ anytlsCredentials ++ amneziawgCredentials);
+      ) (hysteria2Credentials ++ anytlsCredentials ++ trusttunnelCredentials ++ amneziawgCredentials);
       pinnedHostEntries = map (entry: entry // { name = lib.toLower entry.name; }) rawPinnedHostEntries;
       pinnedHostEntriesByDomain = lib.groupBy (entry: entry.name) pinnedHostEntries;
       conflictingPinnedHostDomains = builtins.filter (
@@ -878,7 +929,14 @@ let
             (proxyIndex cred.tag)
             "password"
           ] "__MIHOMO_ANYTLS_PASSWORD_${cred.machineName}_${cred.profileName}__")
-        ]) anytlsCredentials;
+        ]) anytlsCredentials
+        ++ lib.concatMap (cred: [
+          (mkBinding cred.passwordSecretName cred.credentialEncoding [
+            "proxies"
+            (proxyIndex cred.tag)
+            "password"
+          ] "__MIHOMO_TRUSTTUNNEL_PASSWORD_${cred.machineName}_${cred.profileName}__")
+        ]) trusttunnelCredentials;
       mihomoAssetRefs = [
         "secure-dns-domains"
       ]
@@ -1330,6 +1388,7 @@ let
         naiveCredentials
         mieruCredentials
         anytlsCredentials
+        trusttunnelCredentials
         ;
       inherit (profile) name;
       inherit publishProfileJson;
