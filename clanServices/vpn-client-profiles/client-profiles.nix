@@ -954,6 +954,12 @@ let
         type = "logical";
         mode = "and";
         rules = [
+          {
+            query_type = [
+              "A"
+              "AAAA"
+            ];
+          }
           { rule_set = singBoxFakeIpDomainRuleSets; }
           {
             type = "logical";

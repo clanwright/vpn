@@ -715,6 +715,11 @@ let
   expectedMihomoBootstrapNameservers = mihomoBootstrapNameserversFor clientDnsEndpoints;
   expectedSingBoxDohServers = singBoxDohServersFor clientDnsEndpoints;
   expectedSingBoxDohRules = singBoxDohRulesFor clientDnsEndpoints;
+  expectedSingBoxFakeIpDomainRuleSets = [
+    "secure_dns_domains"
+    "ru_blocked_and_geoblocked_domains"
+    "refilter_blocked_domains"
+  ];
   actualSingBoxDohServers = builtins.filter (server: server.type == "https") profile.dns.servers;
   customPortSingBoxDoh = builtins.elemAt actualSingBoxDohServers 2;
   fakeIpDnsRule = builtins.head profile.dns.rules;
@@ -743,6 +748,15 @@ let
     && bootstrapHosts.type == "hosts"
     && !(bootstrapHosts ? path)
     && builtins.all (endpoint: bootstrapHosts.predefined.${endpoint.domain} == endpoint.ipv4) endpoints
+    && builtins.length candidateFakeIpRule.rules == 3
+    &&
+      builtins.head candidateFakeIpRule.rules == {
+        query_type = [
+          "A"
+          "AAAA"
+        ];
+      }
+    && (builtins.elemAt candidateFakeIpRule.rules 1).rule_set == expectedSingBoxFakeIpDomainRuleSets
     && builtins.any (
       rule: (rule.domain or [ ]) == publisherSettings.tailnetAdminDomains
     ) (lib.last candidateFakeIpRule.rules).rules
@@ -1016,7 +1030,15 @@ let
     && fakeIpDnsRule.mode == "and"
     && fakeIpDnsRule.action == "route"
     && fakeIpDnsRule.server == "fakeip"
-    && (builtins.head fakeIpDnsRule.rules).rule_set != [ ]
+    && builtins.length fakeIpDnsRule.rules == 3
+    &&
+      builtins.head fakeIpDnsRule.rules == {
+        query_type = [
+          "A"
+          "AAAA"
+        ];
+      }
+    && (builtins.elemAt fakeIpDnsRule.rules 1).rule_set == expectedSingBoxFakeIpDomainRuleSets
     && (lib.last fakeIpDnsRule.rules).invert
     && builtins.any (
       rule: (rule.domain or [ ]) == publisherSettings.tailnetAdminDomains
