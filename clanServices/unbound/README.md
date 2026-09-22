@@ -36,6 +36,10 @@ UDP и TCP, использует EDNS buffer `1232`, QNAME minimisation без s
 `prefetch`, `cache-min-ttl = 0` и не получает ECS/per-query logging от роли.
 Bounded stale policy: `serve-expired = yes`, horizon `86400`, без TTL reset,
 fresh-answer wait `1800ms`, stale reply TTL `30s`.
+Эти `1800ms` не ограничивают весь recursive exchange и не задают момент
+переключения AdGuard на резерв. Его retry-aware
+[timeout contract](../adguardhome/README.md#timeout-contract) принадлежит
+AdGuard; полный клиентский ответ и время проверяет consumer.
 
 ## Integration dependency
 

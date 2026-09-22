@@ -55,9 +55,19 @@
               description = "Loopback port for the module-owned encrypted-to-plaintext dnsproxy cascade.";
             };
             fallbackTimeoutSeconds = lib.mkOption {
-              type = lib.types.ints.positive;
+              type = lib.types.ints.between 1 9223372036;
               default = 3;
-              description = "Per-stage dnsproxy exchange timeout within AdGuard Home's 10-second budget.";
+              description = "Timeout for each dnsproxy upstream attempt.";
+            };
+            upstreamTimeoutSeconds = lib.mkOption {
+              type = lib.types.ints.between 1 9223372036;
+              default = 16;
+              description = "AdGuard Home timeout applied independently to each primary and fallback upstream attempt.";
+            };
+            silentFailureBudgetSeconds = lib.mkOption {
+              type = lib.types.ints.positive;
+              default = 65;
+              description = "Consumer acceptance envelope for modeled silent DNS failure, not a runtime deadline.";
             };
             privateZones = lib.mkOption {
               type = lib.types.listOf (
@@ -352,7 +362,7 @@
                   ipset = [ ];
                   ipset_file = "";
                   bootstrap_prefer_ipv6 = false;
-                  upstream_timeout = "10s";
+                  upstream_timeout = "${toString settings.dns.upstreamTimeoutSeconds}s";
                   private_networks = [ ];
                   use_private_ptr_resolvers = false;
                   local_ptr_upstreams = [ ];
@@ -634,7 +644,6 @@
                       && settings.ui.port > 0
                       && settings.tls.httpsPort > 0
                       && settings.dns.fallbackPort > 0
-                      && (2 * settings.dns.fallbackTimeoutSeconds + 1) < 10
                       &&
                         builtins.length (
                           lib.unique [
@@ -645,7 +654,18 @@
                             settings.tls.httpsPort
                           ]
                         ) == 5;
-                  message = "adguardhome: listener ports must be nonzero and distinct; DoT must remain disabled and two dnsproxy stages plus margin must fit the 10s outer budget.";
+                  message = "adguardhome: listener ports must be nonzero and distinct; DoT must remain disabled.";
+                }
+                {
+                  # Overflow-safe equivalents of 5F + 1 <= A and 4A + 1 <= B;
+                  # see the retry-aware timeout model in README.md.
+                  assertion =
+                    !active
+                    ||
+                      settings.dns.fallbackTimeoutSeconds <= builtins.div (settings.dns.upstreamTimeoutSeconds - 1) 5
+                      &&
+                        settings.dns.upstreamTimeoutSeconds <= builtins.div (settings.dns.silentFailureBudgetSeconds - 1) 4;
+                  message = "adguardhome: retry-aware silent DNS failure model requires five dnsproxy attempts within each AdGuard upstream attempt and four AdGuard attempts within the consumer budget, including one second of scheduling and loopback allowance; it models silence only, not TCP truncation, slow connects, or filtering-helper guarantees.";
                 }
                 {
                   assertion =

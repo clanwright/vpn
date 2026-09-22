@@ -166,6 +166,18 @@ let
   };
   disabledIntegration = sharedEvaluation.config.clanwright.dns.adguardhome.integration;
   customRulesAccepted = effective.user_rules == baseSettings.filtering.userRules;
+  timeoutAssertionMessage = "adguardhome: retry-aware silent DNS failure model requires five dnsproxy attempts within each AdGuard upstream attempt and four AdGuard attempts within the consumer budget, including one second of scheduling and loopback allowance; it models silence only, not TCP truncation, slow connects, or filtering-helper guarantees.";
+  alternateTimeoutSettings = lib.recursiveUpdate baseSettings {
+    dns = {
+      upstreamTimeoutSeconds = 11;
+      fallbackTimeoutSeconds = 2;
+      silentFailureBudgetSeconds = 45;
+    };
+  };
+  alternateTimeoutModule = moduleFor alternateTimeoutSettings placeholderConfig;
+  alternateTimeoutEffective =
+    builtins.fromJSON
+      alternateTimeoutModule.sops.templates."dns-adguardhome-adguardhome.yaml".content;
   settingOverrideResults = [
     (rejectsSetting "adguardhome: dns.upstream must contain one 127.0.0.1:<port> Unbound endpoint." (
       baseSettings // { dns.upstream = [ ]; }
@@ -185,12 +197,16 @@ let
     (rejectsSetting "adguardhome: dns.bindHosts must be unique private addresses and include 127.0.0.1."
       (baseSettings // { dns.bindHosts = [ "0.0.0.0" ]; })
     )
+    (rejectsSetting timeoutAssertionMessage (
+      lib.recursiveUpdate baseSettings {
+        dns = {
+          upstreamTimeoutSeconds = 15;
+          fallbackTimeoutSeconds = 3;
+        };
+      }
+    ))
     (rejectsSetting
-      "adguardhome: listener ports must be nonzero and distinct; DoT must remain disabled and two dnsproxy stages plus margin must fit the 10s outer budget."
-      (baseSettings // { dns.fallbackTimeoutSeconds = 5; })
-    )
-    (rejectsSetting
-      "adguardhome: listener ports must be nonzero and distinct; DoT must remain disabled and two dnsproxy stages plus margin must fit the 10s outer budget."
+      "adguardhome: listener ports must be nonzero and distinct; DoT must remain disabled."
       (baseSettings // { dns.fallbackPort = 5335; })
     )
     (rejectsSetting
@@ -228,6 +244,7 @@ let
         { settings.upstream = [ "1.1.1.1:53" ]; }
         { settings.fallback = [ ]; }
         { settings.insecure = true; }
+        { settings.timeout = "4s"; }
         { flags = [ "--insecure" ]; }
       ];
   templateOverrideRejected =
@@ -471,6 +488,19 @@ let
     && !(schemaAccepts (baseSettings // { unexpected = true; }))
     && !(schemaAccepts (baseSettings // { dns.port = "53"; }))
     && !(schemaAccepts (baseSettings // { dns.fallbackTimeoutSeconds = 0; }))
+    && !(schemaAccepts (baseSettings // { dns.fallbackTimeoutSeconds = -1; }))
+    && !(schemaAccepts (baseSettings // { dns.fallbackTimeoutSeconds = 1.5; }))
+    && !(schemaAccepts (baseSettings // { dns.fallbackTimeoutSeconds = "3"; }))
+    && !(schemaAccepts (baseSettings // { dns.fallbackTimeoutSeconds = 9223372037; }))
+    && !(schemaAccepts (baseSettings // { dns.upstreamTimeoutSeconds = 0; }))
+    && !(schemaAccepts (baseSettings // { dns.upstreamTimeoutSeconds = -1; }))
+    && !(schemaAccepts (baseSettings // { dns.upstreamTimeoutSeconds = 1.5; }))
+    && !(schemaAccepts (baseSettings // { dns.upstreamTimeoutSeconds = "16"; }))
+    && !(schemaAccepts (baseSettings // { dns.upstreamTimeoutSeconds = 9223372037; }))
+    && !(schemaAccepts (baseSettings // { dns.silentFailureBudgetSeconds = 0; }))
+    && !(schemaAccepts (baseSettings // { dns.silentFailureBudgetSeconds = -1; }))
+    && !(schemaAccepts (baseSettings // { dns.silentFailureBudgetSeconds = 1.5; }))
+    && !(schemaAccepts (baseSettings // { dns.silentFailureBudgetSeconds = "65"; }))
     && !(schemaAccepts (
       lib.recursiveUpdate baseSettings {
         filtering.userRules = "||invalid.example^";
@@ -874,7 +904,7 @@ let
     && effective.dns.fallback_dns == [ "127.0.0.1:5336" ]
     && effective.dns.bootstrap_dns == [ ]
     && effective.dns.upstream_mode == "load_balance"
-    && effective.dns.upstream_timeout == "10s"
+    && effective.dns.upstream_timeout == "16s"
     && effective.dns.enable_dnssec
     && effective.dns.cache_enabled
     && effective.dns.cache_ttl_min == 0
@@ -1050,6 +1080,42 @@ let
     && builtins.all (value: value) settingOverrideResults
     && builtins.all (value: value) packageOverrideResults
     && builtins.all (value: value) dnsproxyOverrideResults;
+  timeoutResults = {
+    defaults =
+      (evalSettings baseSettings).dns.upstreamTimeoutSeconds == 16
+      && (evalSettings baseSettings).dns.fallbackTimeoutSeconds == 3
+      && (evalSettings baseSettings).dns.silentFailureBudgetSeconds == 65;
+    alternateAccepted =
+      (assertionFor timeoutAssertionMessage alternateTimeoutSettings placeholderConfig).assertion
+      && alternateTimeoutEffective.dns.upstream_timeout == "11s"
+      && alternateTimeoutModule.services.dnsproxy.settings.timeout == "2s";
+    cascadeRejected = rejectsSetting timeoutAssertionMessage (
+      lib.recursiveUpdate baseSettings {
+        dns = {
+          upstreamTimeoutSeconds = 15;
+          fallbackTimeoutSeconds = 3;
+        };
+      }
+    );
+    budgetRejected = rejectsSetting timeoutAssertionMessage (
+      lib.recursiveUpdate baseSettings {
+        dns = {
+          upstreamTimeoutSeconds = 16;
+          silentFailureBudgetSeconds = 64;
+        };
+      }
+    );
+    oversizedFallbackRejected = rejectsSetting timeoutAssertionMessage (
+      lib.recursiveUpdate baseSettings {
+        dns = {
+          upstreamTimeoutSeconds = 16;
+          fallbackTimeoutSeconds = 9223372036;
+        };
+      }
+    );
+    boundaryAccepted = (assertionFor timeoutAssertionMessage baseSettings placeholderConfig).assertion;
+  };
+  timeoutContract = builtins.all (value: value) (builtins.attrValues timeoutResults);
   contract =
     schemaContract
     && effectiveContract
@@ -1063,7 +1129,8 @@ let
     && privateDisabledContract
     && privateDnsContract
     && privateSchemaContract
-    && stampStructureContract;
+    && stampStructureContract
+    && timeoutContract;
 in
 if !contract then
   throw "AdGuard Home contract failed: ${
@@ -1085,6 +1152,8 @@ if !contract then
         schemaContract
         stampNegativeResults
         stampStructureContract
+        timeoutContract
+        timeoutResults
         ;
     }
   }"
@@ -1108,5 +1177,7 @@ else
       schemaContract
       stampNegativeResults
       stampStructureContract
+      timeoutContract
+      timeoutResults
       ;
   }

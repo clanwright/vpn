@@ -77,6 +77,11 @@ three own DoH endpoints, protected UDP and IPv6 local exceptions. Asset checks
 cover opaque canonical paths, legacy alias collisions and MRS validation before
 cache replacement. AdGuard checks cover all four Safe Search/YouTube combinations
 and unchanged private DNS routing and rewrites.
+AdGuard timeout checks cover typed defaults, a nondefault profile and rejected
+retry-budget boundaries for silent upstreams. They check generated timeouts and
+their arithmetic relationship, not elapsed client time or runtime fallback;
+the [consumer scenarios](adguardhome.md#consumer-runtime-acceptance-specification)
+remain owned by Clanwright.
 AnyTLS checks cover its separate stock sing-box service, TLS 1.3 policy,
 runtime credentials, scoped ingress and process egress guard, plus both client
 formats with AnyTLS-only and manual-only selection. UoT v2 relay, certificate

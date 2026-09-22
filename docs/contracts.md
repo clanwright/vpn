@@ -107,6 +107,14 @@ its selected public-site claim, matching the declared bind address. The consumer
 supplies AdGuard's Unbound upstream binding and any systemd startup relationship
 between the two services.
 
+AdGuard's typed `dns.upstreamTimeoutSeconds`, `dns.fallbackTimeoutSeconds` and
+`dns.silentFailureBudgetSeconds` describe a retry-aware silent-upstream timing
+model: `5F + 1 <= A` and `4A + 1 <= B`, with defaults `A=16`, `F=3`, `B=65`
+seconds. The budget is a consumer acceptance envelope, not an application
+deadline for every client request. See the [scope, source evidence and
+tradeoff](../clanServices/adguardhome/README.md#timeout-contract) and
+[Clanwright acceptance](operations/adguardhome.md#consumer-runtime-acceptance-specification).
+
 AdGuard exposes private DNS through typed `dns.privateZones` and `dns.rewrites`.
 Each zone declares canonical lowercase ASCII suffixes and numeric private
 resolvers; each rewrite source and CNAME target is covered by those zones, or

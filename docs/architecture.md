@@ -105,6 +105,11 @@ startup relationship between AdGuard and Unbound. The AdGuard role configures a
 loopback dnsproxy reserve: parallel encrypted providers, followed by plaintext
 providers only after encrypted exchange failures. Received NXDOMAIN or SERVFAIL
 does not activate the plaintext tier.
+AdGuard's timeout applies separately to primary and fallback attempts; it is
+not a total client deadline. The [retry-aware timing contract](../clanServices/adguardhome/README.md#timeout-contract)
+reserves time for the warm encrypted-to-plaintext cascade and declares an
+isolated silent-failure acceptance budget. Clanwright measures final A/AAAA
+answers and elapsed time; source assertions do not prove runtime failover.
 
 AdGuard Home, Unbound and NaiveProxy each allow one active instance per machine;
 their native services or Caddy integration are singletons. Disabled instances

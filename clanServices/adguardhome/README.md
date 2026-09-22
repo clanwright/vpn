@@ -17,7 +17,8 @@ Cloudflare Standard, Quad9 без threat blocking и Google Public DNS по DoH,
 Точная схема и defaults определены в [`default.nix`](default.nix).
 Основные входы роли: `ui.host`, `ui.port`, `dns.bindHosts`,
 `dns.port`, `dns.upstream`, `dns.fallbackPort`,
-`dns.fallbackTimeoutSeconds`, `tls.serverName`,
+`dns.upstreamTimeoutSeconds`, `dns.fallbackTimeoutSeconds`,
+`dns.silentFailureBudgetSeconds`, `tls.serverName`,
 `tls.httpsPort`, `tls.certificateFile`, `tls.privateKeyFile`,
 `auth.username`, `auth.passwordSecretName`, `systemResolver.enableLocalStub`,
 `filtering.enable`, `filtering.safeSearch`, `filtering.youtubeRestrictedMode`,
@@ -62,7 +63,8 @@ CNAME допускается частный числовой IP. Повторы 
 
 `enable` по умолчанию — `true`; primary указывает на consumer-owned
 Unbound `127.0.0.1:5335`. Fallback `dnsproxy` слушает `127.0.0.1:5336`, его
-таймаут каждой из двух стадий — 3 секунды при внешнем бюджете AdGuard 10 секунд.
+таймаут отдельной upstream-попытки — 3 секунды. AdGuard использует 16 секунд
+на попытку primary или fallback, а не на весь клиентский запрос.
 HTTPS использует порт `8444`,
 DoT выключен значением `0`, логин администратора — `admin`, локальный стаб и
 auth всегда включён, системный resolver использует `127.0.0.1`.
@@ -109,6 +111,91 @@ closure. Consumer rules не могут отменить эти exclusions. Бо
 обычные Unbound/dnsproxy defaults. Consumer обязан настроить сам private
 resolver так, чтобы protected names не рекурсировались и не пересылались в
 public DNS: библиотека не может проверить поведение внешнего сервера.
+
+## Timeout contract
+
+Контракт описывает один обычный public A/AAAA forwarding exchange при молчащих
+upstreams: numeric UDP endpoints принимают отправку, но не отвечают. Это
+ожидаемый предел для изолированной consumer-приёмки, **не жёсткий deadline
+любого клиентского запроса**. Статические assertions проверяют согласованность
+настроек с этой моделью; фактические ответы и время проверяет Clanwright.
+
+Обозначения: `A = dns.upstreamTimeoutSeconds` (default `16`),
+`F = dns.fallbackTimeoutSeconds` (default `3`),
+`B = dns.silentFailureBudgetSeconds` (default `65`), все в секундах.
+Все три значения — положительные целые; `A` и `F` ограничены `9223372036s`,
+максимумом целых секунд, представимым штатным Go `time.Duration`.
+Фиксированный запас `M = 1s` отведён на локальную передачу, переключение и
+обработку ответа в изолированном тесте. Это allowance приёмки, а не гарантия
+планировщика при произвольной нагрузке. `B` не передаётся приложению как timeout.
+
+| Путь | Модель ожидания без запаса | Defaults |
+| --- | --- | --- |
+| Молчащий Unbound до первого обращения к резерву | `2A` | `32s` |
+| Encrypted stage dnsproxy, новый DoH client | `F` | `3s` |
+| Encrypted stage, уже созданный DoH client с повторами | `3F` | `9s` |
+| Следующая plaintext stage, молчащие UDP upstreams | `2F` | `6s` |
+| Резервная цепочка с тёплым DoH client | `3F + 2F = 5F` | `15s` |
+| Молчащий Unbound, работающий dnsproxy, все public upstreams молчат | `2A + 5F` | `47s` |
+| Молчат оба loopback upstream AdGuard, включая dnsproxy | `2A + 2A = 4A` | `64s` |
+
+Внутри каждой стадии dnsproxy провайдеры опрашиваются параллельно: время не
+умножается на число провайдеров. Между стадиями переключение последовательное.
+Полученный корректный DNS-ответ, включая NXDOMAIN, NODATA или SERVFAIL,
+завершает соответствующий обмен; сам rcode не включает следующую стадию.
+Если все public upstreams молчат, работающий dnsproxy ожидаемо возвращает
+SERVFAIL; этот ответ завершает fallback-попытку AdGuard без её UDP-повтора.
+
+Pure assertions требуют `5F + M <= A` и `4A + M <= B`: резервная цепочка
+должна помещаться **в первую** попытку AdGuard, а обе последовательные пары
+попыток — в заявленный silent-failure budget. Поэтому default-предел приёмки
+составляет `48s` при отвечающем dnsproxy и `65s` при молчании обоих loopback
+upstreams. Успешный резерв должен завершиться раньше соответствующего предела;
+быстрые transport errors могут сократить ожидание. Для согласованного более
+короткого профиля допустимы, например, `A = 11`, `F = 2`, `B = 45`, но это
+сокращает отдельную попытку public DNS и требует consumer-приёмки.
+
+Прежние `A = 10`, `F = 3` не оставляли места для тёплой цепочки `5F = 15s`.
+Default `F = 3` сохранён, а `A` увеличен до `16`: молчащий Unbound теперь
+может задержать первое обращение к резерву примерно на `32s` вместо `20s`.
+Это явный компромисс общего stock timeout, который AdGuard применяет и к
+primary, и к fallback. Отдельного поддерживаемого retry-count knob здесь нет.
+
+Основание — закреплённые исходники, не runtime-наблюдение:
+
+- [AdGuard Home 0.107.78 go.mod](https://github.com/AdguardTeam/AdGuardHome/blob/v0.107.78/go.mod#L5-L8)
+  закрепляет embedded dnsproxy `0.83.0`; один timeout передаётся
+  [primary](https://github.com/AdguardTeam/AdGuardHome/blob/v0.107.78/internal/dnsforward/dnsforward.go#L547-L552)
+  и [fallback](https://github.com/AdguardTeam/AdGuardHome/blob/v0.107.78/internal/dnsforward/dnsforward.go#L678-L698).
+- [Embedded plain DNS](https://github.com/AdguardTeam/dnsproxy/blob/v0.83.0/upstream/plain.go#L86-L129)
+  повторяет exchange один раз после `net.Error`/EOF;
+  [fallback selection](https://github.com/AdguardTeam/dnsproxy/blob/v0.83.0/proxy/proxy.go#L603-L624)
+  происходит только после ошибки primary.
+- Standalone dnsproxy `0.83.2` может сделать
+  [до двух дополнительных DoH exchanges](https://github.com/AdguardTeam/dnsproxy/blob/v0.83.2/upstream/doh.go#L155-L188)
+  при [retryable error уже созданного клиента](https://github.com/AdguardTeam/dnsproxy/blob/v0.83.2/upstream/doh.go#L335-L357).
+  Его [plain UDP retry](https://github.com/AdguardTeam/dnsproxy/blob/v0.83.2/upstream/plain.go#L86-L129)
+  даёт `2F`; [parallel exchange](https://github.com/AdguardTeam/dnsproxy/blob/v0.83.2/upstream/parallel.go#L22-L65)
+  принимает первый успешный DNS-ответ. Numeric DoH stamps исключают отдельный
+  DNS bootstrap, TLS verification остаётся включённой.
+
+Граница модели существенна: отдельные dial deadlines, UDP-ответы с TC или
+malformed question и последующий TCP exchange могут добавить ожидание.
+Private resolver groups, filtering helper lookups, клиентские повторы,
+TLS/HTTP frontend establishment, очереди и перегрузка не входят в `B`.
+Cache, Unbound stale и дедупликация способны скрыть проверяемый путь.
+Unbound `serve-expired-client-timeout = 1800ms` задаёт ожидание перед допустимым
+stale-ответом, а не общий срок рекурсии. Эти свойства не меняются.
+Для полной клиентской задержки Clanwright измеряет запрос от отправки до
+финального ответа с фактической filtering/frontend policy; выход за `B` в
+другом сценарии нельзя выдавать за нарушение доказанного общего deadline.
+При обновлении любой из закреплённых библиотек модель повторов пересматривается.
+
+На Harbor наблюдавшиеся около `20s` согласуются с двумя прежними попытками
+по `10s`, но не устанавливают причину отказа Unbound. `exchange failed`
+описывает попытку primary и не доказывает отсутствие fallback либо клиентский
+SERVFAIL. Требуемая [consumer-приёмка](../../docs/operations/adguardhome.md#consumer-runtime-acceptance-specification)
+сопоставляет попытки с итоговым ответом отдельно для A и AAAA.
 
 ## Exports and dependencies
 
