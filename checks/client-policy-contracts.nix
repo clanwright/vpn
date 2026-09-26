@@ -244,6 +244,54 @@ let
       )
     );
   tunInbound = renderedProfile: builtins.head renderedProfile.profileJsonTemplate.inbounds;
+  mihomoTunResults =
+    template:
+    let
+      tun = template.tun;
+      baseExclusions = [
+        "10.0.0.0/8"
+        "100.64.0.0/10"
+        "127.0.0.0/8"
+        "169.254.0.0/16"
+        "172.16.0.0/12"
+        "192.168.0.0/16"
+        "224.0.0.0/4"
+        "fc00::/7"
+        "fe80::/10"
+        "ff00::/8"
+      ];
+      pinnedExclusions = map (ip: "${ip}/32") (lib.unique (builtins.attrValues template.hosts));
+      rules = template.rules;
+      rejectIndex = indexOf (rule: rule == "IP-CIDR6,::/0,REJECT,no-resolve") rules;
+      localIPv6Rules = [
+        "IP-CIDR6,::1/128,DIRECT,no-resolve"
+        "IP-CIDR6,fc00::/7,DIRECT,no-resolve"
+        "IP-CIDR6,fe80::/10,DIRECT,no-resolve"
+        "IP-CIDR6,ff00::/8,DIRECT,no-resolve"
+      ];
+    in
+    {
+      noExplicitRouteAddress = !(builtins.hasAttr "route-address" tun);
+      routingFlagsPreserved =
+        tun.enable && tun."auto-route" && tun."auto-detect-interface" && tun."strict-route";
+      routeExclusionsPreserved = tun."route-exclude-address" == baseExclusions ++ pinnedExclusions;
+      noInterfaceName =
+        !(tun ? device)
+        && !(builtins.hasAttr "interface-name" tun)
+        && !(builtins.hasAttr "interface-name" template);
+      ipv6PolicyPreserved =
+        template.ipv6
+        && !template.dns.ipv6
+        && tun."inet6-address" == [ "fdfe:dcba:9876::1/126" ]
+        && rejectIndex >= 0
+        && builtins.all (
+          rule:
+          let
+            localIndex = indexOf (candidate: candidate == rule) rules;
+          in
+          localIndex >= 0 && localIndex < rejectIndex
+        ) localIPv6Rules;
+    };
   tunRouteResults =
     renderedProfile:
     let
@@ -346,6 +394,8 @@ let
       in
       {
         tunRoutes = tunRouteResults renderedProfile;
+        mihomoSelectiveTun = mihomoTunResults renderedProfile.mihomoSelectiveTemplate;
+        mihomoFullTun = mihomoTunResults renderedProfile.mihomoFullTemplate;
         mihomoContainsExactlyCompatibleAuthorizedProviders =
           mihomoTags renderedProfile == sorted (
             map (providerTag user) (

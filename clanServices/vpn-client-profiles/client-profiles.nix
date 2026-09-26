@@ -724,12 +724,6 @@ let
           "auto-detect-interface" = true;
           "strict-route" = true;
           "inet6-address" = [ "fdfe:dcba:9876::1/126" ];
-          "route-address" = [
-            "0.0.0.0/1"
-            "128.0.0.0/1"
-            "::/1"
-            "8000::/1"
-          ];
           "dns-hijack" = [
             "any:53"
             "tcp://any:53"
