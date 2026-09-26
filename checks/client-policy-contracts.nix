@@ -247,7 +247,7 @@ let
   mihomoTunResults =
     template:
     let
-      tun = template.tun;
+      inherit (template) tun rules;
       baseExclusions = [
         "10.0.0.0/8"
         "100.64.0.0/10"
@@ -261,7 +261,6 @@ let
         "ff00::/8"
       ];
       pinnedExclusions = map (ip: "${ip}/32") (lib.unique (builtins.attrValues template.hosts));
-      rules = template.rules;
       rejectIndex = indexOf (rule: rule == "IP-CIDR6,::/0,REJECT,no-resolve") rules;
       localIPv6Rules = [
         "IP-CIDR6,::1/128,DIRECT,no-resolve"
