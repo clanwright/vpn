@@ -70,8 +70,12 @@ come from the consumer.
 
 The publisher separates manual availability from automatic protocol selection.
 Sing-box uses independent TCP and UDP selectors; protected UDP uses AnyTLS
-or is rejected when no compatible provider exists. Both formats capture and
-reject external IPv6 while preserving local IPv6 and Tailscale access.
+or is rejected when no compatible provider exists. Both formats configure
+local IPv6 and Tailscale exceptions and an explicit external IPv6 rejection rule.
+Sing-box enables automatic TUN routing without explicit included or excluded
+route lists. Local route precedence and concurrent SFM/Tailscale compatibility
+remain part of [client acceptance](operations/sing-box-client.md#sfm-tailscale-and-lan-routing-acceptance),
+including external IPv6 rejection on the device.
 
 Rendering produces an internal artifact manifest: client templates, output
 formats, structural secret bindings and required public assets. The runtime

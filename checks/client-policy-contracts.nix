@@ -5,19 +5,6 @@
 let
   providerEnvelope = import ../modules/contracts/provider-envelope.nix { inherit lib; };
   profileTypes = import ../clanServices/vpn-client-profiles/types.nix { inherit lib; };
-  tunRouteCoverage = import ./lib/tun-route-coverage.nix { inherit lib; };
-  legacyTunRouteExclusions = [
-    "10.0.0.0/8"
-    "100.64.0.0/10"
-    "169.254.0.0/16"
-    "172.16.0.0/12"
-    "192.168.0.0/16"
-    "224.0.0.0/4"
-    "::1/128"
-    "fc00::/7"
-    "fe80::/10"
-    "ff00::/8"
-  ];
   users = [
     "alice"
     "bob"
@@ -295,81 +282,16 @@ let
     renderedProfile:
     let
       inbound = tunInbound renderedProfile;
-      included = inbound.route_address or [ ];
-      first = builtins.head included;
-      narrowedFirst = "${builtins.head (lib.splitString "/" first)}/${
-        toString ((tunRouteCoverage.parseCIDR first).prefixLength + 1)
-      }";
     in
     {
-      routeAddressPresent = included != [ ];
-      exactComplementOfLegacyExclusions = tunRouteCoverage.checkPartition {
-        inherit included;
-        excluded = legacyTunRouteExclusions;
-      };
+      noRouteAddress = !(inbound ? route_address);
       noLegacyExclusionKey = builtins.all (name: !(lib.hasPrefix "route_exclude" name)) (
         builtins.attrNames inbound
       );
       tunRoutingFlagsPreserved = inbound.auto_route && inbound.strict_route;
       routeAutoDetectionPreserved = renderedProfile.profileJsonTemplate.route.auto_detect_interface;
-      boundaryAndFakeIpAddressesIncluded = builtins.all (tunRouteCoverage.containsAddress included) [
-        "0.0.0.0"
-        "9.255.255.255"
-        "11.0.0.0"
-        "100.63.255.255"
-        "100.128.0.0"
-        "169.253.255.255"
-        "169.255.0.0"
-        "172.15.255.255"
-        "172.32.0.0"
-        "192.167.255.255"
-        "192.169.0.0"
-        "198.18.0.0"
-        "198.19.255.255"
-        "223.255.255.255"
-        "240.0.0.0"
-        "::"
-        "::2"
-        "fbff:ffff:ffff:ffff:ffff:ffff:ffff:ffff"
-        "fe00::"
-        "fe7f:ffff:ffff:ffff:ffff:ffff:ffff:ffff"
-        "fec0::"
-      ];
-      exclusionBoundariesRemainExcluded =
-        builtins.all (address: !(tunRouteCoverage.containsAddress included address))
-          [
-            "10.0.0.0"
-            "10.255.255.255"
-            "100.64.0.0"
-            "100.127.255.255"
-            "169.254.0.0"
-            "169.254.255.255"
-            "172.16.0.0"
-            "172.31.255.255"
-            "192.168.0.0"
-            "192.168.255.255"
-            "224.0.0.0"
-            "239.255.255.255"
-            "::1"
-            "fc00::"
-            "fdff:ffff:ffff:ffff:ffff:ffff:ffff:ffff"
-            "fe80::"
-            "febf:ffff:ffff:ffff:ffff:ffff:ffff:ffff"
-            "ff00::"
-            "ffff:ffff:ffff:ffff:ffff:ffff:ffff:ffff"
-          ];
-      helperRejectsGap =
-        included != [ ]
-        && !(tunRouteCoverage.checkPartition {
-          included = [ narrowedFirst ] ++ builtins.tail included;
-          excluded = legacyTunRouteExclusions;
-        });
-      helperRejectsOverlap =
-        included != [ ]
-        && !(tunRouteCoverage.checkPartition {
-          included = included ++ [ "10.0.0.0/9" ];
-          excluded = legacyTunRouteExclusions;
-        });
+      noInterfacePin =
+        !(inbound ? interface_name) && !(renderedProfile.profileJsonTemplate.route ? default_interface);
     };
   indexOf =
     predicate: values:

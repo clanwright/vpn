@@ -7,7 +7,6 @@
 let
   profileTypes = import ./types.nix { inherit lib; };
   manifestLib = import ./artifact-manifest.nix { inherit lib; };
-  tunRouteAddress = import ./tun-routes.nix;
   inherit (settings) localMachineName;
   inherit (settings) clientDnsEndpoints;
   localPublicNetwork = {
@@ -1010,7 +1009,6 @@ let
             stack = "system";
             auto_route = true;
             strict_route = true;
-            route_address = tunRouteAddress;
           }
         ];
         outbounds = [
