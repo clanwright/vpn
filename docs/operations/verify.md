@@ -103,6 +103,22 @@ rejects false booleans or non-boolean leaves before returning JSON. Focused and
 full evaluation use that same success condition; the top-level `all` value
 forces every named result.
 
+Domain regression ownership is exercised by these named evaluation results:
+
+| Result | Coverage |
+| --- | --- |
+| `client-render-contracts` | Provider/profile compatibility, client configuration structures, DNS/routing policy, excluded-profile nonpublication and missing-input rejection. |
+| `publisher-manifest-contracts` | Artifact bindings, required assets and publication phase ordering; combined composition checks also inspect generated cleanup and revocation guards. |
+| `adguardhome-contracts` | Selected DNS configuration and DoH stamp structure, including malformed, truncated and appended-payload fixtures. |
+| `awg-contracts` | Generated scoped ingress, forwarding and SNAT rules, including NAT-disabled configuration. |
+| `naiveproxy-contracts` | Generated authentication and CONNECT routing configuration. |
+| `xray-contracts` | Public provider exports and direct/loopback listener configuration. |
+
+These checks belong to this repository; consumers need not duplicate its
+renderers or generated rule text. Stamp structure checks do not run dnsproxy's
+parser, and generated firewall/authentication rules do not establish successful
+packet forwarding or authenticated CONNECT.
+
 Each run creates a unique ignored `.work/verification/<UTC-run-id>.<suffix>/`
 directory. `scope.txt` records `full` or `test:<name>` so a focused
 pass cannot be mistaken for the complete gate. Read `summary.tsv` for stage

@@ -496,14 +496,28 @@ let
     && lib.hasInfix ">/dev/null 2>&1; then\n  echo \"amneziawg: userspace interface configuration failed" fourPeerPostStart
     && lib.hasInfix "amneziawg: userspace interface configuration failed\" >&2\n  exit 1" fourPeerPostStart;
 
-  firewallContract =
-    lib.hasInfix "ip daddr 192.0.2.12 udp dport 443 accept" machine.networking.firewall.extraInputRules
-    &&
+  firewallResults = {
+    ingress = lib.hasInfix "ip daddr 192.0.2.12 udp dport 443 accept" machine.networking.firewall.extraInputRules;
+    clientEgress = lib.hasInfix "iifname \"awg-fixture\" ip saddr 10.77.0.0/24 accept" machine.networking.firewall.extraForwardRules;
+    establishedReturn = lib.hasInfix "oifname \"awg-fixture\" ip daddr 10.77.0.0/24 ct state { established, related } accept" machine.networking.firewall.extraForwardRules;
+    snat =
       lib.hasInfix "ip saddr 10.77.0.0/24 ip daddr != 10.77.0.0/24 snat to 192.0.2.12"
-        machine.networking.nftables.tables.${"vpn_amneziawg_${builtins.hashString "sha256" "awg-fixture"}"}.content
-    && !(builtins.elem 443 machine.networking.firewall.allowedUDPPorts)
-    && firewallConfigRejected { networking.firewall.enable = lib.mkForce false; }
-    && firewallConfigRejected { networking.firewall.backend = lib.mkForce "iptables"; };
+        machine.networking.nftables.tables.${"vpn_amneziawg_${builtins.hashString "sha256" "awg-fixture"}"}.content;
+    noNatForwardRules = noNatMachine.networking.firewall.extraForwardRules == "";
+    noNatTables =
+      !(builtins.any (lib.hasPrefix "vpn_amneziawg_") (
+        builtins.attrNames noNatMachine.networking.nftables.tables
+      ))
+      && builtins.all (table: !(lib.hasInfix "10.77.0.0/24" table.content)) (
+        builtins.attrValues noNatMachine.networking.nftables.tables
+      );
+    noOpenPort = !(builtins.elem 443 machine.networking.firewall.allowedUDPPorts);
+    firewallDisabledRejected = firewallConfigRejected {
+      networking.firewall.enable = lib.mkForce false;
+    };
+    iptablesRejected = firewallConfigRejected { networking.firewall.backend = lib.mkForce "iptables"; };
+  };
+  firewallContract = builtins.all (value: value) (builtins.attrValues firewallResults);
 
   interfaceClaimResults = {
     duplicateInterfaceRejected = !(extraInstanceAccepted baseSettings "fixture--amneziawg-duplicate");
@@ -554,6 +568,7 @@ if !contract then
         dottedIdentityContract
         exportContract
         firewallContract
+        firewallResults
         fourPeerRuntimeContract
         interfaceClaimContract
         interfaceClaimResults

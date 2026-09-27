@@ -188,6 +188,41 @@ let
   matrixRenders = lib.mapAttrs (
     _: publisher: render publisher providers (map profile users)
   ) publishers;
+  excludedRender = import ../clanServices/vpn-client-profiles/client-profiles.nix {
+    inherit lib pkgs providers;
+    settings = (settingsFor publishers.publisher-a (map profile users)) // {
+      excludedProfileNames = [ "bob" ];
+    };
+  };
+  excludedProfileResults =
+    let
+      baseline = matrixRenders.publisher-a;
+      retained = [
+        "alice"
+        "carol"
+      ];
+      profileNames = entries: map (entry: entry.name) entries;
+      artifactNames = entries: map (entry: map (artifact: artifact.outputName) entry.artifacts) entries;
+    in
+    {
+      excludedProfileOtherwisePublishable =
+        profileNames baseline.manifest.profiles == users
+        && builtins.all (artifacts: artifacts != [ ]) (artifactNames baseline.manifest.profiles);
+      excludedProfileAbsentFromRenderedProfiles =
+        profileNames excludedRender.renderedProfiles == retained;
+      excludedProfileAbsentFromGeneratedProfiles =
+        profileNames excludedRender.generatedProfiles == retained;
+      excludedProfileAbsentFromManifestAndLinkInputs =
+        profileNames excludedRender.manifest.profiles == retained
+        &&
+          map (entry: entry.pathTokenBinding.secretName) excludedRender.manifest.profiles == [
+            "mihomo-client-publisher-a-alice-path-token"
+            "mihomo-client-publisher-a-carol-path-token"
+          ];
+      retainedArtifactsUnchanged =
+        artifactNames excludedRender.manifest.profiles
+        == artifactNames (builtins.filter (entry: entry.name != "bob") baseline.manifest.profiles);
+    };
   renderedByName =
     publisherName: name:
     builtins.head (
@@ -619,6 +654,7 @@ let
   results = {
     inherit
       autoProtocolsResults
+      excludedProfileResults
       matrixResults
       noAutoResults
       protocolOnlyResults
