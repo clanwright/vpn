@@ -75,8 +75,8 @@ support or the repository checks.
 
 ## Package follow-up
 
-Update to stock 3.36.1 or a later reviewed version only after confirming the exact
-Linux output is cached and repeating the package and full repository gate.
-Version 3.36.1 optimizes CPU usage and fixes UDP association through an external
-SOCKS5 egress. The initial direct-egress configuration does not use that proxy
-chain. It does not fix the native destination-filtering gap.
+Upstream has released 3.38.0, while the selected stock nixpkgs package remains
+3.36.0. Update only after a reviewed stock package has an exact cached Linux
+output and the package and full repository gate pass. The initial direct-egress
+configuration does not use an external SOCKS5 proxy chain. An update does not
+by itself establish that the native destination-filtering gap is fixed.

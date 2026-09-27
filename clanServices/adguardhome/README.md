@@ -161,21 +161,21 @@ Default `F = 3` сохранён, а `A` увеличен до `16`: молча�
 Это явный компромисс общего stock timeout, который AdGuard применяет и к
 primary, и к fallback. Отдельного поддерживаемого retry-count knob здесь нет.
 
-Основание — закреплённые исходники, не runtime-наблюдение:
+Основание — исходники выбранных версий, не runtime-наблюдение:
 
-- [AdGuard Home 0.107.78 go.mod](https://github.com/AdguardTeam/AdGuardHome/blob/v0.107.78/go.mod#L5-L8)
-  закрепляет embedded dnsproxy `0.83.0`; один timeout передаётся
-  [primary](https://github.com/AdguardTeam/AdGuardHome/blob/v0.107.78/internal/dnsforward/dnsforward.go#L547-L552)
-  и [fallback](https://github.com/AdguardTeam/AdGuardHome/blob/v0.107.78/internal/dnsforward/dnsforward.go#L678-L698).
-- [Embedded plain DNS](https://github.com/AdguardTeam/dnsproxy/blob/v0.83.0/upstream/plain.go#L86-L129)
+- [AdGuard Home 0.107.79 go.mod](https://github.com/AdguardTeam/AdGuardHome/blob/v0.107.79/go.mod#L5)
+  закрепляет embedded dnsproxy `0.83.2`; один timeout передаётся
+  [primary](https://github.com/AdguardTeam/AdGuardHome/blob/v0.107.79/internal/dnsforward/dnsforward.go#L553)
+  и [fallback](https://github.com/AdguardTeam/AdGuardHome/blob/v0.107.79/internal/dnsforward/dnsforward.go#L692).
+- [Embedded plain DNS](https://github.com/AdguardTeam/dnsproxy/blob/v0.83.2/upstream/plain.go#L100-L115)
   повторяет exchange один раз после `net.Error`/EOF;
-  [fallback selection](https://github.com/AdguardTeam/dnsproxy/blob/v0.83.0/proxy/proxy.go#L603-L624)
+  [fallback selection](https://github.com/AdguardTeam/dnsproxy/blob/v0.83.2/proxy/proxy.go#L612-L623)
   происходит только после ошибки primary.
-- Standalone dnsproxy `0.83.2` может сделать
-  [до двух дополнительных DoH exchanges](https://github.com/AdguardTeam/dnsproxy/blob/v0.83.2/upstream/doh.go#L155-L188)
-  при [retryable error уже созданного клиента](https://github.com/AdguardTeam/dnsproxy/blob/v0.83.2/upstream/doh.go#L335-L357).
-  Его [plain UDP retry](https://github.com/AdguardTeam/dnsproxy/blob/v0.83.2/upstream/plain.go#L86-L129)
-  даёт `2F`; [parallel exchange](https://github.com/AdguardTeam/dnsproxy/blob/v0.83.2/upstream/parallel.go#L22-L65)
+- Standalone dnsproxy `0.84.1` может сделать
+  [до двух дополнительных DoH exchanges](https://github.com/AdguardTeam/dnsproxy/blob/v0.84.1/upstream/doh.go#L143-L165)
+  при [retryable error уже созданного клиента](https://github.com/AdguardTeam/dnsproxy/blob/v0.84.1/upstream/doh.go#L312-L332).
+  Его [plain UDP retry](https://github.com/AdguardTeam/dnsproxy/blob/v0.84.1/upstream/plain.go#L100-L124)
+  даёт `2F`; [parallel exchange](https://github.com/AdguardTeam/dnsproxy/blob/v0.84.1/upstream/parallel.go#L22-L65)
   принимает первый успешный DNS-ответ. Numeric DoH stamps исключают отдельный
   DNS bootstrap, TLS verification остаётся включённой.
 
@@ -249,18 +249,19 @@ typed contract, сгенерированную конфигурацию и от�
 поведение systemd и сетевых путей этим результатом не доказано.
 
 Safe Search schema сверена с
-[`SafeSearchConfig`](https://github.com/AdguardTeam/AdGuardHome/blob/v0.107.78/internal/filtering/safesearch.go#L18-L32)
-и [`OpenAPI`](https://github.com/AdguardTeam/AdGuardHome/blob/v0.107.78/openapi/openapi.yaml#L2679-L2698)
-AdGuard Home 0.107.78, а внешняя семантика — с актуальной официальной
+[`SafeSearchConfig`](https://github.com/AdguardTeam/AdGuardHome/blob/v0.107.79/internal/filtering/safesearch.go#L18-L32)
+AdGuard Home 0.107.79; прежняя проверка
+[`OpenAPI`](https://github.com/AdguardTeam/AdGuardHome/blob/v0.107.78/openapi/openapi.yaml#L2679-L2698)
+относилась к 0.107.78. Внешняя семантика сверена с официальной
 [`Configuration` wiki](https://github.com/AdguardTeam/AdGuardHome/wiki/Configuration).
-Route/rewrite semantics сверены с исходниками AdGuard Home 0.107.78:
+Историческая проверка route/rewrite semantics относилась к AdGuard Home 0.107.78:
 [`filtering`](https://github.com/AdguardTeam/AdGuardHome/blob/v0.107.78/internal/filtering/filtering.go),
 [`dnsforward`](https://github.com/AdguardTeam/AdGuardHome/blob/v0.107.78/internal/dnsforward/filter.go),
 [`access`](https://github.com/AdguardTeam/AdGuardHome/blob/v0.107.78/internal/dnsforward/access.go),
 [`middleware`](https://github.com/AdguardTeam/AdGuardHome/blob/v0.107.78/internal/dnsforward/middleware.go)
 и [`fallback setup`](https://github.com/AdguardTeam/AdGuardHome/blob/v0.107.78/internal/dnsforward/dnsforward.go#L678-L699),
-а DS selection — с dnsproxy 0.83.0, встроенным в этот AdGuard Home:
+а DS selection — с dnsproxy 0.83.0, встроенным в ту версию AdGuard Home:
 [`upstreams`](https://github.com/AdguardTeam/dnsproxy/blob/v0.83.0/proxy/upstreams.go)
 и [`proxy`](https://github.com/AdguardTeam/dnsproxy/blob/v0.83.0/proxy/proxy.go).
-Это source evidence, а не runtime-проверка. Отдельный loopback fallback service
-использует stock dnsproxy 0.83.2.
+Это историческое source evidence, а не runtime-проверка выбранной 0.107.79.
+Отдельный loopback fallback service использует stock dnsproxy 0.84.1.

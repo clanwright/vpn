@@ -9,12 +9,21 @@ exact input revisions in [flake.lock](../flake.lock).
 
 | Input | Revision | Selected packages |
 | --- | --- | --- |
-| `apps-nixpkgs` | `c27cdad491a991b11ed731760aa2ef8db0cb0410` | Mihomo, Xray, AdGuard Home, dnsproxy, Unbound |
-| `modern-apps-nixpkgs` | `f3afd85cd82edf71f2dea9b96dcda2d6a64f26f4` | sing-box, AmneziaWG Go and tools, Mieru |
-| `trusttunnel-nixpkgs` | `6078dc4f4fcbcf4ac59499e7b80826379078d344` | TrustTunnel endpoint |
+| `apps-nixpkgs` | `8d5d270900d3fc75655ea2d9d248b234f6631439` | Mihomo, Xray, AdGuard Home, dnsproxy, Unbound |
+| `modern-apps-nixpkgs` | `8d5d270900d3fc75655ea2d9d248b234f6631439` | sing-box, AmneziaWG Go and tools, Mieru |
+| `trusttunnel-nixpkgs` | `8d5d270900d3fc75655ea2d9d248b234f6631439` | TrustTunnel endpoint |
 
 `nixpkgs` supplies platform modules and developer tools. Selecting an application
 from a separate input does not modify its derivation.
+
+The root platform `nixpkgs` input also resolves to
+`8d5d270900d3fc75655ea2d9d248b234f6631439`. The root `clan-core` input
+is `c612dac4b2bfb5278b7c366f250044ddb5401bcb` and root `sops-nix` is
+`5efb5a6f4f5ab192817d28557dd4d650fa14d866`. The Network v3.0.0 input
+resolves to `bfba5e74c3ee09ab92534fc2e7fdf31dc4525bb2`; its own nested
+input graph retains the revisions required for Network's exact Caddy package.
+Network v3 requires the native NixOS ACME module's Lego 5 command and Lego 4
+account-migration support, which the selected platform revision provides.
 
 ## Runtime package set
 
@@ -22,40 +31,47 @@ The public `packages.x86_64-linux` set contains ten applications:
 
 | Attribute | Version | Selection |
 | --- | --- | --- |
-| `mihomo` | 1.19.30 | Stock `mihomo` |
-| `xray` | 26.3.27 | Stock `xray` |
-| `adguardhome` | 0.107.78 | Stock `adguardhome` |
-| `dnsproxy` | 0.83.2 | Stock `dnsproxy` |
+| `mihomo` | 1.19.31 | Stock `mihomo` |
+| `xray` | 26.9.9 | Stock `xray` |
+| `adguardhome` | 0.107.79 | Stock `adguardhome` |
+| `dnsproxy` | 0.84.1 | Stock `dnsproxy` |
 | `unbound` | 1.26.0 | Stock `unbound-with-systemd` |
-| `sing-box` | 1.14.0 | Stock `sing-box` with Naive/Cronet support |
+| `sing-box` | 1.14.1 | Stock `sing-box` with Naive/Cronet support |
 | `amneziawg-go` | 3.1.20260828 | Stock `amneziawg-go` |
 | `amneziawg-tools` | 3.1.20260812 | Stock `amneziawg-tools` |
 | `mieru` | 3.36.0 | Stock `mieru`; server entrypoint `bin/mita` |
 | `trusttunnel-endpoint` | 1.1.0 | Stock `trusttunnel-endpoint` |
 
 These outputs must come from the NixOS cache; local overrides and custom binary
-wrappers are prohibited. Cache availability is an external property, not a
-result of the repository's pure evaluation gate.
+wrappers are prohibited. On 2026-09-27 all ten exact `x86_64-linux` outputs at
+this revision returned HTTP 200 from the NixOS cache; the path and status record
+is retained in `.work/dependency-update/candidate-cache.tsv`. Cache availability
+is an external property, not a result of the repository's pure evaluation gate.
 
 The package authority contract checks the complete ten-application output
 set against its stock source selections and exact versions. Service contracts
 also reject substitution of those packages in the evaluated configuration.
 
-Mieru 3.36.0 was explicitly accepted for initial support on 2026-09-12. Its
-exact output `/nix/store/2pxyb640silgkmpbg3l61mhcayhj3yjh-mieru-3.36.0`
-was present in the NixOS cache. Upstream 3.36.1 remains a follow-up package update
-once a stock output is cached; no local build or package override is authorized.
-The later release optimizes CPU usage and fixes an external SOCKS5 UDP egress
-case; neither version supplies complete native destination filtering, so the
-Mieru module provides service-scoped network guards.
+Mieru 3.36.0 was explicitly accepted for initial support on 2026-09-12. The
+selected revision still packages 3.36.0; upstream has released 3.38.0, but it
+is not yet merged into the selected stock nixpkgs package. The 2026-09-27 cache
+check confirmed the selected 3.36.0 output. Updating Mieru requires a reviewed
+stock nixpkgs package and a cached exact output; no local build or override is
+authorized. Native destination filtering remains incomplete, so the module
+provides service-scoped network guards.
 
-TrustTunnel 1.1.0 uses its own stock application pin, leaving the other package
-selections unchanged. Its exact output
-`/nix/store/s65pqxgg55dnqx6qw1qjmrj0w490rz3w-trusttunnel-endpoint-1.1.0`
-was confirmed in the NixOS cache on 2026-09-12. The older application pin only
-contains 1.0.41. Upstream 1.1.0 fixes UDP idle-timeout socket cleanup and global
+TrustTunnel 1.1.0 uses the same selected stock revision as the other applications.
+Its exact output returned HTTP 200 from the NixOS cache on 2026-09-27. Upstream
+1.1.0 fixes UDP idle-timeout socket cleanup and global
 IPv6 classification; it does not establish that the open memory/panic and
 reconnect reports are resolved. See [runtime acceptance](operations/trusttunnel.md).
+
+As of 2026-09-27, upstream sing-box 1.14.2 and dnsproxy 0.85.0 are absent from
+the selected nixpkgs revision; upstream Mieru 3.38.0 is not yet merged as a
+stock package. Unbound 1.26.1 is available in nixpkgs staging, but its exact
+outputs from staging and staging-26.05 returned HTTP 404 from the NixOS cache,
+so this update retains 1.26.0. Xray 26.9.9 is marked prerelease upstream and is
+the selected stock nixpkgs version.
 
 ## Caddy integration
 

@@ -3,10 +3,10 @@
 Run the complete repository gate and retain its generated summary and logs:
 
 ```bash
-nix develop --offline --max-jobs 0 --builders '' --command scripts/verify.sh
+nix shell --offline --inputs-from . --max-jobs 0 --builders '' nixpkgs#deadnix nixpkgs#gitleaks nixpkgs#nixfmt nixpkgs#statix --command scripts/verify.sh
 ```
 
-The source checks force Xray 26.3.27 package identity, the closed Clan schema,
+The source checks force Xray 26.9.9 package identity, the closed Clan schema,
 SOPS template, rendered JSON structure, native credential wiring, nonroot
 systemd sandbox, direct destination-scoped ingress and optional loopback
 listener. Direct mode requires the consumer's enabled nftables firewall; local

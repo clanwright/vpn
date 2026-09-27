@@ -752,7 +752,7 @@ let
           # Without this, a client running this profile (e.g. Clash Verge on the dev
           # mac) hijacks *.ts.net → 198.18.x and can't reach tailnet hosts by FQDN.
           "fake-ip-filter" = settings.tailnetAdminDomains ++ [ "+.ts.net" ];
-          # Every configured DoH hostname is pinned in root hosts. Mihomo 1.19.30
+          # Every configured DoH hostname is pinned in root hosts. Mihomo 1.19.31
           # checks those pins before its bootstrap resolver, preserving the URL
           # hostname for HTTP Host and TLS SNI while dialing the declared IPv4.
           # Literal-IP HTTPS defaults are a fail-closed guard for an unexpected

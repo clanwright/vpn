@@ -3,17 +3,24 @@
 
   inputs = {
     # Separate platform and reviewed stock application revisions.
-    nixpkgs.url = "https://releases.nixos.org/nixpkgs/nixpkgs-26.11pre1044894.59ea0b1c043c/nixexprs.tar.xz";
-    apps-nixpkgs.url = "github:NixOS/nixpkgs/c27cdad491a991b11ed731760aa2ef8db0cb0410";
-    modern-apps-nixpkgs.url = "github:NixOS/nixpkgs/f3afd85cd82edf71f2dea9b96dcda2d6a64f26f4";
-    trusttunnel-nixpkgs.url = "github:NixOS/nixpkgs/6078dc4f4fcbcf4ac59499e7b80826379078d344";
+    nixpkgs.url = "github:NixOS/nixpkgs/8d5d270900d3fc75655ea2d9d248b234f6631439";
+    apps-nixpkgs.url = "github:NixOS/nixpkgs/8d5d270900d3fc75655ea2d9d248b234f6631439";
+    modern-apps-nixpkgs.url = "github:NixOS/nixpkgs/8d5d270900d3fc75655ea2d9d248b234f6631439";
+    trusttunnel-nixpkgs.url = "github:NixOS/nixpkgs/8d5d270900d3fc75655ea2d9d248b234f6631439";
     # Test/integration dependency only; VPN does not re-export or enable it.
-    network.url = "github:clanwright/network/v1.0.0";
+    # Network v3.0.0.
+    network.url = "github:clanwright/network/bfba5e74c3ee09ab92534fc2e7fdf31dc4525bb2";
     data-mesher.url = "path:./stubs/data-mesher";
     clan-core = {
-      url = "github:clan-lol/clan-core/3b5832a13fb0ad1e57c2dafd246ca8ab60ad1b20";
-      inputs.nixpkgs.follows = "nixpkgs";
-      inputs.data-mesher.follows = "data-mesher";
+      url = "github:clan-lol/clan-core/c612dac4b2bfb5278b7c366f250044ddb5401bcb";
+      inputs = {
+        nixpkgs.follows = "nixpkgs";
+        data-mesher.follows = "data-mesher";
+        sops-nix = {
+          url = "github:Mic92/sops-nix/5efb5a6f4f5ab192817d28557dd4d650fa14d866";
+          inputs.nixpkgs.follows = "nixpkgs";
+        };
+      };
     };
   };
 

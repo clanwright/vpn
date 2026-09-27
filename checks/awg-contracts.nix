@@ -540,7 +540,7 @@ let
     && !(disabledMachine.sops.secrets ? "fixture/awg-header-protection-key")
     && !(
       disabledMachine.networking.nftables.tables
-      ? ${"vpn_amneziawg_${builtins.hashString "sha256" "awg-fixture"}"}
+        ? ${"vpn_amneziawg_${builtins.hashString "sha256" "awg-fixture"}"}
     );
 
   dottedIdentityContract = schemaAccepts (

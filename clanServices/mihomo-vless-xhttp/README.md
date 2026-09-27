@@ -34,7 +34,7 @@ Caddy site or service dependency, and keeps the external REALITY target.
 ## Runtime and secrets
 
 The module uses the native NixOS Xray service with the injected stock Xray
-26.3.27 package. SOPS renders one root-only runtime JSON template. UUIDs and the
+26.9.9 package. SOPS renders one root-only runtime JSON template. UUIDs and the
 REALITY private key remain placeholders during Nix evaluation and never enter
 the store. Xray runs under systemd's dynamic non-root identity and receives only
 `CAP_NET_BIND_SERVICE` when the actual listener uses a privileged port; a high

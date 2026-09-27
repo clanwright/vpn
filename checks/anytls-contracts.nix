@@ -751,7 +751,7 @@ let
       && !missingSecretRestart.assertionsPass
       && !missingAcmeReload.assertionsPass
       && !wrongPackage.assertionsPass;
-    version = lib.getVersion singBoxPackage == "1.14.0";
+    version = lib.getVersion singBoxPackage == "1.14.1";
   };
   runtimeContract = builtins.all (value: value) (builtins.attrValues runtimeResults);
   passwordGuardContract =

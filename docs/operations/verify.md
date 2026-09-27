@@ -32,18 +32,19 @@ filesystem failures that prevent unlinking files.
 Run the complete local gate from the repository root:
 
 ```bash
-nix develop --offline --max-jobs 0 --builders '' --command scripts/verify.sh
+nix shell --offline --inputs-from . --max-jobs 0 --builders '' nixpkgs#deadnix nixpkgs#gitleaks nixpkgs#nixfmt nixpkgs#statix --command scripts/verify.sh
 ```
 
 To run the same static gate and one named evaluation contract through the same
 filtered snapshot path, pass its result name:
 
 ```bash
-nix develop --offline --max-jobs 0 --builders '' --command scripts/verify.sh adguardhome-contracts
+nix shell --offline --inputs-from . --max-jobs 0 --builders '' nixpkgs#deadnix nixpkgs#gitleaks nixpkgs#nixfmt nixpkgs#statix --command scripts/verify.sh adguardhome-contracts
 ```
 
-The outer command uses the already-cached development shell in offline mode
-with builders disabled. The script itself never enters another shell or
+The outer command selects the four already-cached check tools from the pinned
+`nixpkgs` input in offline mode with builders disabled. It does not build a
+development-shell derivation. The script itself never enters another shell or
 installs tools. It executes two stages:
 
 1. `static`: diff whitespace, Nix formatting, Statix, Deadnix and redacted

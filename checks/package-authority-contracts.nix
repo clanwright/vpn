@@ -11,19 +11,19 @@ let
   packageSpecs = {
     mihomo = {
       package = appsPkgs.mihomo;
-      version = "1.19.30";
+      version = "1.19.31";
     };
     xray = {
       package = appsPkgs.xray;
-      version = "26.3.27";
+      version = "26.9.9";
     };
     adguardhome = {
       package = appsPkgs.adguardhome;
-      version = "0.107.78";
+      version = "0.107.79";
     };
     dnsproxy = {
       package = appsPkgs.dnsproxy;
-      version = "0.83.2";
+      version = "0.84.1";
     };
     unbound = {
       package = appsPkgs.unbound-with-systemd;
@@ -31,7 +31,7 @@ let
     };
     sing-box = {
       package = modernAppsPkgs.sing-box;
-      version = "1.14.0";
+      version = "1.14.1";
     };
     mieru = {
       package = modernAppsPkgs.mieru;

@@ -3,7 +3,7 @@
 Run the complete [verification gate](verify.md):
 
 ```bash
-nix develop --offline --max-jobs 0 --builders '' --command scripts/verify.sh
+nix shell --offline --inputs-from . --max-jobs 0 --builders '' nixpkgs#deadnix nixpkgs#gitleaks nixpkgs#nixfmt nixpkgs#statix --command scripts/verify.sh
 ```
 
 Retain `.work/verification/<UTC-run-id>.<suffix>/summary.tsv` and its stage logs. The

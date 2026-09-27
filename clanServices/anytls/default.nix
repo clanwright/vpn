@@ -420,8 +420,8 @@ in
                   message = "anytls: runtime support is restricted to x86_64-linux.";
                 }
                 {
-                  assertion = lib.getVersion singBoxPackage == "1.14.0";
-                  message = "anytls: the injected stock sing-box package must be exactly version 1.14.0.";
+                  assertion = lib.getVersion singBoxPackage == "1.14.1";
+                  message = "anytls: the injected stock sing-box package must be exactly version 1.14.1.";
                 }
                 {
                   assertion = pkgs.sing-box == singBoxPackage;

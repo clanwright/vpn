@@ -1,6 +1,6 @@
 # AnyTLS operations
 
-The `@clanwright/vpn-anytls` gateway runs a separate stock sing-box 1.14.0
+The `@clanwright/vpn-anytls` gateway runs a separate stock sing-box 1.14.1
 process on one consumer-owned IPv4 TCP endpoint. The consumer owns the address,
 hostname, ACME certificate, firewall availability, public AdGuard DoH endpoint,
 secret values and deployment. Do not put passwords or live profile URLs in

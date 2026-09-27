@@ -1,6 +1,6 @@
 # AnyTLS
 
-`@clanwright/vpn-anytls` runs one stock sing-box 1.14.0 AnyTLS inbound as a
+`@clanwright/vpn-anytls` runs one stock sing-box 1.14.1 AnyTLS inbound as a
 dedicated `anytls` user and service. The gateway binds the exact consumer-owned
 IPv4 address and TCP port. TLS is fixed to version 1.3 with the certificate and
 key supplied from the consumer-owned ACME directory through systemd credentials.

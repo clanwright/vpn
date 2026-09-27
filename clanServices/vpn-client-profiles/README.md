@@ -59,9 +59,9 @@ Mieru credentials выбираются по имени device profile из `secr
 переводов строк. Publisher проверяет raw bytes до подстановки, не обрезая их;
 невалидный пароль блокирует публикацию. Это совпадает с серверным контрактом.
 
-AnyTLS экспортируется в оба формата. Mihomo 1.19.30 получает `udp = true`,
+AnyTLS экспортируется в оба формата. Mihomo 1.19.31 получает `udp = true`,
 что включает встроенный UoT v2, SNI и обязательную проверку сертификата; этот
-core не имеет полей ограничения версии TLS для AnyTLS. Sing-box 1.14.0 также
+core не имеет полей ограничения версии TLS для AnyTLS. Sing-box 1.14.1 также
 использует встроенный UoT v2, проверяет сертификат и явно ограничивает TLS
 значениями `min_version = "1.3"` и `max_version = "1.3"`. Пароль устройства
 берётся из точного `secretNames.users` map и подставляется через generic manifest
@@ -69,7 +69,7 @@ binding с `base64url`. Custom padding, session metadata, idle-session overrides
 ciphers, ALPN, TFO и client fingerprint не добавляются.
 
 TrustTunnel экспортируется только в Mihomo selective/full YAML. Для точного
-Mihomo 1.19.30 renderer использует числовой IPv4 endpoint, `type = trusttunnel`,
+Mihomo 1.19.31 renderer использует числовой IPv4 endpoint, `type = trusttunnel`,
 имя device profile как `username`, проверяемый SNI, `skip-cert-verify = false`,
 `client-fingerprint = chrome`, `quic = false` и `udp = true`. Это H2-профиль:
 H3/QUIC, ClientRandom, health checks и pool tuning не добавляются. Пароль берётся
@@ -272,7 +272,7 @@ Consumer отвечает за доступность каждого DoH с кл
 Семантика upstream: [Mihomo DNS](https://wiki.metacubex.one/en/config/dns/),
 [Sing-box DNS actions](https://sing-box.sagernet.org/configuration/dns/rule_action/).
 
-HTTP bootstrap сверен с sing-box 1.14.0:
+Исходный HTTP bootstrap сверен с sing-box 1.14.0; выбранный пакет сейчас 1.14.1:
 [HTTP client](https://sing-box.sagernet.org/configuration/shared/http-client/),
 [hosts transport](https://sing-box.sagernet.org/configuration/dns/server/hosts/).
 

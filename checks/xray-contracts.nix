@@ -445,7 +445,9 @@ let
     && template.mode == "0400"
     && template.restartUnits == [ "xray.service" ]
     && serviceConfig.LoadCredential == "config.json:${template.path}"
-    && lib.hasInfix "$CREDENTIALS_DIRECTORY/config.json" unit.script
+    &&
+      serviceConfig.ExecStart
+      == "${machine.services.xray.package}/bin/xray -config \"\${CREDENTIALS_DIRECTORY}\"/config.json"
     && serviceConfig.DynamicUser == true
     && serviceConfig.AmbientCapabilities == [ "CAP_NET_BIND_SERVICE" ]
     && serviceConfig.CapabilityBoundingSet == [ "CAP_NET_BIND_SERVICE" ]

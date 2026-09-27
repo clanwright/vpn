@@ -16,7 +16,7 @@ consumer requires separate authorization.
 From the repository root, force the complete AdGuard result:
 
 ```bash
-nix develop --offline --max-jobs 0 --builders '' --command scripts/verify.sh adguardhome-contracts
+nix shell --offline --inputs-from . --max-jobs 0 --builders '' nixpkgs#deadnix nixpkgs#gitleaks nixpkgs#nixfmt nixpkgs#statix --command scripts/verify.sh adguardhome-contracts
 ```
 
 The result must contain true values for:
@@ -57,7 +57,7 @@ checks do not execute dnsproxy or establish fallback availability at runtime.
 Before any release work, run the common gate:
 
 ```bash
-nix develop --offline --max-jobs 0 --builders '' --command scripts/verify.sh
+nix shell --offline --inputs-from . --max-jobs 0 --builders '' nixpkgs#deadnix nixpkgs#gitleaks nixpkgs#nixfmt nixpkgs#statix --command scripts/verify.sh
 ```
 
 The gate is defined in [verify.md](verify.md). It performs static hygiene and
@@ -69,8 +69,8 @@ review evidence.
 
 The evaluated configuration must show these source properties:
 
-1. The AdGuard package is stock 0.107.78 from the domain pin and dnsproxy is
-   stock 0.83.2. Consumer package overrides are rejected.
+1. The AdGuard package is stock 0.107.79 from the domain pin and dnsproxy is
+   stock 0.84.1. Consumer package overrides are rejected.
 2. AdGuard has one loopback Unbound primary and one loopback dnsproxy fallback.
    It has no `Requires` or ordering edge to Unbound.
 3. dnsproxy has a 3-second exchange timeout, static connect IP plus TLS identity
