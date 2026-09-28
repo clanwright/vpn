@@ -179,13 +179,21 @@ settings therefore keep their enabled behavior when this setting is omitted.
 | Path template | Behavior |
 | --- | --- |
 | `/<token>/mihomo.yaml` | Selective routing in Rule mode. |
-| `/<token>/mihomo-full.yaml` | Full routing in Rule mode with private DIRECT exceptions. |
+| `/<token>/mihomo-full.yaml` | Full routing in Rule mode with local and `.ru` DIRECT exceptions. |
 | `/<token>/profile.json` | sing-box Rule/Global modes with separate TCP/UDP selectors; present with an eligible Naive or AnyTLS provider. |
 
 These are templates, not live profile URLs. Per-device eligibility, DNS and
 routing policy are documented in [client profiles](../clanServices/vpn-client-profiles/README.md).
 Generated provider names use canonical machine identities without shortening
 machine-name suffixes.
+
+Both Mihomo profiles and sing-box route `.ru` directly after local exceptions
+and external IPv6 rejection, before full/Global routing and protected TCP/UDP
+rules. `.ru` is excluded from FakeIP; sing-box resolves it with `ipv4_only`
+through its own DNS rules before selecting DIRECT. MetaCubeX `category-ai-!cn`
+and `github` join the existing protected policy. Ordinary selective/Rule traffic
+still defaults to DIRECT; ordinary Mihomo full traffic still selects FULL.
+These are renderer defaults and add no publisher settings.
 
 Publisher `profiles[].autoProtocols` controls only automatic selection and probes; manual
 compatible connections remain published. Its default includes all supported
@@ -194,6 +202,10 @@ Exclude `amneziawg` to keep AWG manual without background probes or keepalive.
 Rule assets use opaque canonical paths while previous URL paths remain aliases.
 These aliases preserve rule downloads for already-issued profiles; subscription
 token paths and output filenames are unchanged.
+The new AI/GitHub assets use only opaque canonical paths: classical text in
+Mihomo to retain regex rules and binary SRS in sing-box. Their required asset
+references participate in the existing readiness guard. Classical text uses
+the existing nonempty validator, which does not validate rule syntax.
 
 AdGuard exposes independent booleans `filtering.safeSearch` (default `true`)
 and `filtering.youtubeRestrictedMode` (default `false`). The consumer applies

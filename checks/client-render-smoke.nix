@@ -440,6 +440,59 @@ let
     assetsDeclaredAndUsed =
       builtins.all (assetId: builtins.hasAttr assetId manifest.assetCatalog) allAssetRefs
       && lib.sort builtins.lessThan allAssetRefs == builtins.attrNames manifest.assetCatalog;
+    newDomainAssetsHaveFormatSpecificMirrorsAndReadiness =
+      builtins.all
+        (
+          tag:
+          let
+            upstreamName = if tag == "ai_domains" then "category-ai-!cn" else "github";
+            mihomoAsset = manifest.assetCatalog.${"mihomo-${tag}"};
+            singBoxAsset = manifest.assetCatalog.${"sing-box-${tag}"};
+            provider = rendered.mihomoSelectiveTemplate."rule-providers".${tag};
+            remoteRuleSet = builtins.head (
+              builtins.filter (ruleSet: ruleSet.tag == tag) rendered.profileJsonTemplate.route.rule_set
+            );
+            refreshScript =
+              consumerMachine.systemd.services.${"vpn-client-profiles-public-assets-${runtimeMachineName}"}.script;
+            assetRoot = consumerMachine.clanwright.vpn.publishers.vpn-client-profiles.assetRoot;
+          in
+          mihomoAsset.filename == "${tag}.txt"
+          && mihomoAsset.validator == "nonempty"
+          &&
+            mihomoAsset.source == {
+              kind = "download";
+              url = "https://raw.githubusercontent.com/MetaCubeX/meta-rules-dat/meta/geo/geosite/classical/${upstreamName}.list";
+            }
+          && singBoxAsset.filename == "${tag}.srs"
+          && singBoxAsset.validator == "srs"
+          &&
+            singBoxAsset.source == {
+              kind = "download";
+              url = "https://raw.githubusercontent.com/MetaCubeX/meta-rules-dat/sing/geo/geosite/${upstreamName}.srs";
+            }
+          && provider.url == "https://${publisherSettings.configGatewayDomain}${mihomoAsset.publicPath}"
+          && remoteRuleSet.url == "https://${publisherSettings.configGatewayDomain}${singBoxAsset.publicPath}"
+          && builtins.match "\\./ruleset/[a-f0-9]{32}\\.txt" provider.path != null
+          &&
+            builtins.all
+              (
+                asset:
+                asset.legacyPublicPaths == [ ]
+                && builtins.match "/assets/v1/catalog/[a-f0-9]{32}\\.(txt|srs)" asset.publicPath != null
+                && builtins.elem asset.id allAssetRefs
+                && lib.hasInfix "refresh_download ${lib.escapeShellArg asset.validator} ${lib.escapeShellArg asset.filename} ${lib.escapeShellArg asset.source.url}" refreshScript
+                && lib.hasInfix "[ ! -s ${lib.escapeShellArg "${assetRoot}/${asset.filename}"} ]" refreshScript
+                && lib.hasInfix "test -s ${lib.escapeShellArg "${assetRoot}/${asset.filename}"}" publicationScript
+              )
+              [
+                mihomoAsset
+                singBoxAsset
+              ]
+        )
+        [
+          "ai_domains"
+          "github_domains"
+        ];
     canonicalAndLegacyAssetRoutesExposed =
       let
         routeConfig = consumerMachine.clanwright.vpn.publishers.vpn-client-profiles.routeConfig;
@@ -631,7 +684,7 @@ let
     (rule.outbound or null) == "DIRECT" && (rule.domain or [ ]) == publisherSettings.tailnetAdminDomains
   ) profile.route.rules;
   fallbackResolveIndex = indexOf (
-    rule: (rule.action or null) == "resolve" && !(rule ? domain)
+    rule: (rule.action or null) == "resolve" && !(rule ? domain) && !(rule ? domain_suffix)
   ) profile.route.rules;
   resolveRules = builtins.filter (rule: (rule.action or null) == "resolve") profile.route.rules;
   multicastIndex = indexOf (
@@ -723,6 +776,8 @@ let
     "secure_dns_domains"
     "ru_blocked_and_geoblocked_domains"
     "refilter_blocked_domains"
+    "ai_domains"
+    "github_domains"
   ];
   actualSingBoxDohServers = builtins.filter (server: server.type == "https") profile.dns.servers;
   customPortSingBoxDoh = builtins.elemAt actualSingBoxDohServers 2;
@@ -767,7 +822,7 @@ let
     &&
       builtins.tail candidateProfile.dns.rules
       == singBoxDohRulesFor endpoints ++ [ { action = "reject"; } ]
-    && builtins.length candidateResolveRules == 2
+    && builtins.length candidateResolveRules == 3
     && builtins.all (rule: !(rule ? server)) candidateResolveRules
     && !(candidateProfile.dns ? final);
   oneDnsEndpoints = profileTypes.normalizeClientDnsEndpoints {
@@ -1003,7 +1058,7 @@ let
   );
   routeContract =
     udpRejects profile == [ ]
-    && builtins.length resolveRules == 2
+    && builtins.length resolveRules == 3
     && privateIndex < tailnetResolveIndex
     && multicastIndex < tailnetResolveIndex
     && tailnetResolveIndex < globalUdpIndex
@@ -1062,9 +1117,13 @@ let
     && builtins.any (
       rule: (rule.domain or [ ]) == publisherSettings.tailnetAdminDomains
     ) (lib.last fakeIpDnsRule.rules).rules
-    &&
-      builtins.any (rule: (rule.domain_suffix or [ ]) == [ "ts.net" ])
-        (lib.last fakeIpDnsRule.rules).rules
+    && builtins.any (
+      rule:
+      (rule.domain_suffix or [ ]) == [
+        "ts.net"
+        "ru"
+      ]
+    ) (lib.last fakeIpDnsRule.rules).rules
     && dnsRulesAfterFakeIp == expectedSingBoxDohRules ++ [ { action = "reject"; } ]
     && (builtins.elemAt profile.dns.rules ((builtins.length profile.dns.rules) - 1)).action == "reject"
     && !(profile.dns ? final);

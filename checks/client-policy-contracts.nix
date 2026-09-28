@@ -341,6 +341,115 @@ let
           go (index + 1) (builtins.tail remaining);
     in
     go 0 values;
+  newDomainTags = [
+    "ai_domains"
+    "github_domains"
+  ];
+  mihomoDomainPolicy =
+    template:
+    let
+      inherit (template) rules;
+      ruIndex = indexOf (rule: rule == "DOMAIN-SUFFIX,ru,DIRECT") rules;
+      rejectIndex = indexOf (rule: rule == "IP-CIDR6,::/0,REJECT,no-resolve") rules;
+      proxyRules = builtins.filter (
+        rule:
+        lib.hasPrefix "AND," rule
+        || lib.hasPrefix "RULE-SET," rule
+        || lib.hasPrefix "NETWORK,UDP," rule
+        || lib.hasPrefix "MATCH," rule
+      ) rules;
+    in
+    {
+      ruDirectAfterIpv6GuardBeforeProxyPolicies =
+        ruIndex > rejectIndex
+        && rejectIndex >= 0
+        && builtins.all (rule: ruIndex < indexOf (candidate: candidate == rule) rules) proxyRules;
+      ruExcludedFromFakeIp = builtins.elem "+.ru" template.dns."fake-ip-filter";
+      domainFeedsUseClassicalText = builtins.all (
+        tag:
+        let
+          provider = template."rule-providers".${tag};
+        in
+        provider.behavior == "classical"
+        && provider.format == "text"
+        && lib.hasSuffix ".txt" provider.url
+        && lib.hasSuffix ".txt" provider.path
+      ) newDomainTags;
+      newDomainsHaveTcpPolicy = builtins.all (
+        tag: builtins.any (rule: lib.hasPrefix "RULE-SET,${tag}," rule) rules
+      ) newDomainTags;
+      newDomainsHaveUdpPolicy = builtins.all (
+        tag:
+        builtins.any (
+          rule:
+          lib.hasPrefix "AND,((NETWORK,UDP),(RULE-SET,${tag}))," rule || lib.hasPrefix "NETWORK,UDP," rule
+        ) rules
+      ) newDomainTags;
+    };
+  singBoxDomainPolicy =
+    template:
+    let
+      inherit (template.route) rules;
+      ruResolveIndex = indexOf (
+        rule: (rule.domain_suffix or [ ]) == [ "ru" ] && (rule.action or null) == "resolve"
+      ) rules;
+      ruDirectIndex = indexOf (
+        rule: (rule.domain_suffix or [ ]) == [ "ru" ] && (rule.outbound or null) == "DIRECT"
+      ) rules;
+      rejectIndex = indexOf (
+        rule: (rule.ip_version or null) == 6 && (rule.action or null) == "reject"
+      ) rules;
+      proxyRules = builtins.filter (
+        rule:
+        rule ? clash_mode
+        || (rule.rule_set or [ ]) != [ ]
+        || builtins.elem (rule.outbound or null) [
+          "SELECTIVE"
+          "FULL"
+          "UDP"
+        ]
+      ) rules;
+      fakeIpRule = builtins.head template.dns.rules;
+      exclusions = lib.last fakeIpRule.rules;
+    in
+    {
+      ruResolvedBeforeDirectAfterIpv6Guard =
+        rejectIndex >= 0
+        && ruResolveIndex > rejectIndex
+        && ruDirectIndex == ruResolveIndex + 1
+        && (builtins.elemAt rules ruResolveIndex).strategy == "ipv4_only"
+        && !((builtins.elemAt rules ruResolveIndex) ? server);
+      ruDirectBeforeGlobalAndProtectedPolicy =
+        ruDirectIndex >= 0
+        && builtins.all (rule: ruDirectIndex < indexOf (candidate: candidate == rule) rules) proxyRules;
+      ruExcludedFromProtectedFakeIp =
+        exclusions.invert
+        && exclusions.mode == "or"
+        && builtins.any (rule: builtins.elem "ru" (rule.domain_suffix or [ ])) exclusions.rules;
+      newDomainsUseFakeIpAndProtectedTcpUdp = builtins.all (
+        tag:
+        builtins.elem tag (builtins.elemAt fakeIpRule.rules 1).rule_set
+        && builtins.any (
+          rule: builtins.elem tag (rule.rule_set or [ ]) && (rule.outbound or null) == "SELECTIVE"
+        ) rules
+        && builtins.any (
+          rule:
+          builtins.elem tag (rule.rule_set or [ ])
+          && (rule.network or null) == "udp"
+          && ((rule.outbound or null) == "UDP" || (rule.action or null) == "reject")
+        ) rules
+      ) newDomainTags;
+      newDomainsUseBinaryRemoteRules = builtins.all (
+        tag:
+        builtins.any (
+          ruleSet:
+          ruleSet.tag == tag
+          && ruleSet.type == "remote"
+          && ruleSet.format == "binary"
+          && lib.hasSuffix ".srs" ruleSet.url
+        ) template.route.rule_set
+      ) newDomainTags;
+    };
   matrixResults = lib.mapAttrs (
     publisherName: publisher:
     lib.genAttrs users (
@@ -352,6 +461,9 @@ let
         tunRoutes = tunRouteResults renderedProfile;
         mihomoSelectiveTun = mihomoTunResults renderedProfile.mihomoSelectiveTemplate;
         mihomoFullTun = mihomoTunResults renderedProfile.mihomoFullTemplate;
+        mihomoSelectiveDomains = mihomoDomainPolicy renderedProfile.mihomoSelectiveTemplate;
+        mihomoFullDomains = mihomoDomainPolicy renderedProfile.mihomoFullTemplate;
+        singBoxDomains = singBoxDomainPolicy renderedProfile.profileJsonTemplate;
         mihomoContainsExactlyCompatibleAuthorizedProviders =
           mihomoTags renderedProfile == sorted (
             map (providerTag user) (
@@ -449,6 +561,28 @@ let
       outputs = map (artifact: artifact.outputName) artifacts;
     in
     {
+      newAssetRefsFollowClientFormat = builtins.all (
+        artifact:
+        let
+          ownFormat = if artifact.format == "mihomo" then "mihomo" else "sing-box";
+          otherFormat = if artifact.format == "mihomo" then "sing-box" else "mihomo";
+        in
+        builtins.all (
+          tag:
+          builtins.elem "${ownFormat}-${tag}" artifact.assetRefs
+          && !(builtins.elem "${otherFormat}-${tag}" artifact.assetRefs)
+        ) newDomainTags
+      ) artifacts;
+      domainPolicy =
+        if renderedProfile.profileJsonTemplate == null then
+          mihomoDomainPolicy renderedProfile.mihomoSelectiveTemplate
+        else if renderedProfile.mihomoSelectiveTemplate == null then
+          singBoxDomainPolicy renderedProfile.profileJsonTemplate
+        else
+          {
+            mihomo = mihomoDomainPolicy renderedProfile.mihomoSelectiveTemplate;
+            singBox = singBoxDomainPolicy renderedProfile.profileJsonTemplate;
+          };
       tunRoutes =
         if renderedProfile.profileJsonTemplate == null then
           { ineligibleFormatSkipped = true; }
@@ -554,6 +688,47 @@ let
   noAutoRender = render publishers.publisher-a providers [
     ((profile "alice") // { autoProtocols = [ ]; })
   ];
+  ruCollisionRender = import ../clanServices/vpn-client-profiles/client-profiles.nix {
+    inherit lib pkgs providers;
+    settings = (settingsFor publishers.publisher-a [ (profile "alice") ]) // {
+      personalProxyDomains = [
+        "github.fixture.ru"
+        "ai.fixture.ru"
+      ];
+    };
+  };
+  ruCollisionProfile = builtins.head ruCollisionRender.renderedProfiles;
+  ruCollisionResults = {
+    mihomoSelective = mihomoDomainPolicy ruCollisionProfile.mihomoSelectiveTemplate;
+    mihomoFull = mihomoDomainPolicy ruCollisionProfile.mihomoFullTemplate;
+    singBox = singBoxDomainPolicy ruCollisionProfile.profileJsonTemplate;
+    competingMihomoPersonalPolicyPresent =
+      builtins.all
+        (
+          template:
+          builtins.elem "RULE-SET,personal_proxy_domains,${if template == ruCollisionProfile.mihomoFullTemplate then "FULL" else "SELECTIVE"}" template.rules
+        )
+        [
+          ruCollisionProfile.mihomoSelectiveTemplate
+          ruCollisionProfile.mihomoFullTemplate
+        ];
+    competingSingBoxPersonalPoliciesFollowRu =
+      let
+        rules = ruCollisionProfile.profileJsonTemplate.route.rules;
+        ruIndex = indexOf (
+          rule: (rule.domain_suffix or [ ]) == [ "ru" ] && (rule.outbound or null) == "DIRECT"
+        ) rules;
+        personalRules = builtins.filter (
+          rule:
+          (rule.domain_suffix or [ ]) == [
+            "github.fixture.ru"
+            "ai.fixture.ru"
+          ]
+        ) rules;
+      in
+      builtins.length personalRules == 2
+      && builtins.all (rule: indexOf (candidate: candidate == rule) rules > ruIndex) personalRules;
+  };
   noAutoProfile = builtins.head noAutoRender.renderedProfiles;
   noAutoMihomoGroups =
     noAutoProfile.mihomoSelectiveTemplate."proxy-groups"
@@ -658,6 +833,7 @@ let
       matrixResults
       noAutoResults
       protocolOnlyResults
+      ruCollisionResults
       ;
   };
 in

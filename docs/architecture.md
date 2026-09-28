@@ -72,6 +72,10 @@ The publisher separates manual availability from automatic protocol selection.
 Sing-box uses independent TCP and UDP selectors; protected UDP uses AnyTLS
 or is rejected when no compatible provider exists. Both formats configure
 local IPv6 and Tailscale exceptions and an explicit external IPv6 rejection rule.
+An early `.ru` DIRECT exception follows that rejection and precedes full/Global
+and protected routing in both formats. `.ru` uses real DNS answers rather than
+FakeIP; sing-box resolves it with `ipv4_only` through ordinary DNS rules before
+DIRECT. MetaCubeX AI and GitHub feeds join the existing protected TCP/UDP policy.
 Sing-box enables automatic TUN routing without explicit included or excluded
 route lists. Local route precedence and concurrent SFM/Tailscale compatibility
 remain part of [client acceptance](operations/sing-box-client.md#sfm-tailscale-and-lan-routing-acceptance),
@@ -88,6 +92,11 @@ Clients download rule assets directly from the publisher's pinned IPv4 while
 retaining the gateway hostname for HTTPS verification. Downloads do not depend
 on a selected VPN. MRS refresh validates the declared domain/IP behavior with
 the stock Mihomo parser before replacing the persistent cache.
+The AI/GitHub Mihomo assets use classical text to retain regex rules, with the
+existing nonempty validator; syntax acceptance remains consumer-owned. Their
+sing-box counterparts use binary SRS validation. Both formats reference those
+assets through the catalog and require them before publication; new assets
+have opaque canonical paths without legacy aliases.
 
 Public rule assets live in persistent state; credentials and
 token-named publication paths live only under `/run`. Initial publication waits

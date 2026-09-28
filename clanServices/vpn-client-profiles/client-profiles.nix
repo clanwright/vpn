@@ -49,6 +49,7 @@ let
   personalProxyDomainsTxtPublicPath = opaqueAssetPublicPath "personal-proxy-domains" "txt";
   ruleSetMirrorPublicPath = tag: opaqueAssetPublicPath "sing-box-${tag}" "srs";
   ruleSetMirrorMrsPublicPath = tag: opaqueAssetPublicPath "mihomo-${tag}" "mrs";
+  ruleSetMirrorTxtPublicPath = tag: opaqueAssetPublicPath "mihomo-${tag}" "txt";
   secureDnsDomainsTxtPublicPath = opaqueAssetPublicPath "secure-dns-domains" "txt";
   legacySecureDnsRuleSetPublicPath = "/assets/v1/catalog/filters.srs";
   legacyPersonalProxyDomainsTxtPublicPath = "/assets/v1/catalog/segments.txt";
@@ -110,6 +111,17 @@ let
         })
       ) mihomoMrsUpstream
     )
+    // lib.listToAttrs (
+      map (
+        ruleSet:
+        lib.nameValuePair ruleSet.tag (mkRuleProvider {
+          assetId = "mihomo-${ruleSet.tag}";
+          behavior = "classical";
+          proxy = "DIRECT";
+          url = "https://${configGatewayDomain}${ruleSetMirrorTxtPublicPath ruleSet.tag}";
+        })
+      ) mihomoClassicalUpstream
+    )
     // {
       secure_dns_domains = mkRuleProvider {
         assetId = "secure-dns-domains";
@@ -162,6 +174,29 @@ let
     {
       tag = "refilter_blocked_ips";
       url = "https://github.com/1andrevich/Re-filter-lists/releases/latest/download/ruleset-ip-refilter_ipsum.srs";
+    }
+    {
+      tag = "ai_domains";
+      url = "https://raw.githubusercontent.com/MetaCubeX/meta-rules-dat/sing/geo/geosite/category-ai-!cn.srs";
+      legacyPublicPaths = [ ];
+    }
+    {
+      tag = "github_domains";
+      url = "https://raw.githubusercontent.com/MetaCubeX/meta-rules-dat/sing/geo/geosite/github.srs";
+      legacyPublicPaths = [ ];
+    }
+  ];
+
+  # Classical text retains upstream DOMAIN-REGEX rules, which domain MRS
+  # cannot represent. These feeds use the existing nonempty text validator.
+  mihomoClassicalUpstream = [
+    {
+      tag = "ai_domains";
+      url = "https://raw.githubusercontent.com/MetaCubeX/meta-rules-dat/meta/geo/geosite/classical/category-ai-!cn.list";
+    }
+    {
+      tag = "github_domains";
+      url = "https://raw.githubusercontent.com/MetaCubeX/meta-rules-dat/meta/geo/geosite/classical/github.list";
     }
   ];
 
@@ -240,7 +275,7 @@ let
         id = "sing-box-${ruleSet.tag}";
         filename = "${ruleSet.tag}.srs";
         publicPath = ruleSetMirrorPublicPath ruleSet.tag;
-        legacyPublicPaths = [ (legacyRuleSetMirrorPublicPath ruleSet.tag) ];
+        legacyPublicPaths = ruleSet.legacyPublicPaths or [ (legacyRuleSetMirrorPublicPath ruleSet.tag) ];
         routePriority = 10 + index;
         contentType = "application/octet-stream";
         validator = "srs";
@@ -268,6 +303,24 @@ let
         };
       };
     }) mihomoMrsUpstream
+  )
+  // builtins.listToAttrs (
+    lib.imap0 (index: ruleSet: {
+      name = "mihomo-${ruleSet.tag}";
+      value = {
+        id = "mihomo-${ruleSet.tag}";
+        filename = "${ruleSet.tag}.txt";
+        publicPath = ruleSetMirrorTxtPublicPath ruleSet.tag;
+        legacyPublicPaths = [ ];
+        routePriority = 24 + index;
+        contentType = "text/plain; charset=utf-8";
+        validator = "nonempty";
+        source = {
+          kind = "download";
+          inherit (ruleSet) url;
+        };
+      };
+    }) mihomoClassicalUpstream
   );
 
   # The publisher mirrors upstream .srs assets. Clients fetch them from the
@@ -283,6 +336,8 @@ let
     "secure_dns_domains"
     "ru_blocked_and_geoblocked_domains"
     "refilter_blocked_domains"
+    "ai_domains"
+    "github_domains"
   ];
   protectedRuleSets = [
     "secure_dns_domains"
@@ -290,6 +345,8 @@ let
     "ru_blocked_asn_ips"
     "refilter_blocked_domains"
     "refilter_blocked_ips"
+    "ai_domains"
+    "github_domains"
   ];
   protectedRuleSetsWithPersonal =
     protectedRuleSets ++ lib.optional (personalProxyDomains != [ ]) "personal_proxy_domains";
@@ -314,6 +371,8 @@ let
     "RULE-SET,secure_dns_domains,PROXY"
     "RULE-SET,ru_blocked_and_geoblocked_domains,PROXY"
     "RULE-SET,refilter_blocked_domains,PROXY"
+    "RULE-SET,ai_domains,PROXY"
+    "RULE-SET,github_domains,PROXY"
     "RULE-SET,ru_blocked_asn_ips,PROXY,no-resolve"
     "RULE-SET,refilter_blocked_ips,PROXY,no-resolve"
   ]
@@ -751,7 +810,10 @@ let
           # (which forwards tail971c03.ts.net to 100.100.100.100), not to a fake-ip.
           # Without this, a client running this profile (e.g. Clash Verge on the dev
           # mac) hijacks *.ts.net → 198.18.x and can't reach tailnet hosts by FQDN.
-          "fake-ip-filter" = settings.tailnetAdminDomains ++ [ "+.ts.net" ];
+          "fake-ip-filter" = settings.tailnetAdminDomains ++ [
+            "+.ts.net"
+            "+.ru"
+          ];
           # Every configured DoH hostname is pinned in root hosts. Mihomo 1.19.31
           # checks those pins before its bootstrap resolver, preserving the URL
           # hostname for HTTP Host and TLS SNI while dialing the declared IPv4.
@@ -796,6 +858,7 @@ let
         rules =
           localDirectRules
           ++ ipv6RejectRules
+          ++ [ "DOMAIN-SUFFIX,ru,DIRECT" ]
           ++ (
             if finalTarget == "FULL" then
               [ "NETWORK,UDP,${if udpProxyNames == [ ] then "REJECT" else "UDP"}" ]
@@ -865,6 +928,7 @@ let
         "secure-dns-domains"
       ]
       ++ map (ruleSet: "mihomo-${ruleSet.tag}") mihomoMrsUpstream
+      ++ map (ruleSet: "mihomo-${ruleSet.tag}") mihomoClassicalUpstream
       ++ lib.optional (personalProxyDomains != [ ]) "personal-proxy-domains";
 
       mkSingBoxNaiveOutbound = cred: {
@@ -962,7 +1026,14 @@ let
               lib.optional (settings.tailnetAdminDomains != [ ]) {
                 domain = settings.tailnetAdminDomains;
               }
-              ++ [ { domain_suffix = [ "ts.net" ]; } ];
+              ++ [
+                {
+                  domain_suffix = [
+                    "ts.net"
+                    "ru"
+                  ];
+                }
+              ];
             invert = true;
           }
         ];
@@ -1128,6 +1199,15 @@ let
             {
               ip_version = 6;
               action = "reject";
+            }
+            {
+              domain_suffix = [ "ru" ];
+              action = "resolve";
+              strategy = "ipv4_only";
+            }
+            {
+              domain_suffix = [ "ru" ];
+              outbound = "DIRECT";
             }
           ]
           ++ [

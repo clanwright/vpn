@@ -211,7 +211,17 @@ Naive/Cronet также выполняет внутреннюю UDP-провер
 алиасами тех же файлов, поэтому ранее выданные профили сохраняют доступ к
 правилам. Это изменение путей, а не шифрование содержания публичных списков.
 
-Selective policy использует только blocked/geoblocked и dependency rule sets.
+Selective policy использует blocked/geoblocked и dependency rule sets.
+В защищённую TCP/UDP policy также входят MetaCubeX `category-ai-!cn` и `github`
+под внутренними тегами `ai_domains` и `github_domains`. Остальной трафик
+Selective и Sing-box Rule mode сохраняет default `DIRECT`; Mihomo full
+сохраняет `FULL` для остального нелокального трафика.
+Домены `.ru` направляются в `DIRECT` в обоих Mihomo-профилях и Sing-box,
+включая Global mode. Это исключение идёт после локальных правил и запрета
+внешнего IPv6, но до Global/full, защищённого UDP и всех feed rules, включая
+личные домены. `.ru` исключён из FakeIP обоих форматов. Sing-box перед этим
+`DIRECT` явно разрешает `.ru` с `ipv4_only` через обычные DNS rules; общее
+разрешение остальных DIRECT-доменов остаётся на прежнем месте.
 Личные домены задаёт consumer через `personalProxyDomains`; библиотека не
 содержит пользовательский список. Значения задаются как доменные суффиксы без
 `+.`.
@@ -333,6 +343,15 @@ behavior до атомарной замены кэша. Ошибка сохра�
 текстовых upstream-списков принятие ограничено успешным HTTP-ответом и
 непустым файлом. Repository checks проверяют генерацию этих действий, не
 запуская parser или приложения.
+
+MetaCubeX feeds берутся из `meta-rules-dat`: Mihomo использует
+`meta/geo/geosite/classical/category-ai-!cn.list` и `github.list` как
+`behavior = classical`, `format = text`, сохраняя `DOMAIN-REGEX` rules.
+Эти текстовые файлы используют только существующую проверку `nonempty`,
+которая не подтверждает синтаксис или полноту содержимого. Sing-box использует
+соответствующие `sing/geo/geosite/category-ai-!cn.srs` и `github.srs` с обычной
+SRS validation. Все четыре assets обязательны для соответствующих артефактов
+и имеют только opaque canonical URL без новых legacy aliases.
 
 `secure-dns.txt` загружается из официального HaGeZi
 [`wildcard/doh-onlydomains.txt`](https://raw.githubusercontent.com/hagezi/dns-blocklists/main/wildcard/doh-onlydomains.txt)
