@@ -33,6 +33,9 @@ let
     publisher-manifest-contracts = import ./publisher-manifest-contracts.nix {
       inherit pkgs;
     };
+    external-subscriptions-contracts = import ./external-subscriptions-contracts.nix {
+      inherit inputs root self;
+    };
     unbound-contracts = import ./unbound-contracts.nix {
       inherit
         inputs

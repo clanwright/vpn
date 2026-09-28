@@ -191,6 +191,40 @@ let
     };
   });
 
+  externalSubscriptionType = lib.types.submodule (_: {
+    options = {
+      urlSecretName = lib.mkOption { type = safeSecretNameType; };
+      format = lib.mkOption {
+        type = lib.types.enum [ "xray-json" ];
+        default = "xray-json";
+      };
+      profileNames = lib.mkOption {
+        type = lib.types.addCheck (lib.types.listOf safeIdentityType) (
+          names: names != [ ] && names == lib.unique names
+        );
+      };
+      auto = lib.mkOption {
+        type = lib.types.bool;
+        default = true;
+      };
+      refreshIntervalSeconds = lib.mkOption {
+        type = lib.types.ints.positive;
+        default = 3600;
+      };
+      retryIntervalSeconds = lib.mkOption {
+        type = lib.types.ints.positive;
+        default = 300;
+      };
+      maxStaleSeconds = lib.mkOption {
+        type = lib.types.ints.positive;
+        default = 86400;
+      };
+    };
+  });
+  externalSubscriptionsType = lib.types.addCheck (lib.types.attrsOf externalSubscriptionType) (
+    sources: builtins.all (name: safeIdentityType.check name) (builtins.attrNames sources)
+  );
+
   linksPageType = lib.types.submodule (_: {
     options = {
       enable = lib.mkOption {
@@ -226,6 +260,8 @@ in
     optionalSafeIdentityType
     safeSecretNameType
     linksPageDefaults
+    externalSubscriptionType
+    externalSubscriptionsType
     providerNamespace
     protocolValues
     autoProtocolsType

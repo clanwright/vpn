@@ -5,6 +5,7 @@ let
   testRoot = builtins.getEnv "VPN_PUBLISHER_TEST_ROOT";
   secretPath = builtins.getEnv "VPN_PUBLISHER_TEST_SECRET";
   tokenPath = builtins.getEnv "VPN_PUBLISHER_TEST_TOKEN";
+  withExternal = builtins.getEnv "VPN_PUBLISHER_TEST_EXTERNAL" == "1";
   runtimeBase = "${testRoot}/runtime";
   profileRoot = "${runtimeBase}/published/current";
   publicationService = "vpn-client-profiles-publish-runtime-fixture";
@@ -15,10 +16,23 @@ let
     else
       runtimeModuleOverride;
   manifestLib = import ../clanServices/vpn-client-profiles/artifact-manifest.nix { inherit lib; };
-  template = {
-    credential = "__FIXTURE_SECRET__";
-    marker = "publisher-runtime-fixture";
-  };
+  baseTemplate = (import ./external-subscriptions-runtime-fixture.nix).singBox;
+  template =
+    (
+      if withExternal then
+        baseTemplate
+        // {
+          outbounds = map (
+            outbound:
+            if outbound.type == "naive" then outbound // { password = "__FIXTURE_SECRET__"; } else outbound
+          ) baseTemplate.outbounds;
+        }
+      else
+        { credential = "__FIXTURE_SECRET__"; }
+    )
+    // {
+      marker = "publisher-runtime-fixture";
+    };
   manifest = {
     schemaVersion = 1;
     assetCatalog = { };
@@ -30,22 +44,39 @@ let
           decoding = "path-token";
         };
         artifacts = [
-          {
-            id = "fixture-json";
-            outputName = "profile.json";
-            format = "json";
-            inherit template;
-            templatePath = builtins.toFile "publisher-runtime-fixture.json" (builtins.toJSON template);
-            assetRefs = [ ];
-            bindings = [
-              {
-                secretName = "fixture-secret";
-                decoding = "literal";
-                targetPath = [ "credential" ];
-                placeholder = "__FIXTURE_SECRET__";
-              }
-            ];
-          }
+          (
+            {
+              id = "fixture-json";
+              outputName = "profile.json";
+              format = "json";
+              inherit template;
+              templatePath = builtins.toFile "publisher-runtime-fixture.json" (builtins.toJSON template);
+              assetRefs = [ ];
+              bindings = [
+                {
+                  secretName = "fixture-secret";
+                  decoding = "literal";
+                  targetPath =
+                    if withExternal then
+                      [
+                        "outbounds"
+                        (builtins.length baseTemplate.outbounds - 1)
+                        "password"
+                      ]
+                    else
+                      [ "credential" ];
+                  placeholder = "__FIXTURE_SECRET__";
+                }
+              ];
+            }
+            // lib.optionalAttrs withExternal {
+              runtimeComposition = {
+                kind = "external-subscriptions";
+                profileName = "fixture";
+                format = "json";
+              };
+            }
+          )
         ];
       }
     ];
@@ -55,6 +86,7 @@ let
     config.sops.secrets = {
       fixture-secret.path = secretPath;
       fixture-token.path = tokenPath;
+      fixture-url.path = builtins.getEnv "VPN_SUBSCRIPTION_TEST_URL_FILE";
     };
     inherit
       lib
@@ -68,6 +100,13 @@ let
     renderedProfiles = [ ];
     settings = {
       localMachineName = "runtime-fixture";
+      profiles = [ { name = "fixture"; } ];
+      externalSubscriptions = lib.optionalAttrs withExternal {
+        fixture = {
+          urlSecretName = "fixture-url";
+          profileNames = [ "fixture" ];
+        };
+      };
       linksPage = {
         enable = false;
         title = "Fixture";

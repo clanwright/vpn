@@ -9,6 +9,9 @@ Research date: 2026-09-28. The user approved three implementation changes:
 Current behavior belongs in the [publisher documentation](../clanServices/vpn-client-profiles/README.md).
 This note records research rationale, not a deployment result.
 
+[Client comparison and export audit](client-comparison.md) records the subsequent
+Mihomo/sing-box/Happ/INCY comparison and exact-core capability boundaries.
+
 ## Retained reference
 
 [skala-vpn.json](skala-vpn.json) retains one sanitized example of each of the

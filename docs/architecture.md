@@ -65,12 +65,13 @@ each provider; consumers select those exports through the public helpers.
 The profile publisher normalizes its settings and passes selected typed
 provider exports and per-device bindings to its renderer.
 It renders Mihomo selective/full profiles and publishes a sing-box profile
-for devices with an eligible Naive or AnyTLS provider. Personal proxy domain additions
-come from the consumer.
+for devices with an eligible Naive or AnyTLS provider or a selected external
+subscription. Personal proxy domain additions come from the consumer.
 
 The publisher separates manual availability from automatic protocol selection.
 Sing-box uses independent TCP and UDP selectors; protected UDP uses AnyTLS
-or is rejected when no compatible provider exists. Both formats configure
+or a compatible imported VLESS connection, and is rejected when no compatible
+connection exists. Both formats configure
 local IPv6 and Tailscale exceptions and an explicit external IPv6 rejection rule.
 An early `.ru` DIRECT exception follows that rejection and precedes full/Global
 and protected routing in both formats. `.ru` uses real DNS answers rather than
@@ -87,6 +88,14 @@ publisher reads that manifest without knowing protocol-specific client fields.
 An explicit asset catalog supplies opaque publication paths, legacy URL aliases, refresh sources and
 readiness requirements. These are private implementation interfaces, not new
 consumer configuration.
+
+External subscriptions are publisher inputs, not Clan provider exports.
+The consumer selects source IDs, SOPS URL-secret bindings and explicit device
+profiles. A runtime adapter extracts supported Xray connection tuples and
+composes client-specific outbounds and selectors through the manifest. It
+does not import upstream DNS, routing or inbounds. External Auto eligibility
+is separate from the own-provider protocol policy. Subscription credentials
+and accepted snapshots stay private under `/run`, separate from public assets.
 
 Clients download rule assets directly from the publisher's pinned IPv4 while
 retaining the gateway hostname for HTTPS verification. Downloads do not depend

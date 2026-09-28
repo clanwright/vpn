@@ -182,3 +182,5 @@ assert_no_private_temporaries
 assert_execution_cwd_empty
 
 printf 'publisher runtime harness: PASS (success, artifact mktemp failure, jq failure, secret chmod failure)\n'
+VPN_SUBSCRIPTION_TEST_NIX_BIN="$nix_bin" VPN_SUBSCRIPTION_TEST_JQ_BIN="$jq_bin" \
+	bash "$repository_root/scripts/test-subscriptions-runtime.sh"

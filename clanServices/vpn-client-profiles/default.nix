@@ -24,6 +24,7 @@ let
     personalProxyDomains = [ ];
     profiles = [ ];
     providerRefs = [ ];
+    externalSubscriptions = { };
     profileLinks = [ ];
     linksPage = linksPageDefaults;
   };
@@ -92,6 +93,17 @@ let
     providerRefs = lib.mkOption {
       type = lib.types.listOf types.providerRefType;
       default = publisherDefaults.providerRefs;
+    };
+    externalSubscriptions = lib.mkOption {
+      type = types.externalSubscriptionsType;
+      apply =
+        sources:
+        if builtins.all (name: types.safeIdentityType.check name) (builtins.attrNames sources) then
+          sources
+        else
+          throw "vpn-client-profiles: external subscription IDs must be safe identities.";
+      default = publisherDefaults.externalSubscriptions;
+      description = "Profile-scoped external connections; subscription URLs are runtime secrets.";
     };
     profileLinks = lib.mkOption {
       type = lib.types.listOf types.profileLinkType;
@@ -319,6 +331,12 @@ in
               };
               users.groups.${readerGroup} = lib.mkIf active { };
               assertions = [
+                {
+                  assertion = builtins.all (
+                    source: lib.subtractLists publisherProfileNames source.profileNames == [ ]
+                  ) (builtins.attrValues publisher.externalSubscriptions);
+                  message = "vpn-client-profiles: external subscriptions may reference only declared profiles.";
+                }
                 {
                   assertion = !active || runtimeMachineName != "";
                   message = "vpn-client-profiles: localMachineName is required when publishing is enabled.";

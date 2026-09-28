@@ -16,6 +16,17 @@
 }:
 let
   inherit (settings) localMachineName;
+  externalSources = external.sources;
+  hasExternal = externalSources != { };
+  external = import ./external-subscriptions.nix {
+    inherit
+      lib
+      pkgs
+      config
+      settings
+      runtimeBase
+      ;
+  };
   manifestLib = import ./artifact-manifest.nix { inherit lib; };
   checkedManifest =
     if manifestLib.validateManifest manifest then
@@ -28,6 +39,7 @@ let
       [ profile.pathTokenBinding.secretName ]
       ++ lib.concatMap (artifact: map (binding: binding.secretName) artifact.bindings) profile.artifacts
     ) checkedManifest.profiles
+    ++ map (source: source.urlSecretName) (builtins.attrValues externalSources)
   );
   secretDecls = lib.genAttrs allSecretNames (_name: {
     format = lib.mkDefault "binary";
@@ -109,11 +121,16 @@ let
         ${jqArguments} \
         ${lib.escapeShellArg jqFilter} \
         ${lib.escapeShellArg artifact.templatePath} > "${shellVariable jsonVariable}"
-      ${renderOutput}
-      failure_stage=file-installation
-      failure_reason=install-failed
-      install -o root -g ${lib.escapeShellArg readerGroup} -m 0440 \
-        "${shellVariable outputVariable}" "$profile_dir/${artifact.outputName}"
+      ${lib.optionalString (artifact ? runtimeComposition) ''
+        external_compose ${lib.escapeShellArg artifact.runtimeComposition.profileName} ${lib.escapeShellArg artifact.runtimeComposition.format} "${shellVariable jsonVariable}"
+      ''}
+      if jq -e 'type == "object"' "${shellVariable jsonVariable}" >/dev/null; then
+        ${renderOutput}
+        failure_stage=file-installation
+        failure_reason=install-failed
+        install -o root -g ${lib.escapeShellArg readerGroup} -m 0440 \
+          "${shellVariable outputVariable}" "$profile_dir/${artifact.outputName}"
+      fi
     '';
 
   profileCase =
@@ -122,8 +139,10 @@ let
       matchingLinks = builtins.filter (link: link.name == profile.name) settings.profileLinks;
       link = if matchingLinks == [ ] then null else builtins.head matchingLinks;
       linkItems = lib.concatMapStringsSep "\n" (artifact: ''
+        if [ -f "$profile_dir/${artifact.outputName}" ]; then
         printf '<li><a href="https://%s/%s/${artifact.outputName}">%s (${artifact.outputName})</a></li>\n' \
           "$escaped_domain" "$path_token" "$escaped_label" >> "$links_tmp"
+        fi
       '') profile.artifacts;
       linkCase = lib.optionalString (settings.linksPage.enable && link != null) ''
         escaped_domain="$(html_escape ${lib.escapeShellArg link.accountDomain})"
@@ -167,6 +186,7 @@ let
       '') requiredAssetPaths}
     '';
     prepare-generation = ''
+      external_generation_expires=0
       failure_stage=file-installation
       failure_reason=install-failed
       stage="$(mktemp -d ${lib.escapeShellArg "${runtimeBase}/generations/.staging.XXXXXX"})"
@@ -204,6 +224,15 @@ let
       stage=""
     '';
     expose-generation = ''
+      ${lib.optionalString hasExternal ''
+        if [ "$external_generation_expires" -ne 0 ] && [ "$(( $(date +%s) + external_holdback ))" -ge "$external_generation_expires" ]; then
+          rm -rf -- "$generation"
+          generation=""
+          if [ "''${#private_tmp_files[@]}" -ne 0 ]; then rm -f -- "''${private_tmp_files[@]}"; fi
+          private_tmp_files=()
+          continue
+        fi
+      ''}
       failure_stage=file-installation
       failure_reason=install-failed
       link_tmp="$runtime_base/published/.current.$$"
@@ -251,8 +280,8 @@ in
         refreshUnit
       ];
       serviceConfig = {
-        Type = "oneshot";
-        RemainAfterExit = true;
+        Type = if hasExternal then "simple" else "oneshot";
+        RemainAfterExit = !hasExternal;
         Restart = "on-failure";
         RestartSec = "60s";
         User = "root";
@@ -266,6 +295,9 @@ in
         pkgs.jq
         mihomoPackage
         pkgs.yq-go
+        pkgs.curl
+        pkgs.bash
+        pkgs.diffutils
       ];
       postStop = ''
         exec 3>&2
@@ -343,7 +375,36 @@ in
           printf '%s' "$value"
         }
 
-        ${publicationScript}
+        ${external.runtimeScript}
+        ${
+          if hasExternal then
+            ''
+              external_prepare
+              ${lib.concatMapStringsSep "\n" (name: ''rm -f -- "$external_cache/${name}/next-at"'') (
+                builtins.attrNames externalSources
+              )}
+              while true; do
+                trap cleanup EXIT
+                external_holdback=${toString (65 * builtins.length (builtins.attrNames externalSources) + 30)}
+                external_prepare
+                ${publicationScript}
+                trap cleanup EXIT
+                external_refresh
+                external_holdback=0
+                ${publicationScript}
+                trap cleanup EXIT
+                external_prepare
+                now="$(date +%s)"
+                wait_seconds=$((external_next_due - now))
+                if [ "$wait_seconds" -gt 0 ]; then sleep "$wait_seconds"; fi
+              done
+            ''
+          else
+            ''
+              external_prepare
+              ${publicationScript}
+            ''
+        }
       '';
     };
   };

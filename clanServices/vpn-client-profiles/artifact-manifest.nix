@@ -156,7 +156,7 @@ let
     let
       placeholders = collectPlaceholders artifact.template;
       bindingPlaceholders = map (binding: binding.placeholder) artifact.bindings;
-      fields = builtins.attrNames artifact;
+      fields = builtins.attrNames (builtins.removeAttrs artifact [ "runtimeComposition" ]);
     in
     fields == [
       "assetRefs"
@@ -167,6 +167,20 @@ let
       "template"
       "templatePath"
     ]
+    && (
+      !(artifact ? runtimeComposition)
+      || (
+        builtins.attrNames artifact.runtimeComposition == [
+          "format"
+          "kind"
+          "profileName"
+        ]
+        && artifact.runtimeComposition.kind == "external-subscriptions"
+        && artifact.runtimeComposition.format == artifact.format
+        && builtins.isString artifact.runtimeComposition.profileName
+        && builtins.match "[A-Za-z0-9][A-Za-z0-9._-]{0,63}" artifact.runtimeComposition.profileName != null
+      )
+    )
     && builtins.isString artifact.id
     && builtins.match "[A-Za-z0-9_.-]+" artifact.id != null
     && builtins.isString artifact.outputName
@@ -209,7 +223,11 @@ let
     && profile.artifacts != [ ]
     && artifactIds == lib.unique artifactIds
     && outputNames == lib.unique outputNames
-    && builtins.all (validateArtifact assetCatalog) profile.artifacts;
+    && builtins.all (validateArtifact assetCatalog) profile.artifacts
+    && builtins.all (
+      artifact:
+      !(artifact ? runtimeComposition) || artifact.runtimeComposition.profileName == profile.name
+    ) profile.artifacts;
 
   validateAsset =
     id: asset:

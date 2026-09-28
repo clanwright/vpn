@@ -161,6 +161,18 @@ integration output rather than importing renderer files. See the
 [migration procedure](operations/migrate-contracts.md) for provider schema 2 and
 the separated publication/exposure contracts.
 
+The publisher accepts `externalSubscriptions.<sourceId>` with `urlSecretName`,
+`format = "xray-json"`, explicit nonempty `profileNames`, `auto` (default true),
+and per-source `refreshIntervalSeconds`, `retryIntervalSeconds`,
+`maxStaleSeconds` (defaults 3600, 300, 86400). Source IDs and secret names use
+the existing safe identity grammars. The URL and downloaded credentials are
+runtime-only secrets; consumers supply the SOPS binding, never literal URLs
+in Nix settings. External sources do not impersonate Clan provider exports or
+extend their protocol enum. Import extracts compatible connections and keeps
+the publisher's DNS/routing policy. See the
+[subscription contract](../clanServices/vpn-client-profiles/README.md#external-subscriptions)
+for the supported input combinations and update semantics.
+
 Roles with an `enable` setting use it alone to control their declarations.
 Disabled roles do not retain service or secret declarations; credential storage
 remains consumer-owned.

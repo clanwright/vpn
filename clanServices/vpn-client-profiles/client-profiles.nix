@@ -544,7 +544,11 @@ let
       mieruCredentials = map (mkMieruCredential profile.name) profileMieruProviders;
       anytlsCredentials = map (mkAnytlsCredential profile.name) profileAnytlsProviders;
       trusttunnelCredentials = map (mkTrustTunnelCredential profile.name) profileTrustTunnelProviders;
-      publishProfileJson = profileJsonRequested && (naiveCredentials != [ ] || anytlsCredentials != [ ]);
+      hasExternal = builtins.any (source: builtins.elem profile.name source.profileNames) (
+        builtins.attrValues (settings.externalSubscriptions or { })
+      );
+      publishProfileJson =
+        profileJsonRequested && (naiveCredentials != [ ] || anytlsCredentials != [ ] || hasExternal);
 
       mkVlessProxy = cred: {
         name = cred.vlessTag;
@@ -698,7 +702,7 @@ let
         }) unorderedProxies
       );
       proxies = map (name: proxyByName.${name}) orderedProxyNames;
-      publishMihomo = orderedProxyNames != [ ];
+      publishMihomo = orderedProxyNames != [ ] || hasExternal;
       rawPinnedHostEntries = [
         {
           name = localPublicNetwork.domains.edge;
@@ -1090,7 +1094,7 @@ let
               lib.optional (singBoxAutoTcpOutboundTags != [ ]) "SELECTIVE-AUTO" ++ singBoxTcpOutboundTags;
             default =
               if singBoxAutoTcpOutboundTags == [ ] then
-                builtins.head singBoxTcpOutboundTags
+                if singBoxTcpOutboundTags == [ ] then "EXTERNAL-REJECT" else builtins.head singBoxTcpOutboundTags
               else
                 "SELECTIVE-AUTO";
           }
@@ -1099,7 +1103,10 @@ let
             tag = "FULL";
             outbounds = lib.optional (singBoxAutoTcpOutboundTags != [ ]) "FULL-AUTO" ++ singBoxTcpOutboundTags;
             default =
-              if singBoxAutoTcpOutboundTags == [ ] then builtins.head singBoxTcpOutboundTags else "FULL-AUTO";
+              if singBoxAutoTcpOutboundTags == [ ] then
+                (if singBoxTcpOutboundTags == [ ] then "EXTERNAL-REJECT" else builtins.head singBoxTcpOutboundTags)
+              else
+                "FULL-AUTO";
           }
         ]
         ++ lib.optionals (singBoxAutoTcpOutboundTags != [ ]) [
@@ -1300,34 +1307,61 @@ let
           null;
       artifacts =
         lib.optionals publishMihomo [
-          {
-            id = "${profile.name}-mihomo-selective";
-            outputName = "mihomo.yaml";
-            format = "mihomo";
-            template = mihomoSelectiveTemplate;
-            templatePath = selectiveTemplatePath;
-            assetRefs = mihomoAssetRefs;
-            bindings = mihomoBindings;
-          }
-          {
-            id = "${profile.name}-mihomo-full";
-            outputName = "mihomo-full.yaml";
-            format = "mihomo";
-            template = mihomoFullTemplate;
-            templatePath = fullTemplatePath;
-            assetRefs = mihomoAssetRefs;
-            bindings = mihomoBindings;
-          }
+          (
+            {
+              id = "${profile.name}-mihomo-selective";
+              outputName = "mihomo.yaml";
+              format = "mihomo";
+              template = mihomoSelectiveTemplate;
+              templatePath = selectiveTemplatePath;
+              assetRefs = mihomoAssetRefs;
+              bindings = mihomoBindings;
+            }
+            // lib.optionalAttrs hasExternal {
+              runtimeComposition = {
+                kind = "external-subscriptions";
+                profileName = profile.name;
+                format = "mihomo";
+              };
+            }
+          )
+          (
+            {
+              id = "${profile.name}-mihomo-full";
+              outputName = "mihomo-full.yaml";
+              format = "mihomo";
+              template = mihomoFullTemplate;
+              templatePath = fullTemplatePath;
+              assetRefs = mihomoAssetRefs;
+              bindings = mihomoBindings;
+            }
+            // lib.optionalAttrs hasExternal {
+              runtimeComposition = {
+                kind = "external-subscriptions";
+                profileName = profile.name;
+                format = "mihomo";
+              };
+            }
+          )
         ]
-        ++ lib.optional publishProfileJson {
-          id = "${profile.name}-sing-box";
-          outputName = "profile.json";
-          format = "json";
-          template = profileJsonTemplate;
-          templatePath = profileJsonTemplatePath;
-          assetRefs = singBoxAssetRefs;
-          bindings = singBoxBindings;
-        };
+        ++ lib.optional publishProfileJson (
+          {
+            id = "${profile.name}-sing-box";
+            outputName = "profile.json";
+            format = "json";
+            template = profileJsonTemplate;
+            templatePath = profileJsonTemplatePath;
+            assetRefs = singBoxAssetRefs;
+            bindings = singBoxBindings;
+          }
+          // lib.optionalAttrs hasExternal {
+            runtimeComposition = {
+              kind = "external-subscriptions";
+              profileName = profile.name;
+              format = "json";
+            };
+          }
+        );
     in
     {
       inherit

@@ -1,0 +1,102 @@
+let
+  repository = builtins.getFlake (toString ../.);
+  pkgs = repository.inputs.nixpkgs.legacyPackages.${builtins.currentSystem};
+  inherit (pkgs) lib;
+  source = {
+    urlSecretName = "fixture-url";
+    format = "xray-json";
+    profileNames = [ "fixture" ];
+    auto = builtins.getEnv "VPN_SUBSCRIPTION_TEST_MANUAL" != "1";
+    maxStaleSeconds = if builtins.getEnv "VPN_SUBSCRIPTION_TEST_SHORT_TTL" == "1" then 60 else 86400;
+  };
+  providerEnvelope = import ../modules/contracts/provider-envelope.nix { inherit lib; };
+  providers = [
+    (providerEnvelope.mkProvider {
+      protocol = "naiveproxy";
+      instanceId = "own-naive";
+      machine = "own-edge";
+      endpoint = {
+        domain = "own-naive.example.invalid";
+        ipv4 = "192.0.2.10";
+        port = 443;
+      };
+      profileNames = [ "fixture" ];
+      transportMetadata = {
+        tlsServerName = "own-naive.example.invalid";
+        userNames = [ "fixture" ];
+        port = 443;
+      };
+      secretNames.password.fixture = "fixture-own-password";
+    })
+  ];
+  settings = {
+    localMachineName = "fixture";
+    publicIPv4 = "192.0.2.10";
+    edgeDomain = "own-edge.example.invalid";
+    configGatewayDomain = "profiles.example.invalid";
+    secretPrefix = "fixture";
+    excludedProfileNames = [ ];
+    clientDnsEndpoints = [
+      {
+        domain = "own-dns.example.invalid";
+        ipv4 = "192.0.2.53";
+        port = 443;
+        path = "/dns-query";
+      }
+    ];
+    tailnetAdminDomains = [ "admin.example.invalid" ];
+    personalProxyDomains = [ "personal.example.invalid" ];
+    profiles = [
+      {
+        name = "fixture";
+        kind = "mobile";
+        publishProfileJson = true;
+        autoProtocols = [ "naiveproxy" ];
+      }
+    ];
+    externalSubscriptions =
+      if builtins.getEnv "VPN_SUBSCRIPTION_TEST_REMOVED" == "1" then
+        { }
+      else
+        {
+          fixture = source;
+        }
+        // lib.optionalAttrs (builtins.getEnv "VPN_SUBSCRIPTION_TEST_SECOND_SOURCE" == "1") {
+          other = source // {
+            maxStaleSeconds = 60;
+          };
+        };
+  };
+  rendered = import ../clanServices/vpn-client-profiles/client-profiles.nix {
+    inherit
+      lib
+      pkgs
+      settings
+      providers
+      ;
+  };
+  profile = builtins.head rendered.renderedProfiles;
+  external = import ../clanServices/vpn-client-profiles/external-subscriptions.nix {
+    inherit lib settings;
+    config.sops.secrets.fixture-url.path = builtins.getEnv "VPN_SUBSCRIPTION_TEST_URL_FILE";
+    runtimeBase = builtins.getEnv "VPN_SUBSCRIPTION_TEST_ROOT";
+  };
+in
+{
+  inherit (external)
+    converter
+    composer
+    converterPath
+    composerPath
+    ;
+  runtimeScript =
+    builtins.replaceStrings
+      [ (toString external.converterPath) (toString external.composerPath) ]
+      [
+        (builtins.getEnv "VPN_SUBSCRIPTION_TEST_CONVERTER")
+        (builtins.getEnv "VPN_SUBSCRIPTION_TEST_COMPOSER")
+      ]
+      external.runtimeScript;
+  mihomo = profile.mihomoSelectiveTemplate;
+  singBox = profile.profileJsonTemplate;
+}

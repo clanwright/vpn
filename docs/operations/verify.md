@@ -13,6 +13,15 @@ about interpolation and temporary-file cleanup, not systemd, production permissi
 acceptance or deployed publication. It uses no real secrets or network and
 does not extend the main gate's execution boundary.
 
+The same harness invokes `scripts/test-subscriptions-runtime.sh` for external
+subscription import. It uses synthetic Xray profiles and a stubbed HTTP client,
+clock and privileged filesystem commands. It checks extraction, per-client
+composition, profile scope, Auto/manual membership, cache invalidation and
+expiry without contacting a subscription or running VPN parsers. Its timeout
+stub does not prove elapsed-time enforcement on Linux. Neither harness proves
+systemd readiness, client compatibility, upstream availability or deployed
+secret handling.
+
 Run it separately with local Bash, Nix and jq available:
 
 ```bash
