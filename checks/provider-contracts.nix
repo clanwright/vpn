@@ -326,6 +326,15 @@ let
     && !unsupportedConstructor.success;
   typeResults = {
     valid = typeAccepts validProvider;
+    legacyRealityPolicyDefaultsFalse =
+      !(evalProvider validProvider).transportMetadata.reality.supportX25519MLKEM768;
+    enabledRealityPolicy = typeAccepts (
+      lib.recursiveUpdate validProvider { transportMetadata.reality.supportX25519MLKEM768 = true; }
+    );
+    wrongRealityPolicyType =
+      !(typeAccepts (
+        lib.recursiveUpdate validProvider { transportMetadata.reality.supportX25519MLKEM768 = "true"; }
+      ));
     validAnytls = typeAccepts validAnytls;
     validTrustTunnel = typeAccepts validTrustTunnel;
     wrongMode = !(typeAccepts wrongMode);
@@ -337,6 +346,20 @@ let
   typeContract = builtins.all (value: value) (builtins.attrValues typeResults);
   selectorResults = {
     validVless = selectorAccepts "vless-xhttp" validProvider;
+    enabledRealityPolicy = selectorAccepts "vless-xhttp" (
+      lib.recursiveUpdate validProvider { transportMetadata.reality.supportX25519MLKEM768 = true; }
+    );
+    disabledRealityPolicy = selectorAccepts "vless-xhttp" (
+      lib.recursiveUpdate validProvider { transportMetadata.reality.supportX25519MLKEM768 = false; }
+    );
+    wrongRealityPolicyType =
+      !(selectorAccepts "vless-xhttp" (
+        lib.recursiveUpdate validProvider { transportMetadata.reality.supportX25519MLKEM768 = "true"; }
+      ));
+    unknownRealityField =
+      !(selectorAccepts "vless-xhttp" (
+        lib.recursiveUpdate validProvider { transportMetadata.reality.unexpected = true; }
+      ));
     validMieru = selectorAccepts "mieru" validMieru;
     validAnytls = selectorAccepts "anytls" validAnytls;
     validTrustTunnel = selectorAccepts "trusttunnel" validTrustTunnel;

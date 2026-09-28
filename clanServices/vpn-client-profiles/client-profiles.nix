@@ -564,6 +564,9 @@ let
         "reality-opts" = {
           "public-key" = cred.reality.publicKey;
           "short-id" = cred.reality.shortIdsByProfile.${profile.name};
+        }
+        // lib.optionalAttrs (cred.reality.supportX25519MLKEM768 or false) {
+          "support-x25519mlkem768" = true;
         };
         alpn = [ "h2" ];
         "xhttp-opts" = {

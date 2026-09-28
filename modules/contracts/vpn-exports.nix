@@ -26,6 +26,10 @@ let
     target = mkOption nonEmptyStr;
     shortIdsByProfile = mkOption (types.attrsOf nonEmptyStr);
     publicKey = mkOption nonEmptyStr;
+    supportX25519MLKEM768 = lib.mkOption {
+      type = types.bool;
+      default = false;
+    };
   };
   xhttpModule = mkSubmodule {
     path = mkOption nonEmptyStr;
@@ -403,7 +407,10 @@ let
   validReality =
     value:
     builtins.isAttrs value
-    && attrsHaveExactly [ "serverName" "serverNames" "target" "shortIdsByProfile" "publicKey" ] value
+    && attrsHaveExactly [ "serverName" "serverNames" "target" "shortIdsByProfile" "publicKey" ] (
+      builtins.removeAttrs value [ "supportX25519MLKEM768" ]
+    )
+    && builtins.isBool (value.supportX25519MLKEM768 or false)
     && isNonEmptyString (value.serverName or null)
     && allStrings (value.serverNames or [ ])
     && isNonEmptyString (value.target or null)

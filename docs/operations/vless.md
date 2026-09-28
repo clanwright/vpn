@@ -23,6 +23,37 @@ fallback is provided. Each device has a distinct UUID secret and short ID.
 REALITY private key and UUID values belong to consumer SOPS; do not print them
 during repository verification.
 
+## Client REALITY policy
+
+For own generated Mihomo clients connecting to Xray 26.9.9, explicitly migrate
+the consumer gateway settings together:
+
+```nix
+clientFingerprint = "chrome";
+clientSupportX25519MLKEM768 = true;
+```
+
+Mihomo 1.19.31 [removes the ML-KEM key share unless support is enabled](https://github.com/MetaCubeX/mihomo/blob/v1.19.31/component/tls/reality.go).
+Its uTLS 1.8.7 [Chrome fingerprint includes X25519MLKEM768, while Edge and Firefox do not](https://github.com/MetaCubeX/utls/blob/v1.8.7/u_parrots.go).
+The REALITY revision used by Xray 26.9.9
+[requires that key share before X25519](https://github.com/XTLS/REALITY/blob/8cdf7bf/tls.go).
+Changing only the fingerprint or only the flag does not satisfy this client
+requirement. The repository preserves `edge` and `false` defaults, so updating
+the VPN input alone does not migrate consumer settings or deployed profiles.
+
+The gateway exports this policy as `transportMetadata.fingerprint` and
+`transportMetadata.reality.supportX25519MLKEM768`; the own-provider renderer
+uses them for both selective and full Mihomo profiles. With false or absent
+support policy, the generated `reality-opts` omits `support-x25519mlkem768`.
+External subscription imports and client core packages are unchanged.
+Consumer peer probes must adopt both exported values in their own client
+configuration; profile generation does not update those probes.
+
+The pure checks establish schema and generated-field behavior only. Consumer
+acceptance must separately establish authenticated relay, wrong-credential
+rejection, sustained transfers and ordinary HTTPS through any shared ingress.
+No runtime compatibility is established by this repository gate.
+
 ## Shared public TCP/443
 
 To put Xray behind a consumer-owned TLS passthrough router, keep `bindIPv4`,

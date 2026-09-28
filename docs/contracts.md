@@ -39,6 +39,17 @@ public keys have one canonical representation in `transportMetadata.peers`.
 Each AWG peer supplies `clientPrivateKeySecretName`; its exact consumer binding
 is exported through `secretNames.clientPrivateKey`.
 
+VLESS provider version 2 accepts the optional boolean
+`transportMetadata.reality.supportX25519MLKEM768`, defaulting to `false` when
+absent in older or synthetic exports. The gateway publishes it from
+`clientSupportX25519MLKEM768`; its `clientFingerprint` additionally accepts
+`chrome`, retaining the `edge` default. The own-provider Mihomo renderer emits
+`reality-opts.support-x25519mlkem768 = true` only when enabled; false or omitted
+policy retains the previous client output. Consumers must update their
+publisher before selecting exports with this added field. Xray 26.9.9 with
+Mihomo 1.19.31 requires both Chrome and the enabled flag; see the explicit
+[consumer migration](operations/vless.md#client-reality-policy).
+
 Mieru extends provider version 2 with protocol `mieru` and role `gateway`.
 Its endpoint requires numeric IPv4 and TCP; `domain = null` is permitted only
 for Mieru. Existing protocols still require their domain field. Its exact

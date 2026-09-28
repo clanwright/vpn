@@ -81,11 +81,17 @@ in
         };
         clientFingerprint = lib.mkOption {
           type = lib.types.enum [
+            "chrome"
             "edge"
             "firefox"
           ];
           default = "edge";
           description = "TLS fingerprint published for generated client profiles.";
+        };
+        clientSupportX25519MLKEM768 = lib.mkOption {
+          type = lib.types.bool;
+          default = false;
+          description = "Opt in to X25519MLKEM768 in generated Mihomo REALITY clients; requires a supporting fingerprint such as chrome.";
         };
         doh = lib.mkOption {
           type = lib.types.submodule (_: {
@@ -198,6 +204,7 @@ in
                 inherit (settings.reality) serverNames publicKey;
                 target = "${settings.reality.targetHost}:443";
                 inherit shortIdsByProfile;
+                supportX25519MLKEM768 = settings.clientSupportX25519MLKEM768 or false;
               };
               xhttp = {
                 inherit (settings.xhttp) path;

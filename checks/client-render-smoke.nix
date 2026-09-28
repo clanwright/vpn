@@ -628,6 +628,50 @@ let
   vless = builtins.head (
     builtins.filter (proxy: proxy.type == "vless") rendered.mihomoSelectiveTemplate.proxies
   );
+  vlessPolicyRender =
+    enabled:
+    let
+      candidate = evaluateInstances "vless-mlkem-${lib.boolToString enabled}" (
+        lib.recursiveUpdate fixture.instances {
+          vpn-mihomo-vless-xhttp.roles.gateway.machines.vpn-fixture.settings = {
+            clientFingerprint = "chrome";
+            clientSupportX25519MLKEM768 = enabled;
+          };
+        }
+      );
+    in
+    builtins.head candidate.machine.clanwright.vpn.publisherRenders.vpn-client-profiles;
+  vlessClientPolicyContract =
+    vless."client-fingerprint"
+    == fixture.instances.vpn-mihomo-vless-xhttp.roles.gateway.machines.vpn-fixture.settings.clientFingerprint
+    && !(vless."reality-opts" ? "support-x25519mlkem768")
+    &&
+      builtins.all
+        (
+          enabled:
+          let
+            candidate = vlessPolicyRender enabled;
+          in
+          builtins.all
+            (
+              template:
+              let
+                proxy = builtins.head (builtins.filter (entry: entry.type == "vless") template.proxies);
+              in
+              proxy."client-fingerprint" == "chrome"
+              &&
+                proxy."reality-opts"
+                == (vless."reality-opts" // lib.optionalAttrs enabled { "support-x25519mlkem768" = true; })
+            )
+            [
+              candidate.mihomoSelectiveTemplate
+              candidate.mihomoFullTemplate
+            ]
+        )
+        [
+          false
+          true
+        ];
   awg = builtins.head (
     builtins.filter (proxy: proxy.type == "wireguard") rendered.mihomoSelectiveTemplate.proxies
   );
@@ -1204,6 +1248,7 @@ let
     && fakeIpPersistenceContract
     && clientDnsRenderVariantsContract
     && mihomoContract
+    && vlessClientPolicyContract
     && mieruExportContract
     && singBoxContract
     && routeContract
@@ -1218,6 +1263,7 @@ if !contract then
   throw "Pure client renderer contract failed: ${
     builtins.toJSON {
       inherit
+        vlessClientPolicyContract
         clientDnsContract
         clientDnsRenderVariantResults
         clientDnsRenderVariantsContract
@@ -1249,6 +1295,7 @@ else
   {
     all = true;
     inherit
+      vlessClientPolicyContract
       clientDnsContract
       clientDnsRenderVariantResults
       clientDnsRenderVariantsContract

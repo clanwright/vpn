@@ -18,6 +18,15 @@ The target declarations are configuration preconditions. Pure evaluation cannot
 prove the target's live protocol negotiation or certificate SANs; verify those
 from each deployment location before activation.
 
+`clientFingerprint` accepts `chrome`, `edge` and `firefox`, with the existing
+`edge` default. `clientSupportX25519MLKEM768` is a boolean defaulting to `false`.
+For Xray 26.9.9 with Mihomo 1.19.31, consumers must explicitly set both
+`clientFingerprint = "chrome";` and `clientSupportX25519MLKEM768 = true;`.
+Chrome supplies the X25519MLKEM768 key share; Mihomo removes it unless the
+support flag is enabled. Edge and Firefox remain allowed for compatibility
+with older servers, but do not supply this key share in the pinned client.
+See [migration and acceptance](../../docs/operations/vless.md#client-reality-policy).
+
 `port` is the public client port and defaults to 443. By default, Xray listens
 directly on `bindIPv4:port`. Optional `localListener = { ipv4 = "127.0.0.1";
 port = 10443; };` instead binds Xray to that loopback socket. Its `ipv4` defaults
@@ -60,6 +69,11 @@ The consumer must explicitly enable the nftables firewall backend for direct
 mode; that mode rejects disabled firewalls or the iptables backend. With
 `localListener`, the module adds no firewall rule. The consumer owns the public
 router's exposure, including keeping internal ports inaccessible externally.
+
+The client flag is exported as
+`transportMetadata.reality.supportX25519MLKEM768`. It describes client policy;
+it adds no server-side JSON setting. Consumer-owned peer probes must consume
+the exported fingerprint and support flag separately from the profile publisher.
 
 Operator checks and activation guidance are in
 [`docs/operations/vless.md`](../../docs/operations/vless.md).

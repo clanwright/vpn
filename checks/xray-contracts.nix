@@ -29,6 +29,39 @@ let
       ];
     }).config;
   schemaResult = value: builtins.tryEval (builtins.deepSeq (schemaConfig value) true);
+  clientPolicyExport =
+    value:
+    (service.roles.gateway.perInstance {
+      settings = schemaConfig (settings // value);
+      instanceName = "vpn-mihomo-vless-xhttp";
+      machine.name = "vpn-fixture";
+      mkExports = exports: exports;
+    }).exports.vpnProvider.transportMetadata;
+  clientPolicyContract =
+    (schemaConfig (builtins.removeAttrs settings [ "clientFingerprint" ])).clientFingerprint == "edge"
+    && !(schemaConfig settings).clientSupportX25519MLKEM768
+    && !(clientPolicyExport { }).reality.supportX25519MLKEM768
+    &&
+      builtins.all
+        (
+          fingerprint:
+          let
+            metadata = clientPolicyExport {
+              clientFingerprint = fingerprint;
+              clientSupportX25519MLKEM768 = true;
+            };
+          in
+          metadata.fingerprint == fingerprint && metadata.reality.supportX25519MLKEM768
+        )
+        [
+          "chrome"
+          "edge"
+          "firefox"
+        ]
+    && !(clientPolicyExport {
+      clientFingerprint = "chrome";
+      clientSupportX25519MLKEM768 = false;
+    }).reality.supportX25519MLKEM768;
   moduleForWithInstances =
     rawSettings: firewall: activeInstances:
     let
@@ -247,6 +280,8 @@ let
   unit = machine.systemd.services.xray;
   inherit (unit) serviceConfig;
   malformedSchemasRejected = builtins.all (result: !result.success) [
+    (schemaResult (settings // { clientSupportX25519MLKEM768 = "true"; }))
+    (schemaResult (settings // { clientFingerprint = "unsupported"; }))
     (schemaResult (settings // { bindIPv4 = "0.0.0.0/0"; }))
     (schemaResult (
       settings
@@ -356,6 +391,7 @@ let
         serverName = settings.reality.targetHost;
         inherit (settings.reality) serverNames publicKey;
         target = "${settings.reality.targetHost}:443";
+        supportX25519MLKEM768 = false;
         shortIdsByProfile = lib.listToAttrs (
           map (profile: {
             inherit (profile) name;
@@ -473,6 +509,7 @@ let
     && ((disabledModule.sops or { }).templates or { }) == { };
   contract =
     malformedSchemasRejected
+    && clientPolicyContract
     && negativeAssertionsContract
     && exportContract
     && directDefaultsContract
@@ -488,6 +525,7 @@ if !contract then
   throw "Xray VLESS contract failed: ${
     builtins.toJSON {
       inherit
+        clientPolicyContract
         exposureContract
         exportContract
         directDefaultsContract
@@ -506,6 +544,7 @@ else
   {
     all = true;
     inherit
+      clientPolicyContract
       exposureContract
       exportContract
       directDefaultsContract
