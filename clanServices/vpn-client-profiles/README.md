@@ -45,8 +45,9 @@ externalSubscriptions.skala = {
 выбор. Эта настройка независима от `autoProtocols` собственных providers:
 внешний VLESS TCP не выдаётся за собственный `vless-xhttp`.
 
-Начальный формат — JSON-массив Xray-профилей, как в сохранённом
-[референсе Skala](../../references/skala-vpn.json). Поддерживаются две комбинации:
+Начальный формат — JSON-массив Xray-профилей, как в локальном игнорируемом
+референсе Skala `.work/references/skala-vpn.json`, который не распространяется
+в Git. Поддерживаются две комбинации:
 
 | Внешнее подключение | Mihomo selective/full | Sing-box |
 | --- | --- | --- |

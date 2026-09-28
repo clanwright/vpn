@@ -14,10 +14,11 @@ Mihomo/sing-box/Happ/INCY comparison and exact-core capability boundaries.
 
 ## Retained reference
 
-[skala-vpn.json](skala-vpn.json) retains one sanitized example of each of the
-two Skala transports plus DNS/routing facts. It contains no subscription URL or
-usable credentials. It deliberately replaces the full 14-profile snapshot,
-downloaded lists, generated comparisons, scripts and logs removed during cleanup.
+The local ignored reference `.work/references/skala-vpn.json`, which is not
+distributed in Git, retains one sanitized example of each of the two Skala
+transports plus DNS/routing facts. It contains no subscription URL or usable
+credentials. It deliberately replaces the full 14-profile snapshot, downloaded
+lists, generated comparisons, scripts and logs removed during cleanup.
 
 ## Findings used for the change
 
