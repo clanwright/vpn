@@ -8,8 +8,8 @@
     modern-apps-nixpkgs.url = "github:NixOS/nixpkgs/8d5d270900d3fc75655ea2d9d248b234f6631439";
     trusttunnel-nixpkgs.url = "github:NixOS/nixpkgs/8d5d270900d3fc75655ea2d9d248b234f6631439";
     # Test/integration dependency only; VPN does not re-export or enable it.
-    # Network v3.0.0.
-    network.url = "github:clanwright/network/bfba5e74c3ee09ab92534fc2e7fdf31dc4525bb2";
+    # Network v4.0.0.
+    network.url = "github:clanwright/network/2981962f1f590fae66c05c50a3d793825281de9e";
     data-mesher.url = "path:./stubs/data-mesher";
     clan-core = {
       url = "github:clan-lol/clan-core/c612dac4b2bfb5278b7c366f250044ddb5401bcb";

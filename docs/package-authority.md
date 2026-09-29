@@ -19,10 +19,10 @@ from a separate input does not modify its derivation.
 The root platform `nixpkgs` input also resolves to
 `8d5d270900d3fc75655ea2d9d248b234f6631439`. The root `clan-core` input
 is `c612dac4b2bfb5278b7c366f250044ddb5401bcb` and root `sops-nix` is
-`5efb5a6f4f5ab192817d28557dd4d650fa14d866`. The Network v3.0.0 input
-resolves to `bfba5e74c3ee09ab92534fc2e7fdf31dc4525bb2`; its own nested
+`5efb5a6f4f5ab192817d28557dd4d650fa14d866`. The Network v4.0.0 input
+resolves to `2981962f1f590fae66c05c50a3d793825281de9e`; its own nested
 input graph retains the revisions required for Network's exact Caddy package.
-Network v3 requires the native NixOS ACME module's Lego 5 command and Lego 4
+Network v4 requires the native NixOS ACME module's Lego 5 command and Lego 4
 account-migration support, which the selected platform revision provides.
 
 ## Runtime package set

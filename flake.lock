@@ -50,8 +50,7 @@
     "clan-core_2": {
       "inputs": {
         "data-mesher": [
-          "network",
-          "data-mesher"
+          "network"
         ],
         "disko": "disko_2",
         "flake-parts": "flake-parts_2",
@@ -89,19 +88,6 @@
         "type": "path"
       },
       "parent": []
-    },
-    "data-mesher_2": {
-      "locked": {
-        "path": "./stubs/data-mesher",
-        "type": "path"
-      },
-      "original": {
-        "path": "./stubs/data-mesher",
-        "type": "path"
-      },
-      "parent": [
-        "network"
-      ]
     },
     "disko": {
       "inputs": {
@@ -208,21 +194,20 @@
     "network": {
       "inputs": {
         "clan-core": "clan-core_2",
-        "data-mesher": "data-mesher_2",
         "nixpkgs": "nixpkgs"
       },
       "locked": {
-        "lastModified": 1790511344,
-        "narHash": "sha256-vO64xcyFZkvZ3Mo44oH7XTM4XJ2dntvEsAut0D+zkWE=",
+        "lastModified": 1790710718,
+        "narHash": "sha256-yoNL2uDIcsYHJMDXk3McV1DVVgEynQ77fX1YL+7fBW4=",
         "owner": "clanwright",
         "repo": "network",
-        "rev": "bfba5e74c3ee09ab92534fc2e7fdf31dc4525bb2",
+        "rev": "2981962f1f590fae66c05c50a3d793825281de9e",
         "type": "github"
       },
       "original": {
         "owner": "clanwright",
         "repo": "network",
-        "rev": "bfba5e74c3ee09ab92534fc2e7fdf31dc4525bb2",
+        "rev": "2981962f1f590fae66c05c50a3d793825281de9e",
         "type": "github"
       }
     },
