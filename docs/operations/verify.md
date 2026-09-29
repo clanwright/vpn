@@ -16,11 +16,12 @@ does not extend the main gate's execution boundary.
 The same harness invokes `scripts/test-subscriptions-runtime.sh` for external
 subscription import. It uses synthetic Xray profiles and a stubbed HTTP client,
 clock and privileged filesystem commands. It checks extraction, per-client
-composition, profile scope, Auto/manual membership, cache invalidation and
-expiry without contacting a subscription or running VPN parsers. Its timeout
-stub does not prove elapsed-time enforcement on Linux. Neither harness proves
-systemd readiness, client compatibility, upstream availability or deployed
-secret handling.
+composition, profile scope, `Ручной`/`Авто` membership, the custom `GLOBAL`
+group, node naming and collisions, source labels without refetch, cache
+invalidation and expiry without contacting a subscription or running VPN
+parsers. Its timeout stub does not prove elapsed-time enforcement on Linux.
+Neither harness proves systemd readiness, client compatibility, upstream
+availability or deployed secret handling.
 
 Run it separately with local Bash, Nix and jq available:
 

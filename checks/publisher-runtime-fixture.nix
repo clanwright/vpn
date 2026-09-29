@@ -74,6 +74,7 @@ let
                 kind = "external-subscriptions";
                 profileName = "fixture";
                 format = "json";
+                ownNames = [ "own-edge" ];
               };
             }
           )

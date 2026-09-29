@@ -122,7 +122,7 @@ let
         ${lib.escapeShellArg jqFilter} \
         ${lib.escapeShellArg artifact.templatePath} > "${shellVariable jsonVariable}"
       ${lib.optionalString (artifact ? runtimeComposition) ''
-        external_compose ${lib.escapeShellArg artifact.runtimeComposition.profileName} ${lib.escapeShellArg artifact.runtimeComposition.format} "${shellVariable jsonVariable}"
+        external_compose ${lib.escapeShellArg artifact.runtimeComposition.profileName} ${lib.escapeShellArg artifact.runtimeComposition.format} "${shellVariable jsonVariable}" ${lib.escapeShellArg (builtins.toJSON artifact.runtimeComposition.ownNames)}
       ''}
       if jq -e 'type == "object"' "${shellVariable jsonVariable}" >/dev/null; then
         ${renderOutput}

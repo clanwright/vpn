@@ -36,6 +36,14 @@ let
     external-subscriptions-contracts = import ./external-subscriptions-contracts.nix {
       inherit inputs root self;
     };
+    display-names-contracts = import ./display-names-contracts.nix {
+      inherit
+        inputs
+        pkgs
+        root
+        self
+        ;
+    };
     unbound-contracts = import ./unbound-contracts.nix {
       inherit
         inputs

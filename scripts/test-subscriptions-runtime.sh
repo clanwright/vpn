@@ -89,6 +89,7 @@ generate_fixture() {
 	"$jq_bin" -r '.composer' "$test_root/fixture.json" >"$test_root/composer.jq"
 	"$jq_bin" '.mihomo' "$test_root/fixture.json" >"$test_root/base-mihomo.json"
 	"$jq_bin" '.singBox' "$test_root/fixture.json" >"$test_root/base-singbox.json"
+	"$jq_bin" -c '.ownNames' "$test_root/fixture.json" >"$test_root/own-names.json"
 }
 generate_fixture
 
@@ -108,12 +109,12 @@ run_lifecycle() {
 		prepare) external_prepare ;;
 		compose)
 			external_prepare
-			if jq -e ". != null" "$3" >/dev/null; then external_compose fixture mihomo "$3"; fi
-			if jq -e ". != null" "$4" >/dev/null; then external_compose fixture json "$4"; fi
+			if jq -e ". != null" "$3" >/dev/null; then external_compose fixture mihomo "$3" "$5"; fi
+			if jq -e ". != null" "$4" >/dev/null; then external_compose fixture json "$4" "$5"; fi
 			;;
-		unscoped) external_prepare; external_compose unscoped mihomo "$3" ;;
+		unscoped) external_prepare; external_compose unscoped mihomo "$3" "$5" ;;
 		esac
-	' bash "$test_root/runtime.sh" "$operation" "$test_root/mihomo.json" "$test_root/singbox.json") >>"$test_root/lifecycle.log" 2>&1
+	' bash "$test_root/runtime.sh" "$operation" "$test_root/mihomo.json" "$test_root/singbox.json" "$(cat "$test_root/own-names.json")") >>"$test_root/lifecycle.log" 2>&1
 }
 compose() {
 	cp "$test_root/base-mihomo.json" "$test_root/mihomo.json"
@@ -127,6 +128,16 @@ assert_nodes() {
 		'[(.proxies // [])[] | select(.type == "vless")] | length == $count' "$test_root/mihomo.json" >/dev/null
 	"$jq_bin" -e --argjson count "$singbox_count" \
 		'[.outbounds[] | select(.type == "vless")] | length == $count' "$test_root/singbox.json" >/dev/null
+}
+# Every Mihomo proxy or group name and every sing-box outbound tag is unique,
+# and no group, proxy or outbound is named after a removed group.
+assert_unique_names() {
+	"$jq_bin" -e '[.proxies[]?.name, ."proxy-groups"[].name] as $names
+		| ($names | length) == ($names | unique | length)
+		and all($names[]; . != "SELECTIVE" and . != "FULL" and . != "UDP" and . != "SELECTIVE-AUTO" and . != "FULL-AUTO" and . != "UDP-AUTO")' \
+		"$test_root/mihomo.json" >/dev/null
+	"$jq_bin" -e '[.outbounds[].tag] as $tags | ($tags | length) == ($tags | unique | length)' \
+		"$test_root/singbox.json" >/dev/null
 }
 assert_no_leaks() {
 	if rg -q 'fixture-secret-url|11111111-1111-4111-8111-111111111111|fixture-xhttp' "$test_root/lifecycle.log"; then
@@ -144,24 +155,49 @@ assert_no_leaks() {
 	and all(.[]; .tcp and .udp and .auto)
 	and ([.[].mihomo.port] | sort) == [443,8443]
 	and (.[0].mihomo.uuid == "11111111-1111-4111-8111-111111111111")' "$test_root/nodes.json" >/dev/null
+# The converter stores only the sanitized remark; naming happens at composition.
+"$jq_bin" -e 'all(.[]; keys == ["auto","label","mihomo","singBox","tcp","udp"] and .label == "🇩🇪 Германия")' \
+	"$test_root/nodes.json" >/dev/null
 
 run_lifecycle refresh
+# Cached accepted nodes are converter output: no stored name or digest.
+"$jq_bin" -e 'length == 2 and all(.[]; keys == ["auto","label","mihomo","singBox","tcp","udp"])' \
+	"$VPN_SUBSCRIPTION_TEST_ROOT/external-cache/fixture/accepted.json" >/dev/null
+test ! -e "$VPN_SUBSCRIPTION_TEST_ROOT/external-cache/fixture/digest"
 compose
 assert_nodes 2 1
-"$jq_bin" -e --slurpfile base "$test_root/base-mihomo.json" '
+reality_name='🇩🇪 Германия · Skala · REALITY'
+xhttp_name='🇩🇪 Германия · Skala · XHTTP'
+# One server offering both transports: the shared remark gains the transport,
+# and the REALITY node has the same client-visible name in both formats.
+"$jq_bin" -e --slurpfile base "$test_root/base-mihomo.json" --arg r "$reality_name" --arg x "$xhttp_name" '
 	.dns == $base[0].dns and .tun == $base[0].tun and .hosts == $base[0].hosts
 	and ."rule-providers" == $base[0]."rule-providers"
+	and .rules == $base[0].rules
+	and ([."proxy-groups"[].name] == ["Ручной","Авто","GLOBAL"])
+	and ([.proxies[].name] | sort) == ([$r, $x] | sort)
+	and (."proxy-groups"[0] | .type == "select" and .proxies[0] == "Авто" and (.proxies[1:] | sort) == ([$r, $x] | sort))
+	and (."proxy-groups"[1] | .type == "url-test" and (.proxies | sort) == ([$r, $x] | sort))
+	and (."proxy-groups"[2] | .type == "select" and .proxies == ["Ручной", "Авто"])
 	and all(."proxy-groups"[]; (.proxies | index("DIRECT")) == null)
-	and ([."proxy-groups"[] | select(.name == "UDP") | .proxies[] | select(startswith("external-"))] | length == 2)
+	and ([.proxies[] | select(.name == $r) | .network] == ["tcp"])
+	and ([.proxies[] | select(.name == $x) | .network] == ["xhttp"])
 ' "$test_root/mihomo.json" >/dev/null
-"$jq_bin" -e --slurpfile base "$test_root/base-singbox.json" '
+"$jq_bin" -e --slurpfile base "$test_root/base-singbox.json" --arg r "$reality_name" '
 	.dns == $base[0].dns and .inbounds == $base[0].inbounds
 	and .route.rule_set == $base[0].route.rule_set
+	and .route.rules == $base[0].route.rules
 	and .route.default_domain_resolver == $base[0].route.default_domain_resolver
 	and all(.outbounds[] | select(.type == "vless");
 		.domain_resolver.server as $resolver | any($base[0].dns.servers[]; .tag == $resolver and .type == "https"))
-	and ([.outbounds[] | select(.tag == "UDP") | .outbounds[] | select(startswith("external-"))] | length == 1)
+	and ([.outbounds[] | select(.type == "selector" or .type == "urltest") | .tag] | sort) == ["Авто","Ручной"]
+	and ([.outbounds[] | select(.tag == "Ручной")] | length == 1)
+	and ([.outbounds[] | select(.tag == "Ручной")][0] | .type == "selector" and .default == "Авто" and .outbounds == ["Авто","own-edge",$r])
+	and ([.outbounds[] | select(.tag == "Авто")][0] | .type == "urltest" and .outbounds == ["own-edge",$r])
+	and ([.outbounds[] | select(.type == "vless") | .tag] == [$r])
+	and all(.outbounds[]; .tag != "FULL" and .tag != "UDP" and .tag != "SELECTIVE")
 ' "$test_root/singbox.json" >/dev/null
+assert_unique_names
 cp "$test_root/mihomo.json" "$test_root/first-mihomo.json"
 assert_no_leaks
 
@@ -174,8 +210,18 @@ export VPN_SUBSCRIPTION_TEST_MANUAL=1
 generate_fixture
 compose
 assert_nodes 2 1
-"$jq_bin" -e 'all(."proxy-groups"[] | select(.type == "url-test"); all(.proxies[]; startswith("external-") | not))' "$test_root/mihomo.json" >/dev/null
-"$jq_bin" -e 'all(.outbounds[] | select(.type == "urltest"); all(.outbounds[]; startswith("external-") | not))' "$test_root/singbox.json" >/dev/null
+# Manual-only external nodes stay selectable but never join Auto.
+"$jq_bin" -e --arg r "$reality_name" --arg x "$xhttp_name" '
+	([."proxy-groups"[].name] == ["Ручной","GLOBAL"])
+	and (."proxy-groups"[0] | .type == "select" and (.proxies | sort) == ([$r, $x] | sort))
+	and (."proxy-groups"[1] | .type == "select" and .proxies == ["Ручной"])
+	and all(."proxy-groups"[]; .type != "url-test" and (.proxies | index("DIRECT")) == null)
+' "$test_root/mihomo.json" >/dev/null
+"$jq_bin" -e --arg r "$reality_name" '
+	([.outbounds[] | select(.tag == "Ручной")][0] | .outbounds == ["Авто","own-edge",$r])
+	and ([.outbounds[] | select(.tag == "Авто")][0] | .type == "urltest" and .outbounds == ["own-edge"])
+' "$test_root/singbox.json" >/dev/null
+assert_unique_names
 unset VPN_SUBSCRIPTION_TEST_MANUAL
 generate_fixture
 
@@ -335,7 +381,7 @@ run_lifecycle refresh
 run_lifecycle refresh
 compose
 assert_nodes 4 2
-"$jq_bin" -e '[.proxies[].name] | length == (unique | length)' "$test_root/mihomo.json" >/dev/null
+assert_unique_names
 rm -f "$VPN_SUBSCRIPTION_TEST_ROOT/external-cache/fixture/next-at"
 export VPN_SUBSCRIPTION_TEST_CURL_EXIT=28
 export VPN_SUBSCRIPTION_TEST_NOW_FILE="$test_root/now"
@@ -344,10 +390,178 @@ printf '%s\n' "$VPN_SUBSCRIPTION_TEST_NOW" >"$VPN_SUBSCRIPTION_TEST_NOW_FILE"
 run_lifecycle refresh
 compose
 assert_nodes 2 1
-"$jq_bin" -e 'all(.proxies[]; .name | startswith("external-fixture-"))' "$test_root/mihomo.json" >/dev/null
+"$jq_bin" -e 'all(.proxies[]; .name | test(" · Skala · (REALITY|XHTTP)$"))' "$test_root/mihomo.json" >/dev/null
+assert_unique_names
 unset VPN_SUBSCRIPTION_TEST_NOW_FILE VPN_SUBSCRIPTION_TEST_ADVANCE_SECONDS VPN_SUBSCRIPTION_TEST_SECOND_SOURCE
 export VPN_SUBSCRIPTION_TEST_CURL_EXIT=0
 generate_fixture
+
+# Naming regression. The body mixes one server offering both transports, a
+# second server with the same remark and transport, a node without a remark
+# and a remark without flag or country. Names are resolved when composing.
+"$jq_bin" '
+	.[0] as $r | .[1] as $x
+	| def moved($address): .outbounds[0].settings.vnext[0].address = $address;
+	[
+		$r,
+		$x,
+		($r | moved("node-b.example.invalid")),
+		($r | del(.remarks) | moved("node-c.example.invalid")),
+		($r | .remarks = "Plain text" | moved("node-d.example.invalid"))
+	]' "$repository_root/checks/fixtures/external-subscriptions.json" >"$test_root/names-body.json"
+cp "$test_root/names-body.json" "$VPN_SUBSCRIPTION_TEST_BODY"
+export VPN_SUBSCRIPTION_TEST_HTTP=200 VPN_SUBSCRIPTION_TEST_CURL_EXIT=0 VPN_SUBSCRIPTION_TEST_NOW=222000
+run_lifecycle refresh
+compose
+assert_nodes 5 4
+"$jq_bin" -e '
+	def named($name; $server): [.proxies[] | select(.name == $name) | .server] == [$server];
+	([.proxies[].name] | sort) == ([
+		"🇩🇪 Германия · Skala · REALITY",
+		"🇩🇪 Германия · Skala · REALITY 2",
+		"🇩🇪 Германия · Skala · XHTTP",
+		"Plain text · Skala",
+		"Skala"] | sort)
+	and named("🇩🇪 Германия · Skala · XHTTP"; "node.example.invalid")
+	and ([.proxies[] | select(.name | startswith("🇩🇪 Германия · Skala · REALITY")) | .server] | sort) == ["node-b.example.invalid","node.example.invalid"]
+	and named("Skala"; "node-c.example.invalid")
+	and named("Plain text · Skala"; "node-d.example.invalid")
+	and ([."proxy-groups"[].name] == ["Ручной","Авто","GLOBAL"])
+	and ."proxy-groups"[0].proxies == (["Авто"] + [.proxies[].name])
+	and ."proxy-groups"[1].proxies == [.proxies[].name]
+	and ."proxy-groups"[2].proxies == ["Ручной","Авто"]
+' "$test_root/mihomo.json" >/dev/null
+# sing-box lacks the XHTTP node; the others keep their Mihomo names.
+"$jq_bin" -e --slurpfile mihomo "$test_root/mihomo.json" '
+	([.outbounds[] | select(.type == "vless") | .tag] | sort)
+		== ([$mihomo[0].proxies[] | select(.network == "tcp") | .name] | sort)
+	and ([.outbounds[] | select(.type == "vless") | .tag] | length == 4)
+' "$test_root/singbox.json" >/dev/null
+assert_unique_names
+"$jq_bin" '[.proxies[].name]' "$test_root/mihomo.json" >"$test_root/names-skala.json"
+cp "$VPN_SUBSCRIPTION_TEST_ROOT/external-cache/fixture/accepted.json" "$test_root/accepted-before-label.json"
+calls_before="$(wc -l <"$VPN_SUBSCRIPTION_TEST_CALLS" | tr -d ' ')"
+
+# Changing only the source label renames nodes on the next composition; the
+# cached download is neither refetched nor altered.
+export VPN_SUBSCRIPTION_TEST_LABEL=Renamed
+generate_fixture
+compose
+assert_nodes 5 4
+"$jq_bin" -e --slurpfile before "$test_root/names-skala.json" '
+	[.proxies[].name] == ($before[0] | map(gsub("Skala"; "Renamed")))
+	and all(.proxies[].name; contains("Skala") | not)' "$test_root/mihomo.json" >/dev/null
+assert_unique_names
+test "$(wc -l <"$VPN_SUBSCRIPTION_TEST_CALLS" | tr -d ' ')" == "$calls_before"
+cmp -s "$test_root/accepted-before-label.json" "$VPN_SUBSCRIPTION_TEST_ROOT/external-cache/fixture/accepted.json"
+
+# A null label falls back to the source identifier.
+export VPN_SUBSCRIPTION_TEST_LABEL=-
+generate_fixture
+compose
+assert_nodes 5 4
+"$jq_bin" -e --slurpfile before "$test_root/names-skala.json" '
+	[.proxies[].name] == ($before[0] | map(gsub("Skala"; "fixture")))' "$test_root/mihomo.json" >/dev/null
+assert_unique_names
+test "$(wc -l <"$VPN_SUBSCRIPTION_TEST_CALLS" | tr -d ' ')" == "$calls_before"
+unset VPN_SUBSCRIPTION_TEST_LABEL
+generate_fixture
+
+# A cache written by the previous naming scheme is dropped so the source is
+# refetched instead of being renamed twice.
+cache_dir="$VPN_SUBSCRIPTION_TEST_ROOT/external-cache/fixture"
+for cache_file in accepted.json accepted-at next-at; do cp -p "$cache_dir/$cache_file" "$test_root/legacy-saved-$cache_file"; done
+"$jq_bin" 'map(. + {name: "external-fixture-legacy-0123456789abcdef"})' "$test_root/legacy-saved-accepted.json" >"$cache_dir/accepted.json"
+run_lifecycle prepare
+test ! -e "$cache_dir/accepted.json"
+test ! -e "$cache_dir/accepted-at"
+test ! -e "$cache_dir/next-at"
+for cache_file in accepted.json accepted-at next-at; do cp -p "$test_root/legacy-saved-$cache_file" "$cache_dir/$cache_file"; done
+run_lifecycle prepare
+test -s "$cache_dir/accepted.json"
+
+# Composer edge cases use the production filter directly on converter output:
+# reserved and own-provider names cannot be taken by a subscription node.
+compose_direct() {
+	"$jq_bin" --arg format "$1" --argjson own "$(cat "$test_root/own-names.json")" --slurpfile nodes "$2" -f "$test_root/composer.jq" "$3" >"$4"
+}
+converted_nodes() {
+	"$jq_bin" --arg source "$1" --argjson auto "$2" -f "$test_root/converter.jq" "$names_body" |
+		"$jq_bin" --arg source "$1" --argjson auto "$2" 'map(.auto = $auto | .source = $source)'
+}
+names_body="$test_root/names-body.json"
+converted_nodes DIRECT true >"$test_root/nodes-direct.json"
+compose_direct mihomo "$test_root/nodes-direct.json" "$test_root/base-mihomo.json" "$test_root/direct-mihomo.json"
+"$jq_bin" -e '
+	([.proxies[].name] | length) == ([.proxies[].name] | unique | length)
+	and (.proxies | any(.name == "DIRECT · REALITY"))
+	and (.proxies | any(.name == "DIRECT") | not)
+	and all(."proxy-groups"[]; (.proxies | index("DIRECT")) == null)' "$test_root/direct-mihomo.json" >/dev/null
+converted_nodes own-edge true >"$test_root/nodes-own.json"
+compose_direct json "$test_root/nodes-own.json" "$test_root/base-singbox.json" "$test_root/own-singbox.json"
+"$jq_bin" -e '
+	([.outbounds[].tag] | length) == ([.outbounds[].tag] | unique | length)
+	and ([.outbounds[] | select(.tag == "own-edge")] | length == 1)
+	and ([.outbounds[] | select(.tag == "own-edge")][0].type == "naive")
+	and ([.outbounds[] | select(.tag == "own-edge · REALITY")] | length == 1)' "$test_root/own-singbox.json" >/dev/null
+# The own Naive name is absent from Mihomo but still reserved there, so the
+# subscription node keeps the same name in both formats.
+compose_direct mihomo "$test_root/nodes-own.json" "$test_root/base-mihomo.json" "$test_root/own-mihomo.json"
+"$jq_bin" -e --slurpfile box "$test_root/own-singbox.json" '
+	([.proxies[] | select(.network == "tcp") | .name]) == ([$box[0].outbounds[] | select(.type == "vless") | .tag])
+	and (.proxies | any(.name == "own-edge · REALITY"))
+	and (.proxies | any(.name == "own-edge") | not)' "$test_root/own-mihomo.json" >/dev/null
+
+# A subscription at the 1024-outbound cap with one shared remark must name
+# its nodes without rescanning earlier ordinals.
+"$jq_bin" '.[0] as $node | [range(1024) as $i | $node | .mihomo.port = ($i + 1) | .source = "Perf"]' \
+	"$test_root/nodes-direct.json" >"$test_root/nodes-perf.json"
+perf_started="$(date +%s)"
+compose_direct mihomo "$test_root/nodes-perf.json" "$test_root/base-mihomo.json" "$test_root/perf-mihomo.json"
+perf_seconds=$(($(date +%s) - perf_started))
+printf 'subscription naming of 1024 identical nodes: %ss\n' "$perf_seconds"
+test "$perf_seconds" -lt 10
+"$jq_bin" -e --arg base "$("$jq_bin" -r '.[0] | (if .label == null then "Perf" else .label + " · Perf" end) + " · " + (if .mihomo.network == "xhttp" then "XHTTP" else "REALITY" end)' "$test_root/nodes-perf.json")" '
+	([.proxies[].name] | length == 1024 and length == (unique | length))
+	and .proxies[0].name == $base
+	and .proxies[1].name == ($base + " 2")
+	and .proxies[1023].name == ($base + " 1024")' "$test_root/perf-mihomo.json" >/dev/null
+
+# sing-box without own Auto candidates: manual-only nodes create no Auto group
+# and the manual selector defaults to its first connection.
+"$jq_bin" '.outbounds |= map(select(.tag != "Авто"))
+	| (.outbounds[] | select(.tag == "Ручной")) |= (.outbounds = ["own-edge"] | .default = "own-edge")' \
+	"$test_root/base-singbox.json" >"$test_root/no-auto-singbox.json"
+converted_nodes fixture false >"$test_root/nodes-manual.json"
+compose_direct json "$test_root/nodes-manual.json" "$test_root/no-auto-singbox.json" "$test_root/manual-singbox.json"
+"$jq_bin" -e '
+	($ext | length == 4)
+	and all(.outbounds[]; .type != "urltest" and .tag != "Авто")
+	and ([.outbounds[] | select(.tag == "Ручной")] | length == 1)
+	and ([.outbounds[] | select(.tag == "Ручной")][0] | .default == "own-edge"
+		and .outbounds == (["own-edge"] + [$ext[] | .]))
+' --argjson ext "$("$jq_bin" -c '[.outbounds[] | select(.type == "vless") | .tag]' "$test_root/manual-singbox.json")" \
+	"$test_root/manual-singbox.json" >/dev/null
+# Without own connections the placeholder is dropped and Auto leads.
+"$jq_bin" '.outbounds |= map(select(.tag != "Авто" and .tag != "own-edge"))
+	| (.outbounds[] | select(.tag == "Ручной")) |= (.outbounds = ["EXTERNAL-REJECT"] | .default = "EXTERNAL-REJECT")' \
+	"$test_root/base-singbox.json" >"$test_root/rejecting-singbox.json"
+converted_nodes fixture true >"$test_root/nodes-auto.json"
+compose_direct json "$test_root/nodes-auto.json" "$test_root/rejecting-singbox.json" "$test_root/auto-singbox.json"
+"$jq_bin" -e '
+	([.outbounds[] | select(.type == "vless") | .tag]) as $ext
+	| ([.outbounds[] | select(.tag == "Ручной")][0] | .default == "Авто" and .outbounds == (["Авто"] + $ext))
+	and ([.outbounds[] | select(.tag == "Авто")][0] | .type == "urltest" and .outbounds == $ext)
+	and all(.outbounds[]; .tag != "FULL" and .tag != "UDP")' "$test_root/auto-singbox.json" >/dev/null
+# No connection at all: the composer returns null instead of an empty selector.
+printf '[]\n' >"$test_root/nodes-empty.json"
+compose_direct json "$test_root/nodes-empty.json" "$test_root/rejecting-singbox.json" "$test_root/empty-singbox.json"
+"$jq_bin" -e '. == null' "$test_root/empty-singbox.json" >/dev/null
+compose_direct mihomo "$test_root/nodes-empty.json" "$test_root/base-mihomo.json" "$test_root/empty-mihomo.json"
+"$jq_bin" -e '. == null' "$test_root/empty-mihomo.json" >/dev/null
+export VPN_SUBSCRIPTION_TEST_NOW=218160
+cp "$repository_root/checks/fixtures/external-subscriptions.json" "$VPN_SUBSCRIPTION_TEST_BODY"
+assert_no_leaks
 
 # Execute the complete generated publication loop: its first own generation
 # must be exposed during fetch, and a failed second generation must revoke it.
@@ -419,4 +633,4 @@ if rg -q 'fixture-secret-url|synthetic-own-secret|11111111-1111-4111-8111-111111
 	exit 1
 fi
 assert_no_leaks
-printf 'subscription runtime harness: PASS (conversion, composition, scope, manual selection, empty and unsupported, partial200 timeout, retry and TTL, auth, URL rotation, removal, interrupted timestamps, short TTL, sibling expiry during slow fetch, own before fetch, second-publication cleanup, private logs)\n'
+printf 'subscription runtime harness: PASS (conversion, source-label naming and collisions, format-parity naming, 1024-node naming, legacy-cache refetch, rules untouched, composition, scope, manual selection, empty and unsupported, partial200 timeout, retry and TTL, auth, URL rotation, removal, interrupted timestamps, short TTL, sibling expiry during slow fetch, own before fetch, second-publication cleanup, private logs)\n'

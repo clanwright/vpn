@@ -11,6 +11,9 @@ let
       settings.profiles or [ ]
     )
   );
+  displayNames = import ./display-names.nix { inherit lib; };
+  inherit (displayNames) manualGroup autoGroup;
+  sourceLabel = name: source: if (source.label or null) == null then name else source.label;
   sources = lib.filterAttrs (
     _name: source: builtins.any (name: builtins.elem name publishedProfileNames) source.profileNames
   ) (settings.externalSubscriptions or { });
@@ -65,49 +68,66 @@ let
     if type != "array" or length > 1024 or (all(.[]; type == "object" and (.outbounds | type == "array")) | not)
     then error("invalid-envelope") else
       if ([.[] | .outbounds[]] | length) > 1024 then error("too-many-outbounds") else
-        [.[] as $profile | $profile.outbounds[] | try (node | . + {label: (($profile.remarks // $profile.tag // .mihomo.server) | tostring | gsub("[\u0000-\u001f\u007f]"; " ") | .[0:64])}) catch empty] | unique
+        [.[] as $profile | $profile.outbounds[] | try (node | . + {label: ($profile.remarks | if type == "string" then gsub("[\u0000-\u001f\u007f]"; " ") | .[0:64] | gsub("^\\s+|\\s+$"; "") | if length > 0 then . else null end else null end)}) catch empty] | unique
       end
     end
   '';
+  # Subscription nodes are named here, after profile composition, so a
+  # source label change applies without a new download. name_nodes mirrors
+  # resolveNames in display-names.nix: a colliding base name gains the
+  # transport, and a remaining collision gains an ordinal starting at 2.
   composer = ''
+    def separator: ${builtins.toJSON displayNames.separator};
     def names($nodes): [$nodes[] | .name];
     def auto_names($nodes): [$nodes[] | select(.auto) | .name];
-    def mihomo_group($name;$manual;$auto):
-      [{name:$name,type:"select",proxies:((if $auto|length > 0 then [$name+"-AUTO"] else [] end)+$manual)}]
-      + (if $auto|length > 0 then [{name:($name+"-AUTO"),type:"url-test",url:"https://speed.cloudflare.com/__down?bytes=65536",interval:300,proxies:$auto}] else [] end);
-    def box_group($name;$manual;$auto):
-      [{tag:$name,type:"selector",outbounds:((if $auto|length > 0 then [$name+"-AUTO"] else [] end)+$manual),default:(if $auto|length > 0 then $name+"-AUTO" else $manual[0] end)}]
-      + (if $auto|length > 0 then [{tag:($name+"-AUTO"),type:"urltest",url:"https://speed.cloudflare.com/__down?bytes=65536",interval:"5m",outbounds:$auto}] else [] end);
-    ($nodes[0] // []) as $all |
-    if $format == "mihomo" then
-      [$all[] | select(.mihomo != null)] as $ns
+    def kind: if .mihomo.network == "xhttp" then "XHTTP" else "REALITY" end;
+    def base: if .label == null then .source else .label + separator + .source end;
+    def name_nodes($reserved):
+      ($reserved | map({key: ., value: true}) | from_entries) as $reservedSet
+      | (map(base)) as $bases
+      | (reduce $bases[] as $b ({}; .[$b] += 1)) as $counts
+      | map(base as $b
+          | . + {name: (if $counts[$b] > 1 or $reservedSet[$b]
+              then $b + separator + kind else $b end)})
+      # Ordinals below next[name] are already taken, so resuming there
+      # yields the first free ordinal without rescanning.
+      | reduce .[] as $n ({nodes: [], seen: $reservedSet, next: {}};
+          . as $st
+          | (if $st.seen[$n.name] then
+               first(range(($st.next[$n.name] // 2); infinite) | select($st.seen[$n.name + " " + tostring] | not))
+             else null end) as $ordinal
+          | (if $ordinal == null then $n.name else $n.name + " " + ($ordinal | tostring) end) as $name
+          | .nodes += [$n + {name: $name}]
+          | .seen[$name] = true
+          | if $ordinal == null then . else .next[$n.name] = $ordinal + 1 end)
+      | .nodes;
+    ${builtins.toJSON manualGroup} as $manualGroup
+    | ${builtins.toJSON autoGroup} as $autoGroup
+    | ${builtins.toJSON displayNames.reservedNames} as $reservedNames
+    | ($nodes[0] // []) as $all
+    | if $format == "mihomo" then
+      [.proxies[]?.name] as $templateNames
+      | [($all | name_nodes($own + $templateNames + $reservedNames))[] | select(.mihomo != null)] as $ns
       | .proxies += [$ns[] | .mihomo + {name:.name}]
       | .["proxy-groups"] as $gs
-      | ([ $gs[] | select(.name == "SELECTIVE" or .name == "FULL") ][0].name) as $mode
-      | ([$gs[] | select(.name == $mode) | .proxies[] | select(. != ($mode+"-AUTO"))] + names($ns)) as $tcp
-      | ([$gs[] | select(.name == ($mode+"-AUTO")) | .proxies[]] + auto_names($ns)) as $atcp
-      | ([$gs[] | select(.name == "UDP") | .proxies[] | select(. != "UDP-AUTO")] + names([$ns[]|select(.udp)])) as $udp
-      | ([$gs[] | select(.name == "UDP-AUTO") | .proxies[]] + auto_names([$ns[]|select(.udp)])) as $audp
-      | .["proxy-groups"] = mihomo_group($mode;(if $tcp|length > 0 then $tcp else ["REJECT"] end);$atcp)
-          + (if $udp|length > 0 then mihomo_group("UDP";$udp;$audp) else [] end)
-      | .rules |= map(if test("NETWORK,UDP") then sub(",(REJECT|UDP)$"; if $udp|length > 0 then ",UDP" else ",REJECT" end) else . end)
-      | if $tcp|length == 0 then null else . end
+      | ([$gs[] | select(.name == $manualGroup) | .proxies[] | select(. != $autoGroup)] + names($ns)) as $manual
+      | ([$gs[] | select(.name == $autoGroup) | .proxies[]] + auto_names($ns)) as $auto
+      | (if $auto|length > 0 then [$autoGroup] else [] end) as $autoRef
+      | .["proxy-groups"] = [{name:$manualGroup,type:"select",proxies:($autoRef + $manual)}]
+          + (if $auto|length > 0 then [{name:$autoGroup,type:"url-test",url:"https://speed.cloudflare.com/__down?bytes=65536",interval:300,proxies:$auto}] else [] end)
+          + [{name:"GLOBAL",type:"select",proxies:([$manualGroup] + $autoRef)}]
+      | if $manual|length == 0 then null else . end
     else
-      [$all[] | select(.singBox != null)] as $ns
+      [.outbounds[]?.tag] as $templateNames
+      | [($all | name_nodes($own + $templateNames + $reservedNames))[] | select(.singBox != null)] as $ns
       | .outbounds as $os
-      | ([$os[]|select(.tag=="SELECTIVE")|.outbounds[]|select(.!="SELECTIVE-AUTO" and .!="EXTERNAL-REJECT")] + names($ns)) as $tcp
-      | ([$os[]|select(.tag=="SELECTIVE-AUTO")|.outbounds[]] + auto_names($ns)) as $atcp
-      | ([$os[]|select(.tag=="UDP")|.outbounds[]|select(.!="UDP-AUTO")] + names([$ns[]|select(.udp)])) as $udp
-      | ([$os[]|select(.tag=="UDP-AUTO")|.outbounds[]] + auto_names([$ns[]|select(.udp)])) as $audp
-      | .outbounds = [$os[]|select(.tag!="SELECTIVE" and .tag!="FULL" and .tag!="UDP" and .tag!="EXTERNAL-REJECT" and .tag!="SELECTIVE-AUTO" and .tag!="FULL-AUTO" and .tag!="UDP-AUTO")]
-          + [$ns[]|.singBox + {tag:.name}]
-          + box_group("SELECTIVE";(if $tcp|length > 0 then $tcp else ["EXTERNAL-REJECT"] end);$atcp)
-          + box_group("FULL";(if $tcp|length > 0 then $tcp else ["EXTERNAL-REJECT"] end);$atcp)
-          + (if $udp|length > 0 then box_group("UDP";$udp;$audp) else [] end)
-
-      | .route.rules |= map(if (.network? == "udp" and (.outbound? == "UDP" or .action? == "reject")) then
-          if $udp|length > 0 then del(.action) + {outbound:"UDP"} else del(.outbound) + {action:"reject"} end else . end)
-      | if $tcp|length == 0 then null else . end
+      | ([$os[] | select(.tag == $manualGroup) | .outbounds[] | select(. != $autoGroup and . != "EXTERNAL-REJECT")] + names($ns)) as $manual
+      | ([$os[] | select(.tag == $autoGroup) | .outbounds[]] + auto_names($ns)) as $auto
+      | .outbounds = [$os[] | select(.tag != $manualGroup and .tag != $autoGroup)]
+          + [$ns[] | .singBox + {tag:.name}]
+          + [{tag:$manualGroup,type:"selector",outbounds:((if $auto|length > 0 then [$autoGroup] else [] end) + $manual),default:(if $auto|length > 0 then $autoGroup else $manual[0] end)}]
+          + (if $auto|length > 0 then [{tag:$autoGroup,type:"urltest",url:"https://speed.cloudflare.com/__down?bytes=65536",interval:"5m",outbounds:$auto}] else [] end)
+      | if $manual|length == 0 then null else . end
     end
   '';
   converterPath = builtins.toFile "external-subscription-converter.jq" converter;
@@ -124,6 +144,11 @@ let
       cp ${
         lib.escapeShellArg config.sops.secrets.${source.urlSecretName}.path
       } "$source_dir/url" || rm -f -- "$source_dir/url"
+    fi
+    # Caches from the previous naming scheme store names built from tags or
+    # server addresses; refetch them instead of renaming nodes twice.
+    if [ -f "$source_dir/accepted.json" ] && ! jq -e 'all(.[]; has("name") | not)' "$source_dir/accepted.json" >/dev/null 2>&1; then
+      rm -f -- "$source_dir/accepted.json" "$source_dir/accepted-at" "$source_dir/next-at"
     fi
     if [ -f "$source_dir/accepted-at" ]; then
       accepted_at="$(cat "$source_dir/accepted-at")"
@@ -154,6 +179,7 @@ let
       printf '%s' "$next_at" > "$source_dir/next-at"
       request_dir="$(mktemp -d "$external_cache/.request.XXXXXX")"
       http_code=000
+      accepted_now=0
       curl_rc=1
       if jq -eRs 'test("^https://[^\\s\\\"\\\\]+$")' "$source_dir/url" >/dev/null; then
         jq -rRs '"url = " + tojson' "$source_dir/url" > "$request_dir/curl.conf"
@@ -163,15 +189,9 @@ let
           rm -f -- "$source_dir/accepted.json" "$source_dir/accepted-at"
         elif [ "$http_code" = 200 ] && [ "$curl_rc" -eq 0 ] && jq --arg source ${lib.escapeShellArg name} --argjson auto ${
           if source.auto or true then "true" else "false"
-        } -f ${lib.escapeShellArg converterPath} "$request_dir/body.json" > "$request_dir/nodes.json"; then
-          : > "$request_dir/named.jsonl"
-          while IFS= read -r node; do
-            digest="$(printf '%s' "$node" | jq -Sc 'del(.auto,.label)' | sha256sum)"
-            digest="''${digest%% *}"
-            printf '%s' "$node" | jq --arg name "external-${name}-$(printf '%s' "$node" | jq -r '.label')-''${digest:0:16}" '. + {name:$name}' >> "$request_dir/named.jsonl"
-          done < <(jq -Sc '.[]' "$request_dir/nodes.json")
-          jq -s '.' "$request_dir/named.jsonl" > "$request_dir/accepted.json"
+        } -f ${lib.escapeShellArg converterPath} "$request_dir/body.json" > "$request_dir/accepted.json"; then
           mv -- "$request_dir/accepted.json" "$source_dir/accepted.json"
+          accepted_now=1
           printf 'VPN external refresh: source=${name} result=accepted mihomo=%s sing-box=%s skipped=%s reason=compatible-tuples\n' \
             "$(jq 'length' "$source_dir/accepted.json")" \
             "$(jq '[.[] | select(.singBox != null)] | length' "$source_dir/accepted.json")" \
@@ -189,7 +209,7 @@ let
         printf '%s' "$(( $(date +%s) + ${
           toString (source.retryIntervalSeconds or 300)
         } ))" > "$source_dir/next-at"
-      elif [ ! -f "$request_dir/accepted.json" ] && [ ! -f "$request_dir/named.jsonl" ]; then
+      elif [ "$accepted_now" -eq 0 ]; then
         rm -f -- "$source_dir/accepted.json" "$source_dir/accepted-at"
         printf 'VPN external refresh: source=${name} result=failed reason=invalid-response\n' >&3
         printf '%s' "$(( $(date +%s) + ${
@@ -216,7 +236,9 @@ let
       lib.optionalString (builtins.elem profile sources.${name}.profileNames) ''
         if [ -f "$external_cache/${name}/accepted.json" ] && [ -f "$external_cache/${name}/accepted-at" ]; then jq --argjson auto ${
           if sources.${name}.auto or true then "true" else "false"
-        } 'map(.auto = $auto)' "$external_cache/${name}/accepted.json" >> "$nodes_file"; fi
+        } --arg source ${
+          lib.escapeShellArg (sourceLabel name sources.${name})
+        } 'map(.auto = $auto | .source = $source)' "$external_cache/${name}/accepted.json" >> "$nodes_file"; fi
         if [ -f "$external_cache/${name}/accepted-at" ]; then
           source_expiry=$(( $(cat "$external_cache/${name}/accepted-at") + ${
             toString (sources.${name}.maxStaleSeconds or 86400)
@@ -244,7 +266,7 @@ let
       ${lib.concatStringsSep "\n" (lib.mapAttrsToList sourcePrepare sources)}
     }
     external_refresh() {
-      local source_dir now next_at request_dir http_code node digest curl_rc scan_pass
+      local source_dir now next_at request_dir http_code curl_rc scan_pass
       for scan_pass in first wrap; do
       ${lib.concatStringsSep "\n" (
         lib.imap0 (index: name: ''
@@ -274,7 +296,7 @@ let
       external_prepare
     }
     external_compose() {
-      local profile="$1" format="$2" file="$3" nodes_file composed source_expiry
+      local profile="$1" format="$2" file="$3" own_names="''${4:-[]}" nodes_file composed source_expiry
       external_prepare
       nodes_file="$(mktemp "$external_cache/.nodes.XXXXXX")"
       composed="$(mktemp "$external_cache/.composed.XXXXXX")"
@@ -286,7 +308,7 @@ let
       esac
       jq -s 'add // []' "$nodes_file" > "$composed"
       mv -- "$composed" "$nodes_file"
-      jq --arg format "$format" --slurpfile nodes "$nodes_file" -f ${lib.escapeShellArg composerPath} "$file" > "$composed"
+      jq --arg format "$format" --argjson own "$own_names" --slurpfile nodes "$nodes_file" -f ${lib.escapeShellArg composerPath} "$file" > "$composed"
       mv -- "$composed" "$file"
     }
   '';

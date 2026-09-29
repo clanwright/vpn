@@ -168,6 +168,7 @@ in
               provider
               // {
                 profileNames = profileNamesFor ref provider;
+                display = ref.display or null;
               }
             ) providerRefs;
         runtimeMachineName = publisher.localMachineName;
@@ -175,6 +176,12 @@ in
         providerRefKeys = map (ref: "${ref.machine}/${ref.instanceId}/${ref.protocol}") providerRefs;
         profileLinkNames = map (link: link.name) publisher.profileLinks;
         profileLinkSecretNames = map (link: link.pathTokenSecretName) publisher.profileLinks;
+        ownDisplayLabels = map (
+          ref: if (ref.display or null) == null then ref.machine else ref.display.label
+        ) providerRefs;
+        externalDisplayLabels = lib.mapAttrsToList (
+          sourceId: source: if (source.label or null) == null then sourceId else source.label
+        ) publisher.externalSubscriptions;
         publisherMetadata = {
           schemaVersion = 1;
           instanceId = instanceName;
@@ -260,7 +267,7 @@ in
             routeConfig = ''
               log_skip
 
-              @vpn_client_profile_yaml_${matcherSuffix} path_regexp ^/[A-Za-z0-9_-]{32,128}/mihomo(-full)?\.yaml$
+              @vpn_client_profile_yaml_${matcherSuffix} path_regexp ^/[A-Za-z0-9_-]{32,128}/mihomo\.yaml$
               handle @vpn_client_profile_yaml_${matcherSuffix} {
                 root * ${profileRoot}/profiles
                 header Content-Type "text/yaml; charset=utf-8"
@@ -336,6 +343,10 @@ in
                     source: lib.subtractLists publisherProfileNames source.profileNames == [ ]
                   ) (builtins.attrValues publisher.externalSubscriptions);
                   message = "vpn-client-profiles: external subscriptions may reference only declared profiles.";
+                }
+                {
+                  assertion = builtins.all (label: !(builtins.elem label ownDisplayLabels)) externalDisplayLabels;
+                  message = "vpn-client-profiles: external subscription labels, including ID fallbacks, must differ from provider display labels and machine-name fallbacks.";
                 }
                 {
                   assertion = !active || runtimeMachineName != "";

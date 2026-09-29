@@ -173,8 +173,11 @@ let
         builtins.attrNames artifact.runtimeComposition == [
           "format"
           "kind"
+          "ownNames"
           "profileName"
         ]
+        && builtins.isList artifact.runtimeComposition.ownNames
+        && builtins.all builtins.isString artifact.runtimeComposition.ownNames
         && artifact.runtimeComposition.kind == "external-subscriptions"
         && artifact.runtimeComposition.format == artifact.format
         && builtins.isString artifact.runtimeComposition.profileName

@@ -81,8 +81,8 @@ transport metadata includes `protocol`, `userNames`, `tlsServerName`,
 `tlsVerify = true`, `upstreamProtocol = "http2"`, and
 `credentialEncoding = "base64url"`; `secretNames.users` maps device identities
 to consumer-owned password secrets. The server uses stock TLS defaults rather
-than advertising an unsupported TLS-version setting. Mihomo selective/full
-profiles support this provider and its UDP relay; official sing-box does not.
+than advertising an unsupported TLS-version setting. The Mihomo profile
+supports this provider and its UDP relay; official sing-box does not.
 Consumers must update the publisher before selecting TrustTunnel exports.
 
 The TrustTunnel gateway requires explicit `dnsResolverIPv4s` for narrow TCP/UDP
@@ -173,7 +173,7 @@ integration output rather than importing renderer files. See the
 the separated publication/exposure contracts.
 
 The publisher accepts `externalSubscriptions.<sourceId>` with `urlSecretName`,
-`format = "xray-json"`, explicit nonempty `profileNames`, `auto` (default true),
+optional `label`, `format = "xray-json"`, explicit nonempty `profileNames`, `auto` (default true),
 and per-source `refreshIntervalSeconds`, `retryIntervalSeconds`,
 `maxStaleSeconds` (defaults 3600, 300, 86400). Source IDs and secret names use
 the existing safe identity grammars. The URL and downloaded credentials are
@@ -201,21 +201,38 @@ settings therefore keep their enabled behavior when this setting is omitted.
 
 | Path template | Behavior |
 | --- | --- |
-| `/<token>/mihomo.yaml` | Selective routing in Rule mode. |
-| `/<token>/mihomo-full.yaml` | Full routing in Rule mode with local and `.ru` DIRECT exceptions. |
-| `/<token>/profile.json` | sing-box Rule/Global modes with separate TCP/UDP selectors; present with an eligible Naive or AnyTLS provider. |
+| `/<token>/mihomo.yaml` | Selective routing in Rule mode; client Global mode uses the manual selection. |
+| `/<token>/profile.json` | sing-box Rule/Global modes with the same selection groups; present with an eligible Naive or AnyTLS provider or a selected external subscription. |
 
 These are templates, not live profile URLs. Per-device eligibility, DNS and
 routing policy are documented in [client profiles](../clanServices/vpn-client-profiles/README.md).
-Generated provider names use canonical machine identities without shortening
-machine-name suffixes.
+Both formats expose two selection groups: `Ручной` lists `Авто` first and then
+every published connection, including manual-only ones; `Авто` probes only
+connections admitted by `autoProtocols` or auto-eligible external sources and
+never contains DIRECT. The group names are fixed. UDP follows the connection
+selected in `Ручной`; protected UDP is rejected rather than sent DIRECT when that
+connection lacks UDP. Mihomo also defines `GLOBAL` as `Ручной` and `Авто`, so the
+client Global mode never starts on DIRECT.
 
-Both Mihomo profiles and sing-box route `.ru` directly after local exceptions
-and external IPv6 rejection, before full/Global routing and protected TCP/UDP
-rules. `.ru` is excluded from FakeIP; sing-box resolves it with `ipv4_only`
+Connection names are client-visible labels, not identifiers. An optional
+`providerRefs[].display = { label; country; countryCode; }` renders
+`<flag> <country> · <label>`, where the flag comes from the uppercase ISO
+alpha-2 `countryCode`; `country` and `countryCode` are set together. Without
+`display`, the machine name is the label and no flag is shown. External nodes
+use the subscription remark and `externalSubscriptions.<sourceId>.label`
+(default: the source ID) as `<remark> · <label>`, or `<label>` without a remark.
+Colliding names gain the protocol (`VLESS`, `AWG`, `Naive`, `Mieru`, `AnyTLS`,
+`TrustTunnel`) or the external transport (`REALITY`, `XHTTP`), then an ordinal
+from 2. External labels must differ from provider labels. Names never contain
+instance IDs, profile names or hashes; secret bindings keep their own internal
+identifiers.
+
+The Mihomo profile and sing-box route `.ru` directly after local exceptions
+and external IPv6 rejection, before protected TCP/UDP rules and, in sing-box,
+before Global routing. Mihomo Global mode bypasses rules, including `.ru`. `.ru` is excluded from FakeIP; sing-box resolves it with `ipv4_only`
 through its own DNS rules before selecting DIRECT. MetaCubeX `category-ai-!cn`
-and `github` join the existing protected policy. Ordinary selective/Rule traffic
-still defaults to DIRECT; ordinary Mihomo full traffic still selects FULL.
+and `github` join the existing protected policy. Ordinary Rule-mode traffic
+still defaults to DIRECT.
 These are renderer defaults and add no publisher settings.
 
 Publisher `profiles[].autoProtocols` controls only automatic selection and probes; manual

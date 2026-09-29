@@ -7,6 +7,8 @@
 let
   profileTypes = import ./types.nix { inherit lib; };
   manifestLib = import ./artifact-manifest.nix { inherit lib; };
+  displayNames = import ./display-names.nix { inherit lib; };
+  inherit (displayNames) manualGroup autoGroup;
   inherit (settings) localMachineName;
   inherit (settings) clientDnsEndpoints;
   localPublicNetwork = {
@@ -27,6 +29,19 @@ let
   trusttunnelProviders = providersFor "trusttunnel";
   providerId = profileTypes.providerNamespace;
   profilePolicy = profileName: provider: builtins.elem profileName provider.profileNames;
+  displayKey = provider: "${provider.protocol}/${providerId provider}";
+  # Names are resolved across every provider of a profile, so Mihomo and
+  # sing-box show the same name for the same connection.
+  displayNamesFor =
+    profileName:
+    displayNames.resolveNames (
+      map (provider: {
+        key = displayKey provider;
+        base = displayNames.providerBaseName provider;
+        kind = displayNames.protocolLabels.${provider.protocol};
+      }) (builtins.filter (profilePolicy profileName) providers)
+    );
+  displayNameFor = profileName: provider: (displayNamesFor profileName).${displayKey provider};
   indexOf =
     predicate: values:
     let
@@ -401,7 +416,7 @@ let
       vlessUuidSecretName =
         provider.secretNames.vlessUuid.${profileName}
           or (throw "VLESS UUID secret name is required for ${machineName}/${profileName}");
-      vlessTag = "${machineName}-${profileName}-vless";
+      vlessTag = displayNameFor profileName provider;
       edgeDomain = provider.endpoint.domain;
       port = provider.endpoint.port;
       edgeIPv4 = provider.endpoint.ipv4;
@@ -427,7 +442,7 @@ let
       listenPort = provider.endpoint.port;
       mtu = metadata.mtu or null;
       clientPersistentKeepalive = peer.clientPersistentKeepalive or 25;
-      amneziawgTag = "${machineName}-${profileName}-amneziawg";
+      amneziawgTag = displayNameFor profileName provider;
       endpointIPv4 = provider.endpoint.ipv4;
       clientAddress = firstAddress (builtins.head peer.allowedIPs);
       clientPrivateKeySecretName =
@@ -451,7 +466,7 @@ let
       port = provider.transportMetadata.port or provider.endpoint.port;
       username = profileName;
       tlsServerName = provider.transportMetadata.tlsServerName or provider.endpoint.domain;
-      tag = "${machineName}-${profileName}-edge";
+      tag = displayNameFor profileName provider;
       inherit passwordSecretName;
     };
 
@@ -464,7 +479,7 @@ let
       inherit machineName profileName;
       endpointIPv4 = provider.endpoint.ipv4;
       port = provider.endpoint.port;
-      tag = "${machineName}-${profileName}-mieru";
+      tag = displayNameFor profileName provider;
       passwordSecretName =
         provider.secretNames.users.${profileName}
           or (throw "Mieru password secret name is required for ${machineName}/${profileName}");
@@ -487,7 +502,7 @@ let
         tlsMinVersion
         credentialEncoding
         ;
-      tag = "${machineName}-${profileName}-anytls";
+      tag = displayNameFor profileName provider;
       passwordSecretName =
         provider.secretNames.users.${profileName}
           or (throw "AnyTLS password secret name is required for ${machineName}/${profileName}");
@@ -510,7 +525,7 @@ let
         credentialEncoding
         upstreamProtocol
         ;
-      tag = "${machineName}-${profileName}-trusttunnel";
+      tag = displayNameFor profileName provider;
       passwordSecretName =
         provider.secretNames.users.${profileName}
           or (throw "TrustTunnel password secret name is required for ${machineName}/${profileName}");
@@ -530,6 +545,9 @@ let
         else
           !isRouterProfile;
       pathTokenSecret = "mihomo-client-${secretPrefix}-${profile.name}-path-token";
+      # Every own connection name of the profile, in both formats, is reserved
+      # when subscription nodes are named so both formats name them alike.
+      ownDisplayNames = builtins.attrValues (displayNamesFor profile.name);
       profileVlessProviders = builtins.filter (profilePolicy profile.name) vlessProviders;
       dohNameservers = map mkMihomoDohUrl clientDnsEndpoints;
       dohBootstrapNameservers = map mkMihomoBootstrapDohUrl clientDnsEndpoints;
@@ -673,18 +691,6 @@ let
         ++ lib.optionals (autoProtocolEnabled "anytls") anytlsProxyNames
         ++ lib.optionals (autoProtocolEnabled "trusttunnel") trusttunnelProxyNames
         ++ lib.optionals (autoProtocolEnabled "amneziawg") amneziawgProxyNames;
-      udpProxyNames =
-        vlessProxyNames
-        ++ mieruProxyNames
-        ++ anytlsProxyNames
-        ++ trusttunnelProxyNames
-        ++ amneziawgProxyNames;
-      autoUdpProxyNames =
-        lib.optionals (autoProtocolEnabled "vless-xhttp") vlessProxyNames
-        ++ lib.optionals (autoProtocolEnabled "mieru") mieruProxyNames
-        ++ lib.optionals (autoProtocolEnabled "anytls") anytlsProxyNames
-        ++ lib.optionals (autoProtocolEnabled "trusttunnel") trusttunnelProxyNames
-        ++ lib.optionals (autoProtocolEnabled "amneziawg") amneziawgProxyNames;
       orderedProxyNames =
         if isRouterProfile then
           mieruProxyNames
@@ -765,7 +771,7 @@ let
         lib.unique (builtins.filter isIPv4Literal (builtins.attrValues pinnedHosts))
       );
 
-      mkMihomoTemplate = modeGroup: finalTarget: {
+      mihomoTemplate = {
         profile."store-selected" = true;
         mode = "rule";
         "allow-lan" = false;
@@ -836,50 +842,42 @@ let
 
         "proxy-groups" = [
           {
-            name = modeGroup;
+            name = manualGroup;
             type = "select";
-            proxies = lib.optional (autoProxyNames != [ ]) "${modeGroup}-AUTO" ++ orderedProxyNames;
+            proxies = lib.optional (autoProxyNames != [ ]) autoGroup ++ orderedProxyNames;
           }
         ]
         ++ lib.optional (autoProxyNames != [ ]) {
-          name = "${modeGroup}-AUTO";
+          name = autoGroup;
           type = "url-test";
           url = probeUrl64k;
           interval = 300;
           proxies = autoProxyNames;
         }
-        ++ lib.optional (udpProxyNames != [ ]) {
-          name = "UDP";
-          type = "select";
-          proxies = lib.optional (autoUdpProxyNames != [ ]) "UDP-AUTO" ++ udpProxyNames;
-        }
-        ++ lib.optional (autoUdpProxyNames != [ ]) {
-          name = "UDP-AUTO";
-          type = "url-test";
-          url = probeUrl64k;
-          interval = 300;
-          proxies = autoUdpProxyNames;
-        };
+        # Global mode bypasses rules and uses GLOBAL, whose built-in form
+        # starts with DIRECT. Listing only the VPN groups keeps Global mode on
+        # the manual selection and preserves the group order in clients.
+        ++ [
+          {
+            name = "GLOBAL";
+            type = "select";
+            proxies = [ manualGroup ] ++ lib.optional (autoProxyNames != [ ]) autoGroup;
+          }
+        ];
 
         "rule-providers" = mkRuleProviders;
+        # Mihomo skips a matched rule for UDP when the selected proxy lacks
+        # UDP support. The trailing REJECT rules stop protected UDP from then
+        # reaching the DIRECT fallback.
         rules =
           localDirectRules
           ++ ipv6RejectRules
           ++ [ "DOMAIN-SUFFIX,ru,DIRECT" ]
-          ++ (
-            if finalTarget == "FULL" then
-              [ "NETWORK,UDP,${if udpProxyNames == [ ] then "REJECT" else "UDP"}" ]
-            else
-              map (
-                ruleSet:
-                "AND,((NETWORK,UDP),(RULE-SET,${ruleSet})),${if udpProxyNames == [ ] then "REJECT" else "UDP"}"
-              ) protectedRuleSetsWithPersonal
-          )
-          ++ map (lib.replaceStrings [ "PROXY" ] [ modeGroup ]) protectedRules
-          ++ [ "MATCH,${finalTarget}" ];
+          ++ map (lib.replaceStrings [ "PROXY" ] [ manualGroup ]) protectedRules
+          ++ map (ruleSet: "AND,((NETWORK,UDP),(RULE-SET,${ruleSet})),REJECT") protectedRuleSetsWithPersonal
+          ++ [ "MATCH,DIRECT" ];
       };
-      mihomoSelectiveTemplate = if publishMihomo then mkMihomoTemplate "SELECTIVE" "DIRECT" else null;
-      mihomoFullTemplate = if publishMihomo then mkMihomoTemplate "FULL" "FULL" else null;
+      mihomoSelectiveTemplate = if publishMihomo then mihomoTemplate else null;
       proxyIndex = tag: indexOf (candidate: candidate.name == tag) proxies;
       mkBinding = secretName: decoding: targetPath: placeholder: {
         inherit
@@ -973,11 +971,6 @@ let
       singBoxAutoTcpOutboundTags =
         lib.optionals (autoProtocolEnabled "naiveproxy") naiveOutboundTags
         ++ lib.optionals (autoProtocolEnabled "anytls") singBoxAnytlsOutboundTags;
-      singBoxUdpOutboundTags = singBoxAnytlsOutboundTags;
-      singBoxAutoUdpOutboundTags = lib.optionals (autoProtocolEnabled "anytls") singBoxAnytlsOutboundTags;
-      mkSingBoxUdpPolicyRule =
-        rule:
-        rule // (if singBoxUdpOutboundTags == [ ] then { action = "reject"; } else { outbound = "UDP"; });
       singBoxDohServers = lib.imap0 (index: endpoint: {
         tag = "own-doh-${toString index}";
         type = "https";
@@ -1089,56 +1082,24 @@ let
             strict_route = true;
           }
         ];
+        # UDP follows the manual selection. An outbound without UDP support,
+        # such as Naive, fails the packet connection instead of using DIRECT.
         outbounds = [
           {
             type = "selector";
-            tag = "SELECTIVE";
-            outbounds =
-              lib.optional (singBoxAutoTcpOutboundTags != [ ]) "SELECTIVE-AUTO" ++ singBoxTcpOutboundTags;
+            tag = manualGroup;
+            outbounds = lib.optional (singBoxAutoTcpOutboundTags != [ ]) autoGroup ++ singBoxTcpOutboundTags;
             default =
               if singBoxAutoTcpOutboundTags == [ ] then
                 if singBoxTcpOutboundTags == [ ] then "EXTERNAL-REJECT" else builtins.head singBoxTcpOutboundTags
               else
-                "SELECTIVE-AUTO";
-          }
-          {
-            type = "selector";
-            tag = "FULL";
-            outbounds = lib.optional (singBoxAutoTcpOutboundTags != [ ]) "FULL-AUTO" ++ singBoxTcpOutboundTags;
-            default =
-              if singBoxAutoTcpOutboundTags == [ ] then
-                (if singBoxTcpOutboundTags == [ ] then "EXTERNAL-REJECT" else builtins.head singBoxTcpOutboundTags)
-              else
-                "FULL-AUTO";
+                autoGroup;
           }
         ]
-        ++ lib.optionals (singBoxAutoTcpOutboundTags != [ ]) [
-          {
-            type = "urltest";
-            tag = "SELECTIVE-AUTO";
-            outbounds = singBoxAutoTcpOutboundTags;
-            url = probeUrl64k;
-            interval = "5m";
-          }
-          {
-            type = "urltest";
-            tag = "FULL-AUTO";
-            outbounds = singBoxAutoTcpOutboundTags;
-            url = probeUrl64k;
-            interval = "5m";
-          }
-        ]
-        ++ lib.optional (singBoxUdpOutboundTags != [ ]) {
-          type = "selector";
-          tag = "UDP";
-          outbounds = lib.optional (singBoxAutoUdpOutboundTags != [ ]) "UDP-AUTO" ++ singBoxUdpOutboundTags;
-          default =
-            if singBoxAutoUdpOutboundTags == [ ] then builtins.head singBoxUdpOutboundTags else "UDP-AUTO";
-        }
-        ++ lib.optional (singBoxAutoUdpOutboundTags != [ ]) {
+        ++ lib.optional (singBoxAutoTcpOutboundTags != [ ]) {
           type = "urltest";
-          tag = "UDP-AUTO";
-          outbounds = singBoxAutoUdpOutboundTags;
+          tag = autoGroup;
+          outbounds = singBoxAutoTcpOutboundTags;
           url = probeUrl64k;
           interval = "5m";
         }
@@ -1221,35 +1182,19 @@ let
             }
           ]
           ++ [
-            (mkSingBoxUdpPolicyRule {
-              clash_mode = "Global";
-              network = "udp";
-            })
-          ]
-          ++ [
             {
               clash_mode = "Global";
-              outbound = "FULL";
+              outbound = manualGroup;
             }
           ]
-          ++ [
-            (mkSingBoxUdpPolicyRule {
-              network = "udp";
-              rule_set = protectedRuleSets;
-            })
-          ]
-          ++ lib.optional (personalProxyDomains != [ ]) (mkSingBoxUdpPolicyRule {
-            network = "udp";
-            domain_suffix = personalProxyDomains;
-          })
           ++ lib.optional (personalProxyDomains != [ ]) {
             domain_suffix = personalProxyDomains;
-            outbound = "SELECTIVE";
+            outbound = manualGroup;
           }
           ++ [
             {
               rule_set = protectedRuleSets;
-              outbound = "SELECTIVE";
+              outbound = manualGroup;
             }
             # Resolve only the ordinary Rule-mode DIRECT fallback here. Global
             # and protected traffic has already selected its proxy policy.
@@ -1298,11 +1243,6 @@ let
           pkgs.writeText "mihomo-client-${basename}.template.json" (builtins.toJSON mihomoSelectiveTemplate)
         else
           null;
-      fullTemplatePath =
-        if publishMihomo then
-          pkgs.writeText "mihomo-client-${basename}-full.template.json" (builtins.toJSON mihomoFullTemplate)
-        else
-          null;
       profileJsonTemplatePath =
         if publishProfileJson then
           pkgs.writeText "client-profile-${basename}.template.json" (builtins.toJSON profileJsonTemplate)
@@ -1325,24 +1265,7 @@ let
                 kind = "external-subscriptions";
                 profileName = profile.name;
                 format = "mihomo";
-              };
-            }
-          )
-          (
-            {
-              id = "${profile.name}-mihomo-full";
-              outputName = "mihomo-full.yaml";
-              format = "mihomo";
-              template = mihomoFullTemplate;
-              templatePath = fullTemplatePath;
-              assetRefs = mihomoAssetRefs;
-              bindings = mihomoBindings;
-            }
-            // lib.optionalAttrs hasExternal {
-              runtimeComposition = {
-                kind = "external-subscriptions";
-                profileName = profile.name;
-                format = "mihomo";
+                ownNames = ownDisplayNames;
               };
             }
           )
@@ -1362,6 +1285,7 @@ let
               kind = "external-subscriptions";
               profileName = profile.name;
               format = "json";
+              ownNames = ownDisplayNames;
             };
           }
         );
@@ -1380,8 +1304,7 @@ let
       inherit (profile) name;
       inherit publishProfileJson;
       templatePath = selectiveTemplatePath;
-      inherit fullTemplatePath artifacts;
-      inherit mihomoSelectiveTemplate mihomoFullTemplate;
+      inherit artifacts mihomoSelectiveTemplate;
       profileJsonTemplate = if publishProfileJson then profileJsonTemplate else null;
       inherit profileJsonTemplatePath;
     };
@@ -1406,7 +1329,6 @@ in
       name
       publishProfileJson
       mihomoSelectiveTemplate
-      mihomoFullTemplate
       profileJsonTemplate
       ;
   }) generatedProfiles;

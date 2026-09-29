@@ -85,6 +85,17 @@ Keep filtering, private names and filter-list state equivalent on all endpoints.
 Address changes require regenerated profiles to reach clients. Consumer rollout
 and runtime failure checks remain separate from this repository's evaluation.
 
+Client selection uses two groups, `Ручной` and `Авто`, in both formats.
+Optionally set `providerRefs[].display = { label; country; countryCode; }` and
+`externalSubscriptions.<sourceId>.label` to control connection names; without
+them, names fall back to machine names and source IDs. External labels must
+differ from provider labels. The `mihomo-full.yaml` variant is no longer
+published or matched by the publisher route: remove its links from client
+devices and use the client Global mode instead. `mihomo.yaml` and
+`profile.json` keep their URLs. Because clients store the selected connection
+by name, each client loses its saved selection once after the renamed profile
+is downloaded.
+
 Remove publisher `caddyBindIPv4`, `tailnetIPv4`, `acmeCertName` and links-page
 `tailnetOnly` settings. These are consumer exposure decisions. Client-facing
 `configGatewayDomain`, `publicIPv4` and `edgeDomain` remain renderer inputs.

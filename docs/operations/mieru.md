@@ -30,7 +30,7 @@ publisher, and select the provider for eligible device profiles. Values and live
 profile URLs must stay out of source, Nix store, commands, logs and review evidence.
 Maintain system time synchronization: Mieru authentication depends on clock time.
 
-Mihomo profiles expose Mieru with the normal SELECTIVE/FULL and Auto policy.
+Mihomo profiles expose Mieru in `Ручной` and, when allowed by `autoProtocols`, in `Авто`.
 Official sing-box profiles continue to require an eligible Naive provider.
 The pinned Mihomo implementation supports Mieru TCP and UDP relay; this does not
 prove subscription import or operation of a particular GUI/core combination.

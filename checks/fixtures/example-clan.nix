@@ -324,36 +324,66 @@ rec {
           machine = machineName;
           protocol = "vless-xhttp";
           profileNames = [ "cHJvYmU" ];
+          display = {
+            label = "A";
+            country = "Литва";
+            countryCode = "LT";
+          };
         }
         {
           instanceId = "vpn-mieru";
           machine = machineName;
           protocol = "mieru";
           profileNames = [ "cHJvYmU" ];
+          display = {
+            label = "A";
+            country = "Литва";
+            countryCode = "LT";
+          };
         }
         {
           instanceId = "vpn-anytls";
           machine = machineName;
           protocol = "anytls";
           profileNames = [ "cHJvYmU" ];
+          display = {
+            label = "A";
+            country = "Литва";
+            countryCode = "LT";
+          };
         }
         {
           instanceId = "vpn-trusttunnel";
           machine = machineName;
           protocol = "trusttunnel";
           profileNames = [ "cHJvYmU" ];
+          display = {
+            label = "A";
+            country = "Литва";
+            countryCode = "LT";
+          };
         }
         {
           instanceId = "vpn-amneziawg";
           machine = machineName;
           protocol = "amneziawg";
           profileNames = [ "cHJvYmU" ];
+          display = {
+            label = "A";
+            country = "Литва";
+            countryCode = "LT";
+          };
         }
         {
           instanceId = "vpn-naiveproxy";
           machine = machineName;
           protocol = "naiveproxy";
           profileNames = [ "cHJvYmU" ];
+          display = {
+            label = "A";
+            country = "Литва";
+            countryCode = "LT";
+          };
         }
       ];
     };

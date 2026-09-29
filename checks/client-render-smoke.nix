@@ -397,12 +397,14 @@ let
     artifactOutputs =
       map (artifact: artifact.outputName) manifestArtifacts == [
         "mihomo.yaml"
-        "mihomo-full.yaml"
         "profile.json"
       ];
+    noFullVariantArtifact =
+      !(rendered ? mihomoFullTemplate)
+      && !(builtins.any (artifact: artifact.outputName == "mihomo-full.yaml") manifestArtifacts)
+      && !(builtins.any (artifact: lib.hasSuffix "-mihomo-full" artifact.id) manifestArtifacts);
     actualTemplatesRetained =
       (artifactByOutput "mihomo.yaml").template == rendered.mihomoSelectiveTemplate
-      && (artifactByOutput "mihomo-full.yaml").template == rendered.mihomoFullTemplate
       && (artifactByOutput "profile.json").template == rendered.profileJsonTemplate;
     closedArtifactFormats = builtins.all (
       artifact:
@@ -500,6 +502,14 @@ let
       in
       publicPaths == lib.unique publicPaths
       && builtins.all (path: lib.hasInfix "handle ${path} {" routeConfig) publicPaths;
+    # Only the single Mihomo profile is routed; the removed full variant is not.
+    mihomoProfileRouteOnly =
+      let
+        routeConfig = consumerMachine.clanwright.vpn.publishers.vpn-client-profiles.routeConfig;
+      in
+      lib.hasInfix "path_regexp ^/[A-Za-z0-9_-]{32,128}/mihomo\\.yaml$" routeConfig
+      && !(lib.hasInfix "mihomo(-full)?" routeConfig)
+      && !(lib.hasInfix "mihomo-full" routeConfig);
     assetCatalogClosed =
       builtins.all (
         asset:
@@ -600,22 +610,25 @@ let
   zeroNaivePublicationScript = zeroNaiveMachine.systemd.services.${publicationUnitName}.script;
   publicationScript = consumerMachine.systemd.services.${publicationUnitName}.script;
   mihomoTypes = map (proxy: proxy.type) rendered.mihomoSelectiveTemplate.proxies;
+  manualGroup = "Ручной";
+  autoGroup = "Авто";
+  legacyGroupNames = [
+    "SELECTIVE"
+    "SELECTIVE-AUTO"
+    "FULL"
+    "FULL-AUTO"
+    "UDP"
+    "UDP-AUTO"
+  ];
   selectiveGroups = map (group: group.name) rendered.mihomoSelectiveTemplate."proxy-groups";
-  fullGroups = map (group: group.name) rendered.mihomoFullTemplate."proxy-groups";
-  selectiveManual = builtins.head (
-    builtins.filter (group: group.name == "SELECTIVE") rendered.mihomoSelectiveTemplate."proxy-groups"
-  );
-  selectiveAuto = builtins.head (
-    builtins.filter (
-      group: group.name == "SELECTIVE-AUTO"
-    ) rendered.mihomoSelectiveTemplate."proxy-groups"
-  );
-  fullManual = builtins.head (
-    builtins.filter (group: group.name == "FULL") rendered.mihomoFullTemplate."proxy-groups"
-  );
-  fullAuto = builtins.head (
-    builtins.filter (group: group.name == "FULL-AUTO") rendered.mihomoFullTemplate."proxy-groups"
-  );
+  mihomoGroup =
+    name:
+    builtins.head (
+      builtins.filter (group: group.name == name) rendered.mihomoSelectiveTemplate."proxy-groups"
+    );
+  selectiveManual = mihomoGroup manualGroup;
+  selectiveAuto = mihomoGroup autoGroup;
+  selectiveGlobal = mihomoGroup "GLOBAL";
   profile = rendered.profileJsonTemplate;
   expectedSingBoxCacheFile = {
     enabled = true;
@@ -665,7 +678,6 @@ let
             )
             [
               candidate.mihomoSelectiveTemplate
-              candidate.mihomoFullTemplate
             ]
         )
         [
@@ -741,21 +753,11 @@ let
   ipv6RejectIndex = indexOf (
     rule: (rule.ip_version or null) == 6 && (rule.action or null) == "reject"
   ) profile.route.rules;
-  protectedUdpIndex = indexOf (
-    rule:
-    (rule.network or null) == "udp" && (rule.rule_set or [ ]) != [ ] && (rule.outbound or null) == "UDP"
-  ) profile.route.rules;
   protectedProxyIndex = indexOf (
-    rule: (rule.rule_set or [ ]) != [ ] && (rule.outbound or null) == "SELECTIVE"
+    rule: (rule.rule_set or [ ]) != [ ] && (rule.outbound or null) == manualGroup
   ) profile.route.rules;
-  globalUdpIndex = indexOf (
-    rule:
-    (rule.clash_mode or null) == "Global"
-    && (rule.network or null) == "udp"
-    && (rule.outbound or null) == "UDP"
-  ) profile.route.rules;
-  globalFullIndex = indexOf (
-    rule: (rule.clash_mode or null) == "Global" && (rule.outbound or null) == "FULL"
+  globalManualIndex = indexOf (
+    rule: (rule.clash_mode or null) == "Global" && (rule.outbound or null) == manualGroup
   ) profile.route.rules;
   mihomoDirectIndex = indexOf (
     rule: lib.hasPrefix "IP-CIDR,10.0.0.0/8,DIRECT" rule
@@ -887,6 +889,10 @@ let
   clientDnsRenderVariantsContract = builtins.all (value: value) (
     builtins.attrValues clientDnsRenderVariantResults
   );
+  visibleNames =
+    map (proxy: proxy.name) rendered.mihomoSelectiveTemplate.proxies
+    ++ map (outbound: outbound.tag) profile.outbounds
+    ++ map (group: group.name) rendered.mihomoSelectiveTemplate."proxy-groups";
   namespaceResults = {
     ambiguousTuplesDistinct =
       profileTypes.providerNamespace {
@@ -896,10 +902,24 @@ let
         machine = "a";
         instanceId = "b-c";
       };
-    canonicalTags =
-      vless.name == "11-vpn-fixture-22-vpn-mihomo-vless-xhttp-cHJvYmU-vless"
-      && awg.name == "11-vpn-fixture-13-vpn-amneziawg-cHJvYmU-amneziawg"
-      && naive.tag == "11-vpn-fixture-14-vpn-naiveproxy-cHJvYmU-edge";
+    # Visible names are display names; secret placeholders keep the technical
+    # machine/instance namespace.
+    displayNames =
+      vless.name == "🇱🇹 Литва · A · VLESS"
+      && awg.name == "🇱🇹 Литва · A · AWG"
+      && naive.tag == "🇱🇹 Литва · A · Naive"
+      && mieru.name == "🇱🇹 Литва · A · Mieru"
+      && anytls.name == "🇱🇹 Литва · A · AnyTLS"
+      && trustTunnel.name == "🇱🇹 Литва · A · TrustTunnel"
+      && singBoxAnytls.tag == anytls.name;
+    technicalIdsAbsentFromVisibleNames = builtins.all (
+      name:
+      !(lib.hasInfix "vpn-fixture" name)
+      && !(lib.hasInfix "cHJvYmU" name)
+      && !(lib.hasInfix "vpn-mihomo" name)
+      && !(lib.hasInfix "vpn-anytls" name)
+      && !(lib.hasInfix "11-" name)
+    ) visibleNames;
   };
   namespaceContract = builtins.all (value: value) (builtins.attrValues namespaceResults);
   mihomoContract =
@@ -912,47 +932,42 @@ let
     ]
     &&
       selectiveGroups == [
-        "SELECTIVE"
-        "SELECTIVE-AUTO"
-        "UDP"
-        "UDP-AUTO"
+        manualGroup
+        autoGroup
+        "GLOBAL"
       ]
+    && selectiveGlobal.type == "select"
     &&
-      fullGroups == [
-        "FULL"
-        "FULL-AUTO"
-        "UDP"
-        "UDP-AUTO"
+      selectiveGlobal.proxies == [
+        manualGroup
+        autoGroup
       ]
     && rendered.mihomoSelectiveTemplate.mode == "rule"
-    && rendered.mihomoFullTemplate.mode == "rule"
+    && !(rendered ? mihomoFullTemplate)
     && !(builtins.elem "DIRECT" selectiveManual.proxies)
     && !(builtins.elem "DIRECT" selectiveAuto.proxies)
-    && !(builtins.elem "DIRECT" fullManual.proxies)
-    && !(builtins.elem "DIRECT" fullAuto.proxies)
+    && !(builtins.elem "DIRECT" selectiveGlobal.proxies)
+    && builtins.head selectiveManual.proxies == autoGroup
     && builtins.all (group: builtins.elem mieru.name group.proxies) [
       selectiveManual
       selectiveAuto
-      fullManual
-      fullAuto
     ]
     && builtins.all (group: builtins.elem anytls.name group.proxies) [
       selectiveManual
       selectiveAuto
-      fullManual
-      fullAuto
     ]
     && builtins.all (group: builtins.elem trustTunnel.name group.proxies) [
       selectiveManual
       selectiveAuto
-      fullManual
-      fullAuto
     ]
+    && builtins.elem awg.name selectiveManual.proxies
+    && builtins.all (
+      group: !(builtins.elem group.name legacyGroupNames)
+    ) rendered.mihomoSelectiveTemplate."proxy-groups"
     && lib.last rendered.mihomoSelectiveTemplate.rules == "MATCH,DIRECT"
-    && lib.last rendered.mihomoFullTemplate.rules == "MATCH,FULL"
     && vless.uuid == "__MIHOMO_VLESS_UUID_11-vpn-fixture-22-vpn-mihomo-vless-xhttp__"
     && vless."reality-opts"."short-id" == "0123456789abcdef"
-    && mieru.name == "11-vpn-fixture-9-vpn-mieru-cHJvYmU-mieru"
+    && mieru.name == "🇱🇹 Литва · A · Mieru"
     && mieru.server == "192.0.2.13"
     && mieru.port == 8443
     && mieru.username == "cHJvYmU"
@@ -964,7 +979,7 @@ let
     && !(mieru ? "traffic-pattern")
     && !(mieru ? tls)
     && !(mieru ? sni)
-    && anytls.name == "11-vpn-fixture-10-vpn-anytls-cHJvYmU-anytls"
+    && anytls.name == "🇱🇹 Литва · A · AnyTLS"
     && anytls.server == "anytls.example.invalid"
     && anytls.port == 9443
     && anytls.password == "__MIHOMO_ANYTLS_PASSWORD_11-vpn-fixture-10-vpn-anytls_cHJvYmU__"
@@ -978,7 +993,7 @@ let
     && !(anytls ? "idle-session-check-interval")
     && !(anytls ? "idle-session-timeout")
     && !(anytls ? "min-idle-session")
-    && trustTunnel.name == "11-vpn-fixture-15-vpn-trusttunnel-cHJvYmU-trusttunnel"
+    && trustTunnel.name == "🇱🇹 Литва · A · TrustTunnel"
     && trustTunnel.server == "192.0.2.15"
     && trustTunnel.port == 10443
     && trustTunnel.username == "cHJvYmU"
@@ -1002,13 +1017,8 @@ let
     && rendered.mihomoSelectiveTemplate.dns.nameserver == expectedMihomoDohNameservers
     && rendered.mihomoSelectiveTemplate.dns."proxy-server-nameserver" == expectedMihomoDohNameservers
     && rendered.mihomoSelectiveTemplate.dns."default-nameserver" == expectedMihomoBootstrapNameservers
-    && rendered.mihomoFullTemplate.dns.nameserver == expectedMihomoDohNameservers
-    && rendered.mihomoFullTemplate.dns."proxy-server-nameserver" == expectedMihomoDohNameservers
-    && rendered.mihomoFullTemplate.dns."default-nameserver" == expectedMihomoBootstrapNameservers
     && builtins.all (
-      endpoint:
-      rendered.mihomoSelectiveTemplate.hosts.${endpoint.domain} == endpoint.ipv4
-      && rendered.mihomoFullTemplate.hosts.${endpoint.domain} == endpoint.ipv4
+      endpoint: rendered.mihomoSelectiveTemplate.hosts.${endpoint.domain} == endpoint.ipv4
     ) clientDnsEndpoints
     && mihomoDirectIndex < mihomoProtectedIndex;
   singBoxContract =
@@ -1043,41 +1053,39 @@ let
     && !(singBoxAnytls ? idle_session_timeout)
     && !(singBoxAnytls ? min_idle_session)
     && builtins.all (outbound: outbound.type != "trusttunnel") profile.outbounds
-    && (selector "SELECTIVE" profile).default == "SELECTIVE-AUTO"
+    && (selector manualGroup profile).type == "selector"
+    && (selector manualGroup profile).default == autoGroup
     &&
-      (selector "SELECTIVE" profile).outbounds == [
-        "SELECTIVE-AUTO"
+      (selector manualGroup profile).outbounds == [
+        autoGroup
         naive.tag
         anytls.name
       ]
-    && (selector "FULL" profile).default == "FULL-AUTO"
+    && (selector autoGroup profile).type == "urltest"
+    && builtins.length (urlTests profile) == 1
+    && !(builtins.elem "DIRECT" (selector manualGroup profile).outbounds)
+    && !(builtins.elem "DIRECT" (selector autoGroup profile).outbounds)
     &&
-      (selector "FULL" profile).outbounds == [
-        "FULL-AUTO"
+      (selector autoGroup profile).outbounds == [
         naive.tag
         anytls.name
       ]
-    && builtins.length (urlTests profile) == 3
-    && !(builtins.elem "DIRECT" (selector "SELECTIVE" profile).outbounds)
-    && !(builtins.elem "DIRECT" (selector "FULL" profile).outbounds)
+    # Only Ручной and Авто are client groups: no FULL, UDP or *-AUTO variants.
+    && builtins.all (outbound: !(builtins.elem outbound.tag legacyGroupNames)) profile.outbounds
     &&
-      (selector "SELECTIVE-AUTO" profile).outbounds == [
-        naive.tag
-        anytls.name
-      ]
-    &&
-      (selector "FULL-AUTO" profile).outbounds == [
-        naive.tag
-        anytls.name
-      ]
-    &&
-      (selector "UDP" profile).outbounds == [
-        "UDP-AUTO"
-        anytls.name
-      ]
-    &&
-      (selector "UDP-AUTO" profile).outbounds == [
-        anytls.name
+      lib.sort builtins.lessThan (
+        map (outbound: outbound.tag) (
+          builtins.filter (
+            outbound:
+            builtins.elem outbound.type [
+              "selector"
+              "urltest"
+            ]
+          ) profile.outbounds
+        )
+      ) == lib.sort builtins.lessThan [
+        manualGroup
+        autoGroup
       ]
     && builtins.all (
       ruleSet:
@@ -1105,9 +1113,9 @@ let
     && builtins.length resolveRules == 3
     && privateIndex < tailnetResolveIndex
     && multicastIndex < tailnetResolveIndex
-    && tailnetResolveIndex < globalUdpIndex
+    && tailnetResolveIndex < globalManualIndex
     && tailnetDirectIndex < ipv6RejectIndex
-    && ipv6RejectIndex < globalUdpIndex
+    && ipv6RejectIndex < globalManualIndex
     && tailnetDirectIndex == tailnetResolveIndex + 1
     && protectedProxyIndex < fallbackResolveIndex
     && builtins.all (rule: !(rule ? server) && rule.strategy == "ipv4_only") resolveRules
@@ -1117,12 +1125,18 @@ let
         strategy = "ipv4_only";
       }
     && builtins.elemAt profile.route.rules (fallbackResolveIndex + 1) == { outbound = "DIRECT"; }
-    && dnsIndex < protectedUdpIndex
-    && privateIndex < protectedUdpIndex
-    && multicastIndex < protectedUdpIndex
-    && privateIndex < globalUdpIndex
-    && globalUdpIndex < globalFullIndex
-    && protectedUdpIndex < protectedProxyIndex
+    && dnsIndex < protectedProxyIndex
+    && privateIndex < protectedProxyIndex
+    && multicastIndex < protectedProxyIndex
+    && privateIndex < globalManualIndex
+    && globalManualIndex >= 0
+    && globalManualIndex < protectedProxyIndex
+    # Clash Global mode selects Ручной; no UDP-specific rule can send protected
+    # traffic to DIRECT.
+    &&
+      builtins.length (builtins.filter (rule: (rule.clash_mode or null) == "Global") profile.route.rules)
+      == 1
+    && !(builtins.any (rule: (rule.network or null) == "udp") profile.route.rules)
     && builtins.all (rule: !(rule ? port)) (udpRejects profile);
   dnsContract =
     actualSingBoxDohServers == expectedSingBoxDohServers
@@ -1175,14 +1189,13 @@ let
     publicationUnitPresent = builtins.hasAttr publicationUnitName zeroNaiveMachine.systemd.services;
     mihomoLinksRetained =
       lib.hasInfix "/mihomo.yaml" zeroNaivePublicationScript
-      && lib.hasInfix "/mihomo-full.yaml" zeroNaivePublicationScript;
+      && !(lib.hasInfix "mihomo-full" zeroNaivePublicationScript);
     anytlsProfileLinkRetained = lib.hasInfix "/profile.json" zeroNaivePublicationScript;
     anytlsPublicationEnabled = zeroNaiveRendered.publishProfileJson;
     anytlsTemplateRetained = zeroNaiveRendered.profileJsonTemplate != null;
     manifestIncludesProfileJson =
       map (artifact: artifact.outputName) zeroNaiveArtifacts == [
         "mihomo.yaml"
-        "mihomo-full.yaml"
         "profile.json"
       ];
   };

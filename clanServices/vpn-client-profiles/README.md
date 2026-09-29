@@ -16,7 +16,7 @@ typed non-secret metadata VPN providers, генерирует профили и 
 `configGatewayDomain`, `publicIPv4`, `edgeDomain`, `clientDnsEndpoints`, `secretPrefix`,
 `excludedProfileNames`, `tailnetAdminDomains`, `personalProxyDomains`, `profiles`,
 `providerRefs`, `externalSubscriptions`, `profileLinks` и `linksPage`. Provider refs
-содержат machine, instance и canonical protocol. Publisher profiles содержат
+содержат machine, instance, canonical protocol и optional `display`. Publisher profiles содержат
 `name`, `kind`, optional `publishProfileJson` и `autoProtocols`; имена credential secrets
 собственных серверов приходят из typed providers.
 
@@ -29,6 +29,7 @@ Consumer задаёт имя SOPS-секрета со ссылкой; сам URL
 ```nix
 externalSubscriptions.skala = {
   urlSecretName = "vpn/subscriptions/skala";
+  label = "Skala";
   format = "xray-json";
   profileNames = [ "laptop" "phone" ];
   auto = true;
@@ -41,15 +42,15 @@ externalSubscriptions.skala = {
 Имена в `profileNames` должны явно выбирать объявленные профили; исключение
 через `excludedProfileNames` сохраняется. Источник не добавляется остальным
 устройствам. `auto = true` по умолчанию
-добавляет совместимые внешние узлы в обычный Auto; `false` оставляет ручной
-выбор. Эта настройка независима от `autoProtocols` собственных providers:
+добавляет совместимые внешние узлы в «Авто»; `false` оставляет их только в
+«Ручной». Эта настройка независима от `autoProtocols` собственных providers:
 внешний VLESS TCP не выдаётся за собственный `vless-xhttp`.
 
 Начальный формат — JSON-массив Xray-профилей, как в локальном игнорируемом
 референсе Skala `.work/references/skala-vpn.json`, который не распространяется
 в Git. Поддерживаются две комбинации:
 
-| Внешнее подключение | Mihomo selective/full | Sing-box |
+| Внешнее подключение | Mihomo | Sing-box |
 | --- | --- | --- |
 | VLESS TCP / REALITY / Vision | Да | Да |
 | VLESS XHTTP / TLS, `packet-up` | Да | Нет |
@@ -125,10 +126,10 @@ name, одно из закрытых правил чтения (`literal`, `wire
 есть в каталоге. Publication применяет этот manifest без protocol branches и
 без знания полей конкретного client format.
 
-Mieru экспортируется только в Mihomo selective/full YAML: `transport = TCP`,
+Mieru экспортируется только в Mihomo YAML: `transport = TCP`,
 `udp = true` (UDP relay внутри TCP), `MULTIPLEXING_LOW` и `HANDSHAKE_STANDARD`.
 Custom traffic pattern и TLS/SNI-параметры не добавляются. Consumer выбирает
-provider refs; выбранный Mieru доступен вручную и участвует в Auto, если
+provider refs; выбранный Mieru доступен вручную и участвует в «Авто», если
 `autoProtocols` содержит `mieru`. Sing-box Mieru не поддерживает.
 
 Mieru credentials выбираются по имени device profile из `secretNames.users`.
@@ -145,7 +146,7 @@ core не имеет полей ограничения версии TLS для A
 binding с `base64url`. Custom padding, session metadata, idle-session overrides,
 ciphers, ALPN, TFO и client fingerprint не добавляются.
 
-TrustTunnel экспортируется только в Mihomo selective/full YAML. Для точного
+TrustTunnel экспортируется только в Mihomo YAML. Для точного
 Mihomo 1.19.31 renderer использует числовой IPv4 endpoint, `type = trusttunnel`,
 имя device profile как `username`, проверяемый SNI, `skip-cert-verify = false`,
 `client-fingerprint = chrome`, `quic = false` и `udp = true`. Это H2-профиль:
@@ -154,9 +155,66 @@ H3/QUIC, ClientRandom, health checks и pool tuning не добавляются.
 с `base64url`. Sing-box TrustTunnel outbound и официальный client export не
 публикуются.
 
-Имена proxies включают полный canonical machine ID и instance ID. Компоненты
-кодируются с длиной, поэтому разные пары machine/instance не могут дать одно
-имя. Compatibility aliases для прежних имён без `-grosbeak` не создаются.
+## Группы и имена подключений
+
+Оба формата показывают две группы выбора с фиксированными именами. «Ручной»
+(Mihomo `select`, sing-box `selector`) содержит первым пунктом «Авто», затем все
+опубликованные подключения профиля, включая manual-only. «Авто» (`url-test` /
+`urltest`) содержит только подключения из `autoProtocols` и внешние узлы с
+`auto = true`; DIRECT в него не входит. Без кандидатов «Авто» не создаётся.
+Правила защищённого трафика ведут в «Ручной». Отдельных UDP-групп и
+FULL-профиля нет.
+
+UDP идёт через подключение, выбранное в «Ручной». Mihomo 1.19.31 пропускает
+совпавшее правило, если выбранный proxy не поддерживает UDP, поэтому после
+правил «Ручной» стоят явные `REJECT` для защищённого UDP. В sing-box outbound
+без UDP, например Naive, завершает UDP-соединение ошибкой. В обоих случаях
+DIRECT не используется.
+
+Весь трафик через VPN включается режимом «Глобальный» в клиенте. Mihomo в этом
+режиме не применяет правила и использует группу `GLOBAL`; её встроенный вариант
+начинается с DIRECT. Профиль задаёт `GLOBAL` из «Ручной» и «Авто», поэтому
+глобальный режим идёт через ручной выбор. Локальные и `.ru` исключения в этом
+режиме Mihomo не действуют; LAN, Tailscale и закреплённые endpoint остаются вне
+TUN через `route-exclude-address`. Sing-box направляет Global в «Ручной» после
+локальных и `.ru` исключений.
+
+Имя подключения — отображаемая метка, а не идентификатор. Consumer задаёт её
+для provider ref:
+
+```nix
+providerRefs = [
+  {
+    machine = "gateway-a";
+    instanceId = "vpn-mihomo-vless-xhttp";
+    protocol = "vless-xhttp";
+    display = { label = "A"; country = "Литва"; countryCode = "LT"; };
+  }
+];
+```
+
+Получается `🇱🇹 Литва · A`: флаг строится из заглавного ISO alpha-2 кода,
+`country` и `countryCode` задаются вместе. Без `display` меткой служит machine
+name без флага. Метка и страна — до 64 байт без управляющих символов и
+пробелов по краям; служебные имена групп (`Ручной`, `Авто`, `GLOBAL`, `DIRECT`,
+`REJECT` и др.) недопустимы. Внешний узел получает `<remark> · <label>`, где
+remark берётся из подписки как есть, а `label` — из источника (по умолчанию его
+ID); без remark имя равно `<label>`. Метки внешних источников должны отличаться
+от меток providers.
+
+Номера, хеши, instance ID, имя профиля и протокол в имя не входят. При
+совпадении имён внутри профиля добавляется протокол (`VLESS`, `AWG`, `Naive`,
+`Mieru`, `AnyTLS`, `TrustTunnel`) или транспорт внешнего узла (`REALITY`,
+`XHTTP`), а при оставшемся совпадении — порядковый номер начиная с 2. Имена
+собственных подключений вычисляются по всем providers профиля, поэтому Mihomo и
+sing-box показывают одно имя. Внешние имена вычисляет публикация по всем
+совместимым узлам до разделения по форматам; смена `label` применяется при
+следующей публикации без повторной загрузки. Кеш подписки, сохранённый прежней
+схемой имён, при обновлении сбрасывается и загружается заново. Placeholders
+секретов по-прежнему используют внутренний machine/instance namespace.
+
+Смена имён сбрасывает сохранённый в клиенте выбор один раз: `store-selected`
+хранит выбор по имени подключения.
 
 `vpnProvider` использует версию схемы 2, `vpnPublisher` — 1. Read-only NixOS
 output `clanwright.vpn.publishers.<instance>` содержит `schemaVersion = 1`,
@@ -181,30 +239,26 @@ Mihomo поступает из `apps-nixpkgs`, а Sing-box — из
 Sing-box профиль сохраняет Naive как отдельный HTTPS/H2 outbound с проверкой
 TLS, `quic = false`, `udp_over_tcp = false` и `insecure_concurrency = 0`.
 AnyTLS добавляется в sing-box как TCP/UDP outbound; требуется core 1.14.0 или
-новее. TCP и UDP имеют отдельные selectors. Защищённый UDP направляется через
-AnyTLS, а при его отсутствии отклоняется без DIRECT
-fallback. Прямые исключения для
-LAN, router, Tailscale и DNS обрабатываются раньше. Native `Rule`/`Global`
-режимы имеют независимые `SELECTIVE`/`FULL` selectors и Auto selections.
-Mihomo публикуется двумя Rule-mode файлами: `mihomo.yaml` заканчивает обычный
-трафик в DIRECT, а `mihomo-full.yaml` — в FULL после тех же прямых исключений.
-DIRECT не входит в VPN selectors: при отказе выбранного пути защищаемый трафик
+новее. Прямые исключения для LAN, router, Tailscale и DNS обрабатываются раньше.
+Native `Rule` и `Global` режимы используют одну группу «Ручной». Mihomo
+публикуется одним Rule-mode файлом `mihomo.yaml`, который заканчивает обычный
+трафик в DIRECT. DIRECT не входит в VPN selectors: при отказе выбранного пути защищаемый трафик
 не переключается автоматически, а отключение VPN остаётся явным действием
 пользователя в клиенте.
 
 Если для публикуемого Sing-box профиля нет eligible Naive или AnyTLS provider, renderer
-не публикует `profile.json` и не добавляет ссылку на него. Mihomo-файлы с
-eligible providers других протоколов продолжают публиковаться. При наличии
-только Naive публикуется sing-box, а несовместимые Mihomo-файлы и ссылки на них
+не публикует `profile.json` и не добавляет ссылку на него. Mihomo-файл с
+eligible providers других протоколов продолжает публиковаться. При наличии
+только Naive публикуется sing-box, а несовместимый Mihomo-файл и ссылка на него
 не создаются.
 
 `profiles[].autoProtocols` — список canonical protocol IDs, разрешённых для автоматического
 выбора и фоновых URL-проб. Default включает все поддерживаемые протоколы;
-`[]` оставляет ручные selectors без Auto-групп. Например, consumer может задать
+`[]` оставляет «Ручной» без группы «Авто». Например, consumer может задать
 для каждого профиля
 `[ "vless-xhttp" "naiveproxy" "mieru" "anytls" "trusttunnel" ]`, сохранив AWG вручную.
 Для исключённого AWG отключается также persistent keepalive. При отсутствии
-кандидатов Auto соответствующая группа не создаётся; DIRECT в защищённые
+кандидатов группа «Авто» не создаётся; DIRECT в защищённые
 selectors не добавляется. В полностью ручном режиме по умолчанию выбран
 первый совместимый outbound; фоновые URL-пробы не создаются.
 
@@ -227,7 +281,7 @@ Loopback, link-local, ULA, multicast и Tailscale остаются локаль�
 Это политика запрета внешнего IPv6, а не обещание
 поддержки IPv6 через VPN. DNS upstream использует IPv4.
 
-Оба Mihomo-профиля используют TUN `auto-route`, `auto-detect-interface` и
+Mihomo-профиль использует TUN `auto-route`, `auto-detect-interface` и
 `strict-route` без явного `route-address`. Исключения LAN, Tailscale и
 закреплённых IPv4 endpoints остаются в `route-exclude-address`; имя интерфейса
 не задаётся. Проверка маршрутов на устройстве остаётся частью client acceptance.
@@ -291,12 +345,11 @@ Naive/Cronet также выполняет внутреннюю UDP-провер
 Selective policy использует blocked/geoblocked и dependency rule sets.
 В защищённую TCP/UDP policy также входят MetaCubeX `category-ai-!cn` и `github`
 под внутренними тегами `ai_domains` и `github_domains`. Остальной трафик
-Selective и Sing-box Rule mode сохраняет default `DIRECT`; Mihomo full
-сохраняет `FULL` для остального нелокального трафика.
-Домены `.ru` направляются в `DIRECT` в обоих Mihomo-профилях и Sing-box,
-включая Global mode. Это исключение идёт после локальных правил и запрета
-внешнего IPv6, но до Global/full, защищённого UDP и всех feed rules, включая
-личные домены. `.ru` исключён из FakeIP обоих форматов. Sing-box перед этим
+Rule mode обоих форматов сохраняет default `DIRECT`.
+Домены `.ru` направляются в `DIRECT` в Mihomo Rule mode и в Sing-box,
+включая его Global mode. Это исключение идёт после локальных правил и запрета
+внешнего IPv6, но до Global Sing-box, защищённого UDP и всех feed rules, включая
+личные домены. Mihomo Global mode правила не применяет. `.ru` исключён из FakeIP обоих форматов. Sing-box перед этим
 `DIRECT` явно разрешает `.ru` с `ipv4_only` через обычные DNS rules; общее
 разрешение остальных DIRECT-доменов остаётся на прежнем месте.
 Личные домены задаёт consumer через `personalProxyDomains`; библиотека не

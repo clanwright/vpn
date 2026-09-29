@@ -64,17 +64,18 @@ each provider; consumers select those exports through the public helpers.
 
 The profile publisher normalizes its settings and passes selected typed
 provider exports and per-device bindings to its renderer.
-It renders Mihomo selective/full profiles and publishes a sing-box profile
+It renders one Mihomo profile and publishes a sing-box profile
 for devices with an eligible Naive or AnyTLS provider or a selected external
 subscription. Personal proxy domain additions come from the consumer.
 
 The publisher separates manual availability from automatic protocol selection.
-Sing-box uses independent TCP and UDP selectors; protected UDP uses AnyTLS
-or a compatible imported VLESS connection, and is rejected when no compatible
-connection exists. Both formats configure
+Both formats expose the same `Ручной` and `Авто` groups and connection names;
+UDP follows the manual selection and protected UDP is rejected, never sent
+DIRECT, when the selected connection lacks UDP. Both formats configure
 local IPv6 and Tailscale exceptions and an explicit external IPv6 rejection rule.
-An early `.ru` DIRECT exception follows that rejection and precedes full/Global
-and protected routing in both formats. `.ru` uses real DNS answers rather than
+An early `.ru` DIRECT exception follows that rejection and precedes protected
+routing in both formats and sing-box Global routing; Mihomo Global mode
+bypasses rules. `.ru` uses real DNS answers rather than
 FakeIP; sing-box resolves it with `ipv4_only` through ordinary DNS rules before
 DIRECT. MetaCubeX AI and GitHub feeds join the existing protected TCP/UDP policy.
 Sing-box enables automatic TUN routing without explicit included or excluded

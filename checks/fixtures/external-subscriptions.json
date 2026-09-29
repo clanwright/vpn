@@ -1,6 +1,6 @@
 [
   {
-    "remarks": "Synthetic TCP REALITY Vision",
+    "remarks": "🇩🇪 Германия",
     "dns": {"servers": ["https://upstream-dns.example.invalid/dns-query"]},
     "routing": {"rules": [{"outboundTag": "direct", "network": "tcp,udp"}]},
     "inbounds": [{"protocol": "socks", "port": 9999}],
@@ -19,7 +19,7 @@
     ]
   },
   {
-    "remarks": "Synthetic XHTTP TLS",
+    "remarks": "🇩🇪 Германия",
     "outbounds": [
       {
         "tag": "proxy",

@@ -2,8 +2,17 @@ let
   repository = builtins.getFlake (toString ../.);
   pkgs = repository.inputs.nixpkgs.legacyPackages.${builtins.currentSystem};
   inherit (pkgs) lib;
+  labelEnv = builtins.getEnv "VPN_SUBSCRIPTION_TEST_LABEL";
   source = {
     urlSecretName = "fixture-url";
+    # Unset selects the ordinary label; "-" selects the source-id fallback.
+    label =
+      if labelEnv == "" then
+        "Skala"
+      else if labelEnv == "-" then
+        null
+      else
+        labelEnv;
     format = "xray-json";
     profileNames = [ "fixture" ];
     auto = builtins.getEnv "VPN_SUBSCRIPTION_TEST_MANUAL" != "1";
@@ -63,6 +72,7 @@ let
         }
         // lib.optionalAttrs (builtins.getEnv "VPN_SUBSCRIPTION_TEST_SECOND_SOURCE" == "1") {
           other = source // {
+            label = "Other";
             maxStaleSeconds = 60;
           };
         };
@@ -98,5 +108,8 @@ in
       ]
       external.runtimeScript;
   mihomo = profile.mihomoSelectiveTemplate;
+  ownNames =
+    (builtins.head (builtins.head rendered.manifest.profiles).artifacts).runtimeComposition.ownNames
+      or [ ];
   singBox = profile.profileJsonTemplate;
 }

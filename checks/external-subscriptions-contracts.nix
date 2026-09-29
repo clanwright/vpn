@@ -60,6 +60,64 @@ let
     };
   };
   manifest = machine.clanwright.vpn.publisherManifests.vpn-client-profiles;
+  labelCases = {
+    ordinary = "Skala";
+    flagAndCyrillic = "🇩🇪 Германия";
+    maximumBytes = builtins.concatStringsSep "" (builtins.genList (_: "a") 64);
+  };
+  invalidLabelCases = {
+    empty = "";
+    leadingSpace = " Skala";
+    trailingSpace = "Skala ";
+    controlCharacter = "Sk\nala";
+    tooManyBytes = builtins.concatStringsSep "" (builtins.genList (_: "a") 65);
+    multibyteTooLong = builtins.concatStringsSep "" (builtins.genList (_: "я") 33);
+    reservedManual = "Ручной";
+    reservedAuto = "Авто";
+    reservedGlobal = "GLOBAL";
+    reservedDirect = "DIRECT";
+    reservedReject = "EXTERNAL-REJECT";
+    reservedPassRule = "PASS-RULE";
+  };
+  externalOf =
+    sources:
+    import ../clanServices/vpn-client-profiles/external-subscriptions.nix {
+      inherit lib;
+      settings = {
+        profiles = [ { name = "cHJvYmU"; } ];
+        inherit (evalSettings { externalSubscriptions = sources; }) externalSubscriptions;
+      };
+      config.sops.secrets."fixture/subscription-url".path = "/run/secrets/fixture";
+      runtimeBase = "/var/lib/fixture";
+    };
+  labelled = externalOf {
+    fixture = source // {
+      label = "Skala";
+    };
+  };
+  unlabelled = externalOf { fixture = source; };
+  inherit (labelled) composer converter runtimeScript;
+  forcesSystem =
+    candidate:
+    (builtins.tryEval (builtins.deepSeq candidate.machine.system.build.toplevel.drvPath true)).success;
+  labelCollision = consume {
+    inherit instanceNames;
+    includeNetwork = true;
+    fixtureName = "vpn-external-subscriptions-label-fixture";
+    instanceOverrides.vpn-client-profiles.roles.publisher.machines.vpn-fixture.settings.externalSubscriptions.fixture =
+      source // {
+        label = "A";
+      };
+  };
+  distinctLabel = consume {
+    inherit instanceNames;
+    includeNetwork = true;
+    fixtureName = "vpn-external-subscriptions-label-fixture";
+    instanceOverrides.vpn-client-profiles.roles.publisher.machines.vpn-fixture.settings.externalSubscriptions.fixture =
+      source // {
+        label = "Skala";
+      };
+  };
   invalidSourceCases = {
     missingSecret = builtins.removeAttrs source [ "urlSecretName" ];
     rawUrl = source // {
@@ -102,6 +160,34 @@ let
 in
 {
   defaultEmpty = (evalSettings { }).externalSubscriptions == { };
+  labelDefaultsToSourceId = defaults.label == null;
+  labelOverride =
+    (evalSettings (withSource (source // { label = "Skala"; }))).externalSubscriptions.fixture.label
+    == "Skala";
+  validLabels = lib.mapAttrs (
+    _: value: accepts (withSource (source // { label = value; }))
+  ) labelCases;
+  invalidLabels = lib.mapAttrs (
+    _: value: !(accepts (withSource (source // { label = value; })))
+  ) invalidLabelCases;
+  ownLabelCollisionRejected = !(forcesSystem labelCollision);
+  distinctLabelAccepted = forcesSystem distinctLabel;
+  # Names are resolved when composing: the label is a compose-time argument
+  # and the cached download stores neither name nor digest.
+  composerGroups =
+    lib.hasInfix "Ручной" composer
+    && lib.hasInfix "Авто" composer
+    && lib.hasInfix "GLOBAL" composer
+    && lib.hasInfix "EXTERNAL-REJECT" composer
+    && !(lib.hasInfix "SELECTIVE" composer)
+    && !(lib.hasInfix "FULL" composer)
+    && !(lib.hasInfix "UDP" composer)
+    && !(lib.hasInfix "external-" composer);
+  composeTimeLabel =
+    lib.hasInfix "--arg source Skala 'map(" runtimeScript
+    && lib.hasInfix "--arg source fixture 'map(" unlabelled.runtimeScript;
+  cacheStoresNoNames =
+    !(lib.hasInfix "digest" runtimeScript) && !(lib.hasInfix "sha256" (converter + runtimeScript));
   typedDefaults =
     defaults.format == "xray-json"
     && defaults.auto

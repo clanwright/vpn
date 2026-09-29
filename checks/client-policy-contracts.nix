@@ -25,6 +25,40 @@ let
       ];
   endpointIPv4 = machine: if machine == "edge-a" then "192.0.2.21" else "192.0.2.22";
   endpointDomain = machine: protocol: "${protocol}-${machine}.example.invalid";
+  displayFor =
+    machine:
+    if machine == "edge-a" then
+      {
+        label = "A";
+        country = "Литва";
+        countryCode = "LT";
+      }
+    else
+      {
+        label = "B";
+        country = "Германия";
+        countryCode = "DE";
+      };
+  # Literal expectations, independent of the implementation's flag and name code.
+  expectedBaseName = machine: if machine == "edge-a" then "🇱🇹 Литва · A" else "🇩🇪 Германия · B";
+  expectedKindLabel = {
+    naiveproxy = "Naive";
+    vless-xhttp = "VLESS";
+    amneziawg = "AWG";
+    mieru = "Mieru";
+    anytls = "AnyTLS";
+    trusttunnel = "TrustTunnel";
+  };
+  manualGroup = "Ручной";
+  autoGroup = "Авто";
+  legacyGroupNames = [
+    "SELECTIVE"
+    "SELECTIVE-AUTO"
+    "FULL"
+    "FULL-AUTO"
+    "UDP"
+    "UDP-AUTO"
+  ];
   mkProvider =
     machine: protocol:
     let
@@ -110,7 +144,10 @@ let
         };
       };
     in
-    providerEnvelope.mkProvider (common // protocolData.${protocol});
+    providerEnvelope.mkProvider (common // protocolData.${protocol})
+    // {
+      display = displayFor machine;
+    };
   protocols = builtins.attrNames providerEnvelope.protocols;
   providers = lib.concatMap (machine: map (mkProvider machine) protocols) [
     "edge-a"
@@ -228,22 +265,20 @@ let
     builtins.head (
       builtins.filter (entry: entry.name == name) matrixRenders.${publisherName}.renderedProfiles
     );
+  # A profile's provider names gain the protocol kind only when several of its
+  # providers share the same base name, here the providers of one machine.
   providerTag =
     user: provider:
     let
-      id = "${toString (builtins.stringLength provider.machine)}-${provider.machine}-${toString (builtins.stringLength provider.instanceId)}-${provider.instanceId}";
-      suffix =
-        {
-          naiveproxy = "edge";
-          vless-xhttp = "vless";
-          amneziawg = "amneziawg";
-          mieru = "mieru";
-          anytls = "anytls";
-          trusttunnel = "trusttunnel";
-        }
-        .${provider.protocol};
+      sharingBase = builtins.filter (
+        candidate: builtins.elem user candidate.profileNames && candidate.machine == provider.machine
+      ) providers;
+      base = expectedBaseName provider.machine;
     in
-    "${id}-${user}-${suffix}";
+    if builtins.length sharingBase > 1 then
+      "${base} · ${expectedKindLabel.${provider.protocol}}"
+    else
+      base;
   eligible =
     user: protocolSet:
     builtins.filter (
@@ -345,18 +380,19 @@ let
     "ai_domains"
     "github_domains"
   ];
+  # Mihomo rule fields: RULE-SET,<set>,<policy>[,no-resolve].
+  ruleSetOf = rule: builtins.elemAt (lib.splitString "," rule) 1;
+  routesToManual =
+    rule: lib.hasPrefix "RULE-SET," rule && builtins.elemAt (lib.splitString "," rule) 2 == manualGroup;
   mihomoDomainPolicy =
     template:
     let
       inherit (template) rules;
       ruIndex = indexOf (rule: rule == "DOMAIN-SUFFIX,ru,DIRECT") rules;
+      matchIndex = indexOf (rule: lib.hasPrefix "MATCH," rule) rules;
       rejectIndex = indexOf (rule: rule == "IP-CIDR6,::/0,REJECT,no-resolve") rules;
       proxyRules = builtins.filter (
-        rule:
-        lib.hasPrefix "AND," rule
-        || lib.hasPrefix "RULE-SET," rule
-        || lib.hasPrefix "NETWORK,UDP," rule
-        || lib.hasPrefix "MATCH," rule
+        rule: lib.hasPrefix "AND," rule || lib.hasPrefix "RULE-SET," rule || lib.hasPrefix "MATCH," rule
       ) rules;
     in
     {
@@ -376,15 +412,29 @@ let
         && lib.hasSuffix ".txt" provider.path
       ) newDomainTags;
       newDomainsHaveTcpPolicy = builtins.all (
-        tag: builtins.any (rule: lib.hasPrefix "RULE-SET,${tag}," rule) rules
+        tag: builtins.any (rule: routesToManual rule && ruleSetOf rule == tag) rules
       ) newDomainTags;
+      # Mihomo skips a matched UDP rule when the selected proxy lacks UDP, so the
+      # explicit REJECT must follow the protected rule and precede MATCH,DIRECT.
       newDomainsHaveUdpPolicy = builtins.all (
         tag:
-        builtins.any (
-          rule:
-          lib.hasPrefix "AND,((NETWORK,UDP),(RULE-SET,${tag}))," rule || lib.hasPrefix "NETWORK,UDP," rule
-        ) rules
+        let
+          udpIndex = indexOf (rule: rule == "AND,((NETWORK,UDP),(RULE-SET,${tag})),REJECT") rules;
+          tcpIndex = indexOf (rule: routesToManual rule && ruleSetOf rule == tag) rules;
+        in
+        udpIndex >= 0 && tcpIndex >= 0 && tcpIndex < udpIndex && udpIndex < matchIndex
       ) newDomainTags;
+      protectedUdpNeverReachesDirect =
+        let
+          protectedTcpRules = builtins.filter routesToManual rules;
+        in
+        protectedTcpRules != [ ]
+        && builtins.all (
+          rule: builtins.elem "AND,((NETWORK,UDP),(RULE-SET,${ruleSetOf rule})),REJECT" rules
+        ) protectedTcpRules
+        && matchIndex == builtins.length rules - 1
+        && builtins.elemAt rules matchIndex == "MATCH,DIRECT"
+        && !(builtins.any (lib.hasPrefix "NETWORK,UDP,") rules);
     };
   singBoxDomainPolicy =
     template:
@@ -400,14 +450,7 @@ let
         rule: (rule.ip_version or null) == 6 && (rule.action or null) == "reject"
       ) rules;
       proxyRules = builtins.filter (
-        rule:
-        rule ? clash_mode
-        || (rule.rule_set or [ ]) != [ ]
-        || builtins.elem (rule.outbound or null) [
-          "SELECTIVE"
-          "FULL"
-          "UDP"
-        ]
+        rule: rule ? clash_mode || (rule.rule_set or [ ]) != [ ] || (rule.outbound or null) == manualGroup
       ) rules;
       fakeIpRule = builtins.head template.dns.rules;
       exclusions = lib.last fakeIpRule.rules;
@@ -429,16 +472,28 @@ let
       newDomainsUseFakeIpAndProtectedTcpUdp = builtins.all (
         tag:
         builtins.elem tag (builtins.elemAt fakeIpRule.rules 1).rule_set
-        && builtins.any (
-          rule: builtins.elem tag (rule.rule_set or [ ]) && (rule.outbound or null) == "SELECTIVE"
-        ) rules
+        # One network-agnostic rule covers TCP and UDP; sing-box fails UDP on an
+        # outbound without UDP support instead of falling back to DIRECT.
         && builtins.any (
           rule:
           builtins.elem tag (rule.rule_set or [ ])
-          && (rule.network or null) == "udp"
-          && ((rule.outbound or null) == "UDP" || (rule.action or null) == "reject")
+          && (rule.outbound or null) == manualGroup
+          && !(rule ? network)
+          && !(rule ? action)
         ) rules
       ) newDomainTags;
+      protectedUdpNeverReachesDirect =
+        let
+          ruleSetRules = builtins.filter (rule: (rule.rule_set or [ ]) != [ ]) rules;
+        in
+        ruleSetRules != [ ]
+        && builtins.all (
+          rule: (rule.outbound or null) == manualGroup && !(rule ? network) && !(rule ? action)
+        ) ruleSetRules
+        && !(builtins.any (
+          rule: (rule.network or null) == "udp" && (rule.outbound or null) == "DIRECT"
+        ) rules)
+        && !(builtins.any (rule: builtins.elem (rule.outbound or null) legacyGroupNames) rules);
       newDomainsUseBinaryRemoteRules = builtins.all (
         tag:
         builtins.any (
@@ -450,6 +505,82 @@ let
         ) template.route.rule_set
       ) newDomainTags;
     };
+  # Fixed group topology: Ручной lists Авто first, Авто tests only the automatic
+  # candidates, and GLOBAL offers only the VPN groups so Clash Global mode never
+  # starts on DIRECT. Neither client format has a full-tunnel variant.
+  mihomoGroupResults =
+    renderedProfile:
+    let
+      template = renderedProfile.mihomoSelectiveTemplate;
+      groups = template."proxy-groups";
+      named = name: builtins.head (builtins.filter (group: group.name == name) groups);
+    in
+    {
+      exactGroupNames =
+        map (group: group.name) groups == [
+          manualGroup
+          autoGroup
+          "GLOBAL"
+        ];
+      groupTypes =
+        (named manualGroup).type == "select"
+        && (named autoGroup).type == "url-test"
+        && (named "GLOBAL").type == "select";
+      manualStartsWithAuto = builtins.head (named manualGroup).proxies == autoGroup;
+      globalOffersOnlyVpnGroups =
+        (named "GLOBAL").proxies == [
+          manualGroup
+          autoGroup
+        ];
+      noDirectInVpnGroups = builtins.all (group: !(builtins.elem "DIRECT" group.proxies)) groups;
+      noLegacyGroupReferences =
+        builtins.all (
+          group: builtins.all (member: !(builtins.elem member legacyGroupNames)) group.proxies
+        ) groups
+        && builtins.all (
+          rule: !(builtins.any (field: builtins.elem field legacyGroupNames) (lib.splitString "," rule))
+        ) template.rules;
+      protectedRulesUseManualGroup =
+        lib.last template.rules == "MATCH,DIRECT"
+        && builtins.elem "RULE-SET,secure_dns_domains,${manualGroup}" template.rules;
+      noFullVariant = !(renderedProfile ? mihomoFullTemplate);
+    };
+  singBoxGroupResults =
+    renderedProfile:
+    let
+      template = renderedProfile.profileJsonTemplate;
+      manual = builtins.head (
+        builtins.filter (outbound: (outbound.tag or null) == manualGroup) template.outbounds
+      );
+      auto = builtins.head (
+        builtins.filter (outbound: (outbound.tag or null) == autoGroup) template.outbounds
+      );
+      globalIndex = indexOf (
+        rule: (rule.clash_mode or null) == "Global" && (rule.outbound or null) == manualGroup
+      ) template.route.rules;
+    in
+    {
+      selectorAndUrltestOnly =
+        builtins.length (builtins.filter (outbound: outbound.type == "selector") template.outbounds) == 1
+        && builtins.length (builtins.filter (outbound: outbound.type == "urltest") template.outbounds) == 1;
+      manualDefaultsToAuto =
+        manual.type == "selector"
+        && manual.default == autoGroup
+        && builtins.head manual.outbounds == autoGroup;
+      autoIsUrltest = auto.type == "urltest";
+      noDirectInVpnGroups =
+        !(builtins.elem "DIRECT" manual.outbounds) && !(builtins.elem "DIRECT" auto.outbounds);
+      globalModeUsesManualGroup =
+        globalIndex >= 0
+        &&
+          builtins.length (builtins.filter (rule: (rule.clash_mode or null) == "Global") template.route.rules)
+          == 1;
+      noLegacyOutboundReferences =
+        builtins.all (outbound: !(builtins.elem (outbound.tag or null) legacyGroupNames)) template.outbounds
+        && builtins.all (
+          rule: !(builtins.elem (rule.outbound or null) legacyGroupNames)
+        ) template.route.rules;
+    };
   matrixResults = lib.mapAttrs (
     publisherName: publisher:
     lib.genAttrs users (
@@ -460,10 +591,13 @@ let
       {
         tunRoutes = tunRouteResults renderedProfile;
         mihomoSelectiveTun = mihomoTunResults renderedProfile.mihomoSelectiveTemplate;
-        mihomoFullTun = mihomoTunResults renderedProfile.mihomoFullTemplate;
         mihomoSelectiveDomains = mihomoDomainPolicy renderedProfile.mihomoSelectiveTemplate;
-        mihomoFullDomains = mihomoDomainPolicy renderedProfile.mihomoFullTemplate;
         singBoxDomains = singBoxDomainPolicy renderedProfile.profileJsonTemplate;
+        mihomoGroups = mihomoGroupResults renderedProfile;
+        singBoxGroups = singBoxGroupResults renderedProfile;
+        noFullArtifact = builtins.all (
+          entry: builtins.all (artifact: artifact.outputName != "mihomo-full.yaml") entry.artifacts
+        ) matrixRenders.${publisherName}.manifest.profiles;
         mihomoContainsExactlyCompatibleAuthorizedProviders =
           mihomoTags renderedProfile == sorted (
             map (providerTag user) (
@@ -500,7 +634,6 @@ let
           ) renderedProfile.profileJsonTemplate.route.rule_set;
         threeDnsEndpointsRenderedInBothFormats =
           builtins.length renderedProfile.mihomoSelectiveTemplate.dns.nameserver == 3
-          && builtins.length renderedProfile.mihomoFullTemplate.dns.nameserver == 3
           &&
             builtins.length (
               builtins.filter (server: server.type == "https") renderedProfile.profileJsonTemplate.dns.servers
@@ -511,14 +644,9 @@ let
             awgProxies = builtins.filter (
               proxy: builtins.elem proxy.name awgTags
             ) renderedProfile.mihomoSelectiveTemplate.proxies;
-            automaticGroups = builtins.filter (group: group.type == "url-test") (
-              renderedProfile.mihomoSelectiveTemplate."proxy-groups"
-              ++ renderedProfile.mihomoFullTemplate."proxy-groups"
-            );
-            manualGroups = builtins.filter (group: group.type == "select") (
-              renderedProfile.mihomoSelectiveTemplate."proxy-groups"
-              ++ renderedProfile.mihomoFullTemplate."proxy-groups"
-            );
+            groups = renderedProfile.mihomoSelectiveTemplate."proxy-groups";
+            automaticGroups = builtins.filter (group: group.type == "url-test") groups;
+            manualGroups = builtins.filter (group: group.name == manualGroup) groups;
           in
           builtins.all (proxy: proxy."persistent-keepalive" == 0) awgProxies
           && builtins.all (
@@ -590,9 +718,7 @@ let
           tunRouteResults renderedProfile;
       artifactCompatibility =
         if protocol == "naiveproxy" then
-          outputs == [ "profile.json" ]
-          && renderedProfile.mihomoSelectiveTemplate == null
-          && renderedProfile.mihomoFullTemplate == null
+          outputs == [ "profile.json" ] && renderedProfile.mihomoSelectiveTemplate == null
         else if
           builtins.elem protocol [
             "anytls"
@@ -600,28 +726,18 @@ let
         then
           outputs == [
             "mihomo.yaml"
-            "mihomo-full.yaml"
             "profile.json"
           ]
         else
-          outputs == [
-            "mihomo.yaml"
-            "mihomo-full.yaml"
-          ]
-          && renderedProfile.profileJsonTemplate == null;
+          outputs == [ "mihomo.yaml" ] && renderedProfile.profileJsonTemplate == null;
       trustTunnelOnlyMihomoShape =
         protocol != "trusttunnel"
         || (
           let
             proxy = builtins.head renderedProfile.mihomoSelectiveTemplate.proxies;
-            manualGroups = builtins.filter (group: group.type == "select") (
-              renderedProfile.mihomoSelectiveTemplate."proxy-groups"
-              ++ renderedProfile.mihomoFullTemplate."proxy-groups"
-            );
-            autoGroups = builtins.filter (group: group.type == "url-test") (
-              renderedProfile.mihomoSelectiveTemplate."proxy-groups"
-              ++ renderedProfile.mihomoFullTemplate."proxy-groups"
-            );
+            groups = renderedProfile.mihomoSelectiveTemplate."proxy-groups";
+            manualGroups = builtins.filter (group: group.name == manualGroup) groups;
+            autoGroups = builtins.filter (group: group.type == "url-test") groups;
           in
           proxy.type == "trusttunnel"
           && proxy.server == "192.0.2.21"
@@ -649,39 +765,61 @@ let
             ]
           ) artifacts
           && builtins.all (group: group.proxies == [ proxy.name ]) autoGroups
+          && proxy.name == expectedBaseName "edge-a"
           && builtins.all (group: builtins.elem proxy.name group.proxies) manualGroups
           && renderedProfile.profileJsonTemplate == null
         );
-      naiveOnlyProtectedUdpRejects =
+      naiveOnlyProtectedUdpStaysOnTcpOnlyOutbound =
         protocol != "naiveproxy"
-        || builtins.any (
-          rule:
-          (rule.network or null) == "udp"
-          && (rule.rule_set or [ ]) != [ ]
-          && (rule.action or null) == "reject"
-          && !(rule ? outbound)
-        ) renderedProfile.profileJsonTemplate.route.rules;
+        || (
+          let
+            template = renderedProfile.profileJsonTemplate;
+            selector = builtins.head (
+              builtins.filter (outbound: (outbound.tag or null) == manualGroup) template.outbounds
+            );
+            protectedRules = builtins.filter (rule: (rule.rule_set or [ ]) != [ ]) template.route.rules;
+            naiveTags = map (outbound: outbound.tag) (
+              builtins.filter (outbound: outbound.type == "naive") template.outbounds
+            );
+          in
+          naiveTags == [ (expectedBaseName "edge-a") ]
+          && protectedRules != [ ]
+          && builtins.all (
+            rule: rule.outbound == manualGroup && !(rule ? network) && !(rule ? action)
+          ) protectedRules
+          &&
+            selector.outbounds == [
+              autoGroup
+              (expectedBaseName "edge-a")
+            ]
+          && !(builtins.elem "DIRECT" selector.outbounds)
+          && !(builtins.any (
+            rule: (rule.network or null) == "udp" && (rule.outbound or null) == "DIRECT"
+          ) template.route.rules)
+        );
       anytlsOnlyProtectedUdpUsesTunnel =
         protocol != "anytls"
         || (
           let
-            udpSelector = builtins.head (
+            manualSelector = builtins.head (
               builtins.filter (
-                outbound: (outbound.tag or null) == "UDP"
+                outbound: (outbound.tag or null) == manualGroup
               ) renderedProfile.profileJsonTemplate.outbounds
             );
             protectedUdpRules = builtins.filter (
-              rule: (rule.network or null) == "udp" && (rule.rule_set or [ ]) != [ ]
+              rule: (rule.rule_set or [ ]) != [ ]
             ) renderedProfile.profileJsonTemplate.route.rules;
             anytlsTags = map (outbound: outbound.tag) (
               builtins.filter (outbound: outbound.type == "anytls") renderedProfile.profileJsonTemplate.outbounds
             );
           in
           protectedUdpRules != [ ]
-          && builtins.all (rule: (rule.outbound or null) == "UDP" && !(rule ? action)) protectedUdpRules
-          && anytlsTags != [ ]
-          && builtins.all (tag: builtins.elem tag udpSelector.outbounds) anytlsTags
-          && !(builtins.elem "DIRECT" udpSelector.outbounds)
+          && builtins.all (
+            rule: (rule.outbound or null) == manualGroup && !(rule ? network) && !(rule ? action)
+          ) protectedUdpRules
+          && anytlsTags == [ (expectedBaseName "edge-a") ]
+          && builtins.all (tag: builtins.elem tag manualSelector.outbounds) anytlsTags
+          && !(builtins.elem "DIRECT" manualSelector.outbounds)
         );
     }
   );
@@ -700,18 +838,8 @@ let
   ruCollisionProfile = builtins.head ruCollisionRender.renderedProfiles;
   ruCollisionResults = {
     mihomoSelective = mihomoDomainPolicy ruCollisionProfile.mihomoSelectiveTemplate;
-    mihomoFull = mihomoDomainPolicy ruCollisionProfile.mihomoFullTemplate;
     singBox = singBoxDomainPolicy ruCollisionProfile.profileJsonTemplate;
-    competingMihomoPersonalPolicyPresent =
-      builtins.all
-        (
-          template:
-          builtins.elem "RULE-SET,personal_proxy_domains,${if template == ruCollisionProfile.mihomoFullTemplate then "FULL" else "SELECTIVE"}" template.rules
-        )
-        [
-          ruCollisionProfile.mihomoSelectiveTemplate
-          ruCollisionProfile.mihomoFullTemplate
-        ];
+    competingMihomoPersonalPolicyPresent = builtins.elem "RULE-SET,personal_proxy_domains,${manualGroup}" ruCollisionProfile.mihomoSelectiveTemplate.rules;
     competingSingBoxPersonalPoliciesFollowRu =
       let
         rules = ruCollisionProfile.profileJsonTemplate.route.rules;
@@ -726,21 +854,19 @@ let
           ]
         ) rules;
       in
-      builtins.length personalRules == 2
+      builtins.length personalRules == 1
       && builtins.all (rule: indexOf (candidate: candidate == rule) rules > ruIndex) personalRules;
   };
   noAutoProfile = builtins.head noAutoRender.renderedProfiles;
-  noAutoMihomoGroups =
-    noAutoProfile.mihomoSelectiveTemplate."proxy-groups"
-    ++ noAutoProfile.mihomoFullTemplate."proxy-groups";
+  noAutoMihomoGroups = noAutoProfile.mihomoSelectiveTemplate."proxy-groups";
   noAutoSingBoxOutbounds = noAutoProfile.profileJsonTemplate.outbounds;
   noAutoResults = {
     noBackgroundTestsInEitherFormat =
       builtins.filter (group: group.type == "url-test") noAutoMihomoGroups == [ ]
       && builtins.filter (outbound: outbound.type == "urltest") noAutoSingBoxOutbounds == [ ];
-    mihomoManualSelectorsRetainCompatibleProviders =
+    mihomoManualSelectorRetainsCompatibleProviders =
       let
-        expectedTcp = map (providerTag "alice") (
+        expected = map (providerTag "alice") (
           eligible "alice" [
             "vless-xhttp"
             "mieru"
@@ -749,42 +875,39 @@ let
             "amneziawg"
           ]
         );
-        expectedUdp = expectedTcp;
-        selective = builtins.head (builtins.filter (group: group.name == "SELECTIVE") noAutoMihomoGroups);
-        udp = builtins.head (builtins.filter (group: group.name == "UDP") noAutoMihomoGroups);
+        manual = builtins.head (builtins.filter (group: group.name == manualGroup) noAutoMihomoGroups);
       in
-      sorted selective.proxies == sorted expectedTcp
-      && sorted udp.proxies == sorted expectedUdp
+      sorted manual.proxies == sorted expected
       &&
-        builtins.head selective.proxies
-        == providerTag "alice" (builtins.head (eligible "alice" [ "vless-xhttp" ]))
-      &&
-        builtins.head udp.proxies
+        builtins.head manual.proxies
         == providerTag "alice" (builtins.head (eligible "alice" [ "vless-xhttp" ]));
-    singBoxManualSelectorsRetainCompatibleProviders =
+    # Without automatic candidates only Ручной and GLOBAL exist; GLOBAL never
+    # lists DIRECT, so Clash Global mode cannot bypass the tunnel.
+    mihomoGroupsWithoutAuto =
+      map (group: group.name) noAutoMihomoGroups == [
+        manualGroup
+        "GLOBAL"
+      ]
+      && (builtins.elemAt noAutoMihomoGroups 1).proxies == [ manualGroup ]
+      && !(builtins.elem "DIRECT" (builtins.elemAt noAutoMihomoGroups 0).proxies);
+    singBoxManualSelectorRetainsCompatibleProviders =
       let
-        expectedTcp = map (providerTag "alice") (
+        expected = map (providerTag "alice") (
           eligible "alice" [
             "naiveproxy"
             "anytls"
           ]
         );
-        expectedUdp = map (providerTag "alice") (
-          eligible "alice" [
-            "anytls"
-          ]
-        );
-        selective = builtins.head (
-          builtins.filter (outbound: (outbound.tag or null) == "SELECTIVE") noAutoSingBoxOutbounds
-        );
-        udp = builtins.head (
-          builtins.filter (outbound: (outbound.tag or null) == "UDP") noAutoSingBoxOutbounds
+        manual = builtins.head (
+          builtins.filter (outbound: (outbound.tag or null) == manualGroup) noAutoSingBoxOutbounds
         );
       in
-      sorted selective.outbounds == sorted expectedTcp
-      && sorted udp.outbounds == sorted expectedUdp
-      && selective.default == builtins.head selective.outbounds
-      && udp.default == builtins.head udp.outbounds;
+      sorted manual.outbounds == sorted expected
+      && manual.default == builtins.head manual.outbounds
+      && !(builtins.elem "DIRECT" manual.outbounds)
+      && builtins.all (
+        outbound: !(builtins.elem (outbound.tag or null) ([ autoGroup ] ++ legacyGroupNames))
+      ) noAutoSingBoxOutbounds;
     awgIdleWhenManualOnly = builtins.all (
       proxy: proxy.type != "wireguard" || proxy."persistent-keepalive" == 0
     ) noAutoProfile.mihomoSelectiveTemplate.proxies;

@@ -64,7 +64,7 @@ networks. Verify all of the following:
    periods.
 4. A UDP application works through AnyTLS UoT v2. No public UDP listener is
    expected.
-5. Selective, full, manual and Auto selection behave as intended for the
+5. `Ручной`, `Авто` and client Global selection behave as intended for the
    published profile.
 6. TCP and UoT requests to private, loopback, link-local, CGNAT and metadata
    destinations fail, both as literal IPs and through names resolving to those

@@ -1,6 +1,7 @@
 { lib }:
 let
   identities = import ../../modules/contracts/identities.nix { inherit lib; };
+  displayNames = import ./display-names.nix { inherit lib; };
   inherit (identities)
     optionalSafeIdentityType
     safeIdentityType
@@ -188,12 +189,22 @@ let
         default = [ ];
         description = "Profiles allowed to use the selected provider.";
       };
+      display = lib.mkOption {
+        type = lib.types.nullOr displayNames.displayType;
+        default = null;
+        description = "Client-visible country and label; null uses the machine name without a flag.";
+      };
     };
   });
 
   externalSubscriptionType = lib.types.submodule (_: {
     options = {
       urlSecretName = lib.mkOption { type = safeSecretNameType; };
+      label = lib.mkOption {
+        type = lib.types.nullOr displayNames.labelType;
+        default = null;
+        description = "Client-visible source label; null uses the subscription ID.";
+      };
       format = lib.mkOption {
         type = lib.types.enum [ "xray-json" ];
         default = "xray-json";
