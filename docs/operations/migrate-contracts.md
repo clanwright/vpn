@@ -129,6 +129,26 @@ a hard expiration. Wire the nonsecret status to consumer monitoring; stale lists
 may omit new routing entries. Do not treat public cache retention as permission
 to retain revoked credentials.
 
+## Removed probe and links-integration surfaces
+
+The domain has no dedicated probe identity, probe profile kind or publisher
+export. Apply these consumer edits before evaluating the new revision:
+
+- Remove `vpnPublisher` from consumer `exportInterfaces`; declare only
+  `vpnProvider`. The publisher role produces no exports.
+- Remove references to `lib.vpnExports` (including `selectVpnProvider` and
+  `selectVpnPublisher`) and `lib.awgValidation`. `lib.exportInterfaces` remains.
+- Remove NaiveProxy `probeUserName`. Every `passwordSecretNames` identity is now
+  a device identity in the provider's `profileNames`; delete the former probe
+  identity and its secret binding unless it should become an ordinary device.
+- Replace `kind = "probe"` in VLESS/XHTTP and publisher `profiles` with
+  `mobile` or `router`, or remove the profile.
+- Remove publisher `excludedProfileNames`. Publication includes exactly the
+  declared `profiles`; omit any profile that must not be published.
+
+The `/config-links/` page, `profileLinks`, stable module IDs and `packages` are
+unchanged.
+
 ## Verification and delivery
 
 Evaluate the consumer composition against the exact intended revision and run

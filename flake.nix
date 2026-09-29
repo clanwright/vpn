@@ -66,15 +66,10 @@
           inherit (trustTunnelPkgsFor system) trusttunnel-endpoint;
           unbound = appsPkgs.unbound-with-systemd;
         };
-      vpnExports = { lib }: import ./modules/contracts/vpn-exports.nix { inherit lib; };
       exportInterfaces =
         { lib }:
-        let
-          exports = vpnExports { inherit lib; };
-        in
         {
-          vpnProvider = exports.vpnProviderModule;
-          vpnPublisher = exports.vpnPublisherModule;
+          vpnProvider = (import ./modules/contracts/vpn-exports.nix { inherit lib; }).vpnProviderModule;
         };
     in
     {
@@ -123,8 +118,6 @@
       };
 
       lib = {
-        inherit vpnExports;
-        awgValidation = { lib }: import ./clanServices/amneziawg/validation.nix { inherit lib; };
         inherit exportInterfaces;
       };
 

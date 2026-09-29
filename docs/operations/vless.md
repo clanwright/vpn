@@ -46,8 +46,6 @@ The gateway exports this policy as `transportMetadata.fingerprint` and
 uses them for the Mihomo profile. With false or absent
 support policy, the generated `reality-opts` omits `support-x25519mlkem768`.
 External subscription imports and client core packages are unchanged.
-Consumer peer probes must adopt both exported values in their own client
-configuration; profile generation does not update those probes.
 
 The pure checks establish schema and generated-field behavior only. Consumer
 acceptance must separately establish authenticated relay, wrong-credential

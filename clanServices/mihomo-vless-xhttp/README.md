@@ -72,8 +72,7 @@ router's exposure, including keeping internal ports inaccessible externally.
 
 The client flag is exported as
 `transportMetadata.reality.supportX25519MLKEM768`. It describes client policy;
-it adds no server-side JSON setting. Consumer-owned peer probes must consume
-the exported fingerprint and support flag separately from the profile publisher.
+it adds no server-side JSON setting.
 
 Operator checks and activation guidance are in
 [`docs/operations/vless.md`](../../docs/operations/vless.md).

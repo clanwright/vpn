@@ -120,7 +120,7 @@ Domain regression ownership is exercised by these named evaluation results:
 
 | Result | Coverage |
 | --- | --- |
-| `client-render-contracts` | Provider/profile compatibility, client configuration structures, DNS/routing policy, excluded-profile nonpublication and missing-input rejection. |
+| `client-render-contracts` | Provider/profile compatibility, client configuration structures, DNS/routing policy and missing-input rejection. |
 | `publisher-manifest-contracts` | Artifact bindings, required assets and publication phase ordering; combined composition checks also inspect generated cleanup and revocation guards. |
 | `adguardhome-contracts` | Selected DNS configuration and DoH stamp structure, including malformed, truncated and appended-payload fixtures. |
 | `awg-contracts` | Generated scoped ingress, forwarding and SNAT rules, including NAT-disabled configuration. |

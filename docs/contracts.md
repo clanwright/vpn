@@ -23,18 +23,16 @@ The VLESS module ID contains `mihomo` for identity stability; its runtime is Xra
 
 | Flake attribute | Contract |
 | --- | --- |
-| `clan.exportInterfaces` | `vpnProvider` and `vpnPublisher` typed interfaces. |
-| `clanModule` | Nix module registering the export interfaces. |
-| `lib.exportInterfaces { lib }` | Constructs the interface definitions. |
-| `lib.vpnExports { lib }` | Closed provider/publisher types and projections. |
-| `lib.awgValidation { lib }` | AmneziaWG option and package-family validation. |
+| `clan.exportInterfaces` | `vpnProvider` typed interface. |
+| `clanModule` | Nix module registering the export interface. |
+| `lib.exportInterfaces { lib }` | Constructs the interface definition. |
 
-Provider and publisher schemas reject unknown fields. Their definitions are in
+The provider schema rejects unknown fields. Its definition is in
 [the export schema](../modules/contracts/vpn-exports.nix); modules and checks
-use the same definitions. Provider selection derives the required role from the
+use the same definition. Provider selection derives the required role from the
 protocol; callers do not supply a separate role mapping.
 
-`vpnProvider` uses schema version 2; `vpnPublisher` uses version 1. AWG peer
+`vpnProvider` uses schema version 2. The publisher declares no exports. AWG peer
 public keys have one canonical representation in `transportMetadata.peers`.
 Each AWG peer supplies `clientPrivateKeySecretName`; its exact consumer binding
 is exported through `secretNames.clientPrivateKey`.
@@ -114,7 +112,10 @@ The local mode creates no ingress firewall rule. SNI routing, public exposure
 and web-server composition belong to the consumer; TLS must reach Xray intact.
 
 NaiveProxy requires one explicit listener on
-its selected public-site claim, matching the declared bind address. The consumer
+its selected public-site claim, matching the declared bind address. Its provider
+export lists every `passwordSecretNames` identity in both
+`transportMetadata.userNames` and `profileNames`; selection rejects any
+difference between them. The consumer
 supplies AdGuard's Unbound upstream binding and any systemd startup relationship
 between the two services.
 

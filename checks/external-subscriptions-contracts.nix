@@ -50,15 +50,6 @@ let
   inherit (consumer) machine;
   unitName = "vpn-client-profiles-publish-fixture";
   unit = machine.systemd.services.${unitName};
-  excludedConsumer = consume {
-    inherit instanceNames;
-    includeNetwork = true;
-    fixtureName = "vpn-external-subscriptions-excluded-fixture";
-    instanceOverrides.vpn-client-profiles.roles.publisher.machines.vpn-fixture.settings = {
-      externalSubscriptions.fixture = source;
-      excludedProfileNames = [ "cHJvYmU" ];
-    };
-  };
   manifest = machine.clanwright.vpn.publisherManifests.vpn-client-profiles;
   labelCases = {
     ordinary = "Skala";
@@ -212,10 +203,6 @@ in
   runtimeDependencies =
     builtins.any (package: lib.hasPrefix "bash" (package.pname or package.name)) unit.path
     && builtins.elem "diffutils" (map (package: package.pname or package.name) unit.path);
-  excludedSourceInactive =
-    !(excludedConsumer.machine.sops.secrets ? "fixture/subscription-url")
-    && excludedConsumer.machine.systemd.services.${unitName}.serviceConfig.Type == "oneshot"
-    && excludedConsumer.machine.clanwright.vpn.publisherManifests.vpn-client-profiles.profiles == [ ];
   profileComposition = builtins.all (
     profile:
     profile.name == "cHJvYmU"

@@ -8,7 +8,7 @@ Their public entrypoints are listed in [contracts](contracts.md).
 | Repository | Consumer |
 | --- | --- |
 | Service implementation and defaults | Placement and composition |
-| Typed provider and publisher exports | Machine facts and secret bindings |
+| Typed provider exports | Machine facts and secret bindings |
 | Exact application packages | Exposure, certificates and Caddy site claims |
 | Module and integration contracts | Operator entrypoints, monitoring and deployment |
 

@@ -18,10 +18,10 @@ The Network Caddy package is the approved custom-package exception. The gate
 does not build it or claim a successful application exchange.
 
 The consumer owns the selected public-site claim, TCP/443 bind, certificate
-identity, device and probe secret bindings, and additional destination denies.
+identity, device secret bindings, and additional destination denies.
 Record and review those values there before adoption. This runbook does not
 authorize changing them.
-Probe credentials are excluded from ordinary device profiles.
+Every password identity is also a client profile identity.
 
 Consumer-owned Clan vars must generate nonempty unpadded base64url passwords
 (`A-Z`, `a-z`, `0-9`, `_`, `-`) without whitespace or a terminal newline.

@@ -20,8 +20,8 @@ listener; wildcard и смешанный public/tailnet bind отклоняют�
 Точная схема и defaults определены в [`default.nix`](default.nix).
 Параметры: `enable`, `selectedPublicSiteClaim`,
 `selectedPublicSiteEndpoint` с полями `domain`, `publicIPv4`,
-`caddyBindIPv4`, карта `passwordSecretNames` вида `identity = secret-name`,
-`probeUserName` и `additionalDeny`. Identity — ограниченный токен;
+`caddyBindIPv4`, карта `passwordSecretNames` вида `identity = secret-name`
+и `additionalDeny`. Identity — ограниченный токен;
 secret names допускают namespace через `/`, но не traversal или управляющие
 символы. Endpoint должен совпадать с выбранным claim.
 На одной машине допускается ровно один active instance: instances разделяют
@@ -33,8 +33,8 @@ machine-wide Caddy integration и runtime template namespace. Disabled instance
 `enable` по умолчанию `true`; адресные поля endpoint по умолчанию
 пусты и становятся обязательными после выбора claim. Пользовательские
 password secret names задаются явно, чтобы один addon не выбирал credentials
-неявно. `probeUserName` по умолчанию равен `probe`; он входит в server auth и
-`userNames`, но исключён из обычных `profileNames`.
+неявно. Каждая identity из `passwordSecretNames` получает server auth и
+входит в `userNames` и `profileNames`; служебных identity модуль не резервирует.
 
 ## Exports and dependencies
 
@@ -82,10 +82,11 @@ parser сопоставляет их case-sensitive и раннее domain rule 
 
 ## Verification
 
-Contract checks подтверждают произвольные identity maps, разделение
-probe, отрицательные assertions, оба sops-nix activation mode, template
-permissions/reload metadata, ACL order и listener isolation. Проверки — pure
-Nix; application parser/CLI, runtime tests, VM и тесты на реальных машинах
-запрещены. Реальные auth, relay и reload не объявляются проверенными.
+Contract checks подтверждают произвольные identity maps, совпадение
+`userNames` и `profileNames`, отрицательные assertions, оба sops-nix
+activation mode, template permissions/reload metadata, ACL order и listener
+isolation. Проверки — pure Nix; application parser/CLI, runtime tests, VM и
+тесты на реальных машинах запрещены. Реальные auth, relay и reload не
+объявляются проверенными.
 Границы проверки и native lifecycle описаны в
 [операционном runbook](../../docs/operations/naiveproxy.md).

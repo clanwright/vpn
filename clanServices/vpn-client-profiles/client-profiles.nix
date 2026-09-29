@@ -17,9 +17,7 @@ let
     serviceDomains.configGateway = settings.configGatewayDomain;
   };
   inherit (settings) secretPrefix;
-  profiles = builtins.filter (
-    profile: !(builtins.elem profile.name settings.excludedProfileNames)
-  ) settings.profiles;
+  inherit (settings) profiles;
   providersFor = protocol: builtins.filter (provider: provider.protocol == protocol) providers;
   vlessProviders = providersFor "vless-xhttp";
   amneziawgProviders = providersFor "amneziawg";

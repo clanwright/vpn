@@ -107,12 +107,6 @@ in
             description = "Identity to machine-scoped SOPS secret-name map consumed by forward_proxy basic_auth.";
           };
 
-          probeUserName = lib.mkOption {
-            type = lib.types.addCheck lib.types.str validIdentity;
-            default = "probe";
-            description = "Identity reserved for health probes and excluded from ordinary device profiles.";
-          };
-
           additionalDeny = lib.mkOption {
             type = lib.types.listOf (lib.types.addCheck lib.types.str validAclAddress);
             default = [ ];
@@ -145,7 +139,6 @@ in
             caddyBindIPv4 = "";
           };
         userNames = builtins.attrNames settings.passwordSecretNames;
-        profileNames = builtins.filter (name: name != settings.probeUserName) userNames;
       in
       {
         exports = lib.optionalAttrs active (mkExports {
@@ -163,7 +156,7 @@ in
               inherit userNames;
               port = 443;
             };
-            inherit profileNames;
+            profileNames = userNames;
             secretNames = {
               password = settings.passwordSecretNames;
             };
@@ -266,15 +259,6 @@ in
                 {
                   assertion = !settings.enable || settings.selectedPublicSiteClaim != "";
                   message = "naiveproxy: selectedPublicSiteClaim must not be empty when enabled.";
-                }
-                {
-                  assertion =
-                    !settings.enable || builtins.hasAttr settings.probeUserName settings.passwordSecretNames;
-                  message = "naiveproxy: probeUserName must name an identity in passwordSecretNames.";
-                }
-                {
-                  assertion = !settings.enable || profileNames != [ ];
-                  message = "naiveproxy: at least one non-probe device identity is required.";
                 }
                 {
                   assertion =

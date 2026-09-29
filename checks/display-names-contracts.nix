@@ -136,7 +136,6 @@ let
       }
     ];
     secretPrefix = "publisher-a";
-    excludedProfileNames = [ ];
     tailnetAdminDomains = [ "admin.example.invalid" ];
     personalProxyDomains = [ "personal.example.invalid" ];
   };

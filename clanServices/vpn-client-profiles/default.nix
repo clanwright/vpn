@@ -19,7 +19,6 @@ let
     edgeDomain = null;
     clientDnsEndpoints = null;
     secretPrefix = "";
-    excludedProfileNames = [ "probe" ];
     tailnetAdminDomains = [ ];
     personalProxyDomains = [ ];
     profiles = [ ];
@@ -73,10 +72,6 @@ let
       type = types.optionalSafeIdentityType;
       default = publisherDefaults.secretPrefix;
     };
-    excludedProfileNames = lib.mkOption {
-      type = lib.types.listOf types.safeIdentityType;
-      default = publisherDefaults.excludedProfileNames;
-    };
     tailnetAdminDomains = lib.mkOption {
       type = lib.types.listOf lib.types.str;
       default = publisherDefaults.tailnetAdminDomains;
@@ -121,7 +116,6 @@ in
     name = "@clanwright/vpn-client-profiles";
     description = "Typed Mihomo and Sing-box client profile publisher";
     readme = builtins.readFile ./README.md;
-    exports.out = [ "vpnPublisher" ];
   };
   roles.publisher = {
     description = "Publish client profiles from explicit non-secret provider exports";
@@ -131,7 +125,6 @@ in
         settings,
         instanceName ? "vpn-client-profiles",
         exports ? { },
-        mkExports ? (value: value),
         ...
       }:
       let
@@ -182,23 +175,8 @@ in
         externalDisplayLabels = lib.mapAttrsToList (
           sourceId: source: if (source.label or null) == null then sourceId else source.label
         ) publisher.externalSubscriptions;
-        publisherMetadata = {
-          schemaVersion = 1;
-          instanceId = instanceName;
-          machine = runtimeMachineName;
-          role = "publisher";
-          enabled = active;
-          accountDomain = publisher.configGatewayDomain;
-          pagePath = publisher.linksPage.path;
-          profileLinks = map (
-            link: builtins.removeAttrs link [ "pathTokenSecretName" ]
-          ) publisher.profileLinks;
-        };
       in
       {
-        exports = lib.optionalAttrs active (mkExports {
-          vpnPublisher = publisherMetadata;
-        });
         nixosModule =
           { config, pkgs, ... }:
           let

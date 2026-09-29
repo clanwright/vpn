@@ -306,26 +306,6 @@ let
       };
     };
 
-  profileLinkModule = mkSubmodule {
-    name = mkOption safeIdentityType;
-    label = mkOption nonEmptyStr;
-    accountDomain = mkOption nonEmptyStr;
-  };
-  vpnPublisherModule = {
-    options = {
-      schemaVersion = mkOption (fixed 1);
-      instanceId = mkOption safeIdentityType;
-      machine = mkOption safeIdentityType;
-      role = mkOption (fixed "publisher");
-      enabled = mkOption (fixed true);
-      accountDomain = mkOption nonEmptyStr;
-      pagePath = mkOption (fixed "/config-links/");
-      profileLinks = lib.mkOption {
-        type = types.listOf (types.submodule profileLinkModule);
-        default = [ ];
-      };
-    };
-  };
   fail =
     {
       providerMachine,
@@ -657,13 +637,7 @@ let
         && (protocol != "anytls" || metadata.tlsServerName == endpoint.domain)
         && (protocol != "trusttunnel" || metadata.userNames == raw.profileNames)
         && (protocol != "trusttunnel" || metadata.tlsServerName == endpoint.domain)
-        && (
-          protocol != "naiveproxy"
-          || (
-            allSafeIdentities (metadata.userNames or [ ])
-            && lib.subtractLists metadata.userNames raw.profileNames == [ ]
-          )
-        )
+        && (protocol != "naiveproxy" || metadata.userNames == raw.profileNames)
         && (
           protocol != "vless-xhttp"
           || credentialMapExact (raw.profileNames or [ ]) ((metadata.reality or { }).shortIdsByProfile or { })
@@ -682,114 +656,9 @@ let
         transportMetadata = validateMetadata context protocol metadata;
       };
 
-  selectExportInterface =
-    {
-      serviceName,
-      instanceId,
-      machine,
-      role,
-      interfaceName,
-      allowedInterfaceNames,
-      selectExports,
-      exports,
-      consumerInstanceId,
-      validate,
-    }:
-    let
-      context = {
-        providerMachine = machine;
-        providerInstanceId = instanceId;
-        protocol = serviceName;
-        inherit consumerInstanceId;
-      };
-      selectedScopes =
-        if !builtins.isFunction selectExports then
-          fail context "Clan selectExports selector is unavailable"
-        else if !builtins.isAttrs exports then
-          fail context "Clan exports are unavailable"
-        else
-          selectExports (
-            scope:
-            scope.serviceName == serviceName
-            && scope.instanceName == instanceId
-            && scope.roleName == role
-            && scope.machineName == machine
-          ) exports;
-      selectedScopeNames =
-        if builtins.isAttrs selectedScopes then
-          builtins.attrNames selectedScopes
-        else
-          fail context "Clan selectExports did not return a scoped attrset";
-      selected =
-        if builtins.length selectedScopeNames != 1 then
-          fail context "${interfaceName} scope selection matched ${toString (builtins.length selectedScopeNames)} exports; expected exactly one"
-        else
-          builtins.getAttr (builtins.head selectedScopeNames) selectedScopes;
-      envelope =
-        if builtins.isAttrs selected && attrsHaveExactly [ "exports" ] selected then
-          selected.exports
-        else
-          selected;
-    in
-    if
-      !builtins.isAttrs envelope
-      || !(attrsHaveExactly allowedInterfaceNames envelope)
-      || builtins.any (
-        name: name != interfaceName && builtins.getAttr name envelope != null
-      ) allowedInterfaceNames
-    then
-      fail context "selected export is not the closed ${interfaceName} interface"
-    else
-      validate context (builtins.getAttr interfaceName envelope);
-
-  validatePublisher =
-    context: raw:
-    let
-      fields = [
-        "schemaVersion"
-        "instanceId"
-        "machine"
-        "role"
-        "enabled"
-        "accountDomain"
-        "pagePath"
-        "profileLinks"
-      ];
-      validProfileLink =
-        value:
-        builtins.isAttrs value
-        && attrsHaveExactly [ "name" "label" "accountDomain" ] value
-        && safeIdentity (value.name or null)
-        && isNonEmptyString (value.label or null)
-        && isNonEmptyString (value.accountDomain or null);
-      profileLinkNames = map (link: link.name or null) (raw.profileLinks or [ ]);
-    in
-    if !builtins.isAttrs raw || !(attrsHaveExactly fields raw) then
-      fail context "vpnPublisher export shape is not the closed allowlist"
-    else if
-      raw.schemaVersion != 1
-      || raw.instanceId != context.providerInstanceId
-      || raw.machine != context.providerMachine
-      || raw.role != "publisher"
-      || raw.enabled != true
-      || !safeIdentity (raw.instanceId or null)
-      || !safeIdentity (raw.machine or null)
-      || !isNonEmptyString (raw.accountDomain or null)
-      || raw.pagePath != "/config-links/"
-      || !builtins.isList (raw.profileLinks or [ ])
-      || !(builtins.all validProfileLink (raw.profileLinks or [ ]))
-      || profileLinkNames != lib.unique profileLinkNames
-    then
-      fail context "vpnPublisher metadata does not match the requested publisher"
-    else
-      raw;
-
 in
 {
-  inherit
-    vpnProviderModule
-    vpnPublisherModule
-    ;
+  inherit vpnProviderModule;
 
   selectVpnProvider =
     {
@@ -852,28 +721,5 @@ in
       fail context "provider is missing, disabled or has no active export"
     else
       validateProvider context raw;
-
-  selectVpnPublisher =
-    {
-      publisherInstanceId,
-      publisherMachine,
-      selectExports,
-      exports,
-      consumerInstanceId ? "unknown-consumer",
-    }:
-    selectExportInterface {
-      serviceName = "@clanwright/vpn-client-profiles";
-      instanceId = publisherInstanceId;
-      machine = publisherMachine;
-      role = "publisher";
-      interfaceName = "vpnPublisher";
-      allowedInterfaceNames = [ "vpnPublisher" ];
-      inherit
-        selectExports
-        exports
-        consumerInstanceId
-        ;
-      validate = validatePublisher;
-    };
 
 }

@@ -9,6 +9,8 @@ let
   lib = inputs.nixpkgs.lib;
   fixture = import ./fixtures/example-clan.nix;
   consume = import ./lib/consumer.nix { inherit inputs root self; };
+  vpnExports = import ../modules/contracts/vpn-exports.nix { inherit lib; };
+  awgValidation = import ../clanServices/amneziawg/validation.nix { inherit lib; };
   serviceSpecs = {
     vpn-mihomo-vless-xhttp.role = "gateway";
     vpn-mieru.role = "gateway";
@@ -87,7 +89,7 @@ let
     let
       spec = providerSpecs.${name};
     in
-    (self.lib.vpnExports { inherit lib; }).selectVpnProvider {
+    vpnExports.selectVpnProvider {
       providerInstanceId = name;
       providerMachine = "vpn-fixture";
       inherit (spec) protocol;
@@ -108,45 +110,6 @@ let
   providerVersionsContract = builtins.all (
     result: builtins.all (value: value) (builtins.attrValues result)
   ) (builtins.attrValues providerVersionResults);
-  publisherExport = {
-    schemaVersion = 1;
-    instanceId = "vpn-client-profiles";
-    machine = "fixture";
-    role = "publisher";
-    enabled = true;
-    accountDomain = "profiles.example.invalid";
-    pagePath = "/config-links/";
-    profileLinks = [
-      {
-        name = "cHJvYmU";
-        label = "Fixture profile";
-        accountDomain = "profiles.example.invalid";
-      }
-    ];
-  };
-  selectPublisher =
-    raw:
-    (self.lib.vpnExports { inherit lib; }).selectVpnPublisher {
-      publisherInstanceId = "vpn-client-profiles";
-      publisherMachine = "fixture";
-      consumerInstanceId = "publisher-version-contract-check";
-      selectExports = _predicate: exports: exports;
-      exports.only.vpnPublisher = raw;
-    };
-  publisherVersionResults = {
-    currentAccepted = builtins.deepSeq (selectPublisher publisherExport) true;
-    wrongVersionRejected =
-      !(builtins.tryEval (
-        builtins.deepSeq (selectPublisher (publisherExport // { schemaVersion = 2; })) true
-      )).success;
-    missingVersionRejected =
-      !(builtins.tryEval (
-        builtins.deepSeq (selectPublisher (builtins.removeAttrs publisherExport [ "schemaVersion" ])) true
-      )).success;
-  };
-  publisherVersionContract = builtins.all (value: value) (
-    builtins.attrValues publisherVersionResults
-  );
   awgInstance = services.vpn-amneziawg.roles.gateway.perInstance {
     settings = settingsFor "vpn-amneziawg" "gateway";
     instanceName = "vpn-amneziawg";
@@ -156,7 +119,7 @@ let
   awgProvider = awgInstance.exports.vpnProvider;
   selectAwgProvider =
     raw:
-    (self.lib.vpnExports { inherit lib; }).selectVpnProvider {
+    vpnExports.selectVpnProvider {
       providerInstanceId = "vpn-amneziawg";
       providerMachine = "vpn-fixture";
       protocol = "amneziawg";
@@ -245,7 +208,7 @@ let
   naiveProvider = naiveInstance.exports.vpnProvider;
   selectNaiveProvider =
     raw:
-    (self.lib.vpnExports { inherit lib; }).selectVpnProvider {
+    vpnExports.selectVpnProvider {
       providerInstanceId = "vpn-naiveproxy";
       providerMachine = "vpn-fixture";
       protocol = "naiveproxy";
@@ -279,7 +242,9 @@ let
           naiveProvider
           // {
             secretNames = naiveProvider.secretNames // {
-              password = builtins.removeAttrs naiveProvider.secretNames.password [ "probe" ];
+              password = builtins.removeAttrs naiveProvider.secretNames.password [
+                (builtins.head naiveProvider.profileNames)
+              ];
             };
           }
         )) true
@@ -289,6 +254,15 @@ let
         builtins.deepSeq (selectNaiveProvider (
           lib.recursiveUpdate naiveProvider {
             secretNames.password.unexpected = "fixture-unexpected-secret";
+          }
+        )) true
+      )).success;
+    userOutsideProfilesRejected =
+      !(builtins.tryEval (
+        builtins.deepSeq (selectNaiveProvider (
+          lib.recursiveUpdate naiveProvider {
+            transportMetadata.userNames = naiveProvider.transportMetadata.userNames ++ [ "unlisted-user" ];
+            secretNames.password.unlisted-user = "fixture-unlisted-secret";
           }
         )) true
       )).success;
@@ -373,6 +347,37 @@ let
       }
     )).success;
   publicHelperRemoved = !(self.lib ? clientProfiles);
+  removedSurfacesResults = {
+    libraryHelpers = builtins.attrNames self.lib == [ "exportInterfaces" ];
+    exportInterfaces = builtins.attrNames self.clan.exportInterfaces == [ "vpnProvider" ];
+    exportInterfaceConstructor =
+      builtins.attrNames (self.lib.exportInterfaces { inherit lib; }) == [ "vpnProvider" ];
+    publisherExportsNothing =
+      (evaluatedServices.vpn-client-profiles.manifest.exports.out or [ ]) == [ ];
+    excludedProfileNamesRejected =
+      !(schemaResult "vpn-client-profiles" (
+        settingsFor "vpn-client-profiles" "publisher" // { excludedProfileNames = [ ]; }
+      )).success;
+    publisherProbeKindRejected =
+      !(schemaResult "vpn-client-profiles" (
+        let
+          settings = settingsFor "vpn-client-profiles" "publisher";
+        in
+        settings // { profiles = map (profile: profile // { kind = "probe"; }) settings.profiles; }
+      )).success;
+    vlessProbeKindRejected =
+      !(schemaResult "vpn-mihomo-vless-xhttp" (
+        let
+          settings = settingsFor "vpn-mihomo-vless-xhttp" "gateway";
+        in
+        settings // { profiles = map (profile: profile // { kind = "probe"; }) settings.profiles; }
+      )).success;
+    naiveProbeUserNameRejected =
+      !(schemaResult "vpn-naiveproxy" (
+        settingsFor "vpn-naiveproxy" "addon" // { probeUserName = "probe"; }
+      )).success;
+  };
+  removedSurfaces = builtins.all (value: value) (builtins.attrValues removedSurfacesResults);
   placementBehavior =
     name: machine:
     {
@@ -548,7 +553,7 @@ let
     awgOverlayPresent = awgOverlays != [ ];
     awgGo = (awgOverlay pkgs pkgs).amneziawg-go == self.packages.${system}.amneziawg-go;
     awgTools = (awgOverlay pkgs pkgs).amneziawg-tools == self.packages.${system}.amneziawg-tools;
-    awgFamily = (self.lib.awgValidation { inherit lib; }).packageFamiliesValid {
+    awgFamily = awgValidation.packageFamiliesValid {
       inherit (self.packages.${system}) amneziawg-go amneziawg-tools;
     };
     adguardOverride =
@@ -580,8 +585,8 @@ let
     && invalidFieldTypes
     && missingAwgClientPrivateKeyBindingRejected
     && publicHelperRemoved
+    && removedSurfaces
     && providerVersionsContract
-    && publisherVersionContract
     && independentPlacements
     && publisherFixtures
     && combinedClanFixture.contract
@@ -617,12 +622,12 @@ if !contract then
         packageAuthorityResults
         providerVersionResults
         providerVersionsContract
-        publisherVersionContract
-        publisherVersionResults
         registeredSchemas
         validSchemaResults
         validSchemas
         publicHelperRemoved
+        removedSurfaces
+        removedSurfacesResults
         ;
     }
   }"
@@ -646,9 +651,10 @@ else
       invalidNestedFields
       packageAuthority
       providerVersionsContract
-      publisherVersionContract
       registeredSchemas
       validSchemas
       publicHelperRemoved
+      removedSurfaces
+      removedSurfacesResults
       ;
   }

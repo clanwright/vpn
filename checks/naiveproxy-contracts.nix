@@ -25,7 +25,6 @@ let
     passwordSecretNames = {
       ibelyasov = "fixture/naive-first-password";
       bsv = "fixture/naive-second-password";
-      probe = "fixture/naive-probe-password";
     };
     additionalDeny = [ "203.0.113.77/32" ];
   };
@@ -115,9 +114,8 @@ let
       passwordSecretNames = {
         phone-android = "fixture/naive-phone-password";
         macbook = "fixture/naive-macbook-password";
-        health-check = "fixture/naive-health-password";
+        tablet = "fixture/naive-tablet-password";
       };
-      probeUserName = "health-check";
     };
     claimSet = claims;
     useSystemdActivation = true;
@@ -148,11 +146,11 @@ let
     };
     useSystemdActivation = true;
   };
-  missingProbe = evaluate {
+  usersOnly = evaluate {
     rawSettings = baseSettings // {
       passwordSecretNames = {
-        phone = "fixture/naive-phone-password";
-        laptop = "fixture/naive-laptop-password";
+        alice = "naiveproxy-alice-password";
+        bob = "naiveproxy-bob-password";
       };
     };
     claimSet = claims;
@@ -206,6 +204,11 @@ let
   siblingPrelude = contributions.sibling-site.preRouteConfigFragments;
   tailnetPrelude = contributions.tailnet-site.preRouteConfigFragments;
   template = legacy.module.sops.templates."naiveproxy-fixture.caddy";
+  basicAuthLines =
+    evaluated:
+    builtins.filter (lib.hasPrefix "  basic_auth ") (
+      lib.splitString "\n" evaluated.module.sops.templates."naiveproxy-fixture.caddy".content
+    );
   contract =
     legacy.assertionsPass
     && activationScriptMode.assertionsPass
@@ -226,7 +229,6 @@ let
       legacy.instance.exports.vpnProvider.transportMetadata.userNames == [
         "bsv"
         "ibelyasov"
-        "probe"
       ]
     &&
       legacy.instance.exports.vpnProvider.profileNames == [
@@ -235,26 +237,57 @@ let
       ]
     &&
       arbitrary.instance.exports.vpnProvider.transportMetadata.userNames == [
-        "health-check"
         "macbook"
         "phone-android"
+        "tablet"
       ]
     &&
       arbitrary.instance.exports.vpnProvider.profileNames == [
         "macbook"
         "phone-android"
+        "tablet"
       ]
+    && usersOnly.assertionsPass
+    &&
+      usersOnly.instance.exports.vpnProvider.transportMetadata.userNames == [
+        "alice"
+        "bob"
+      ]
+    &&
+      usersOnly.instance.exports.vpnProvider.profileNames == [
+        "alice"
+        "bob"
+      ]
+    &&
+      usersOnly.instance.exports.vpnProvider.secretNames.password == {
+        alice = "naiveproxy-alice-password";
+        bob = "naiveproxy-bob-password";
+      }
+    &&
+      basicAuthLines usersOnly == [
+        "  basic_auth alice <SOPS:naiveproxy-alice-password:PLACEHOLDER>"
+        "  basic_auth bob <SOPS:naiveproxy-bob-password:PLACEHOLDER>"
+      ]
+    &&
+      lib.hasPrefix "forward_proxy {"
+        usersOnly.module.sops.templates."naiveproxy-fixture.caddy".content
+    &&
+      basicAuthLines legacy == [
+        "  basic_auth bsv <SOPS:fixture/naive-second-password:PLACEHOLDER>"
+        "  basic_auth ibelyasov <SOPS:fixture/naive-first-password:PLACEHOLDER>"
+      ]
+    && !(schemaAccepts (baseSettings // { probeUserName = "probe"; }))
+    && !(schemaAccepts (baseSettings // { passwordSecretNames = { }; }))
     && !nonPublic.assertionsPass
     && !wrongEndpoint.assertionsPass
     && !mixedSelectedListener.assertionsPass
-    && !missingProbe.assertionsPass
     && !(schemaAccepts (baseSettings // { machineName = "legacy-machine"; }))
     && !(schemaAccepts (
       baseSettings
       // {
         passwordSecretNames = {
           "bad identity" = "fixture/one";
-          probe = "fixture/two";
+          laptop = "fixture/two";
         };
       }
     ))
@@ -263,7 +296,7 @@ let
       // {
         passwordSecretNames = {
           phone = "fixture/../secret";
-          probe = "fixture/two";
+          laptop = "fixture/two";
         };
       }
     ))
@@ -272,7 +305,7 @@ let
       // {
         passwordSecretNames = {
           phone = "fixture/shared";
-          probe = "fixture/shared";
+          laptop = "fixture/shared";
         };
       }
     ))

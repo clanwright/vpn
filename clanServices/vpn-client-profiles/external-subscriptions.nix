@@ -6,17 +6,10 @@
   ...
 }:
 let
-  publishedProfileNames = map (profile: profile.name) (
-    builtins.filter (profile: !(builtins.elem profile.name (settings.excludedProfileNames or [ ]))) (
-      settings.profiles or [ ]
-    )
-  );
   displayNames = import ./display-names.nix { inherit lib; };
   inherit (displayNames) manualGroup autoGroup;
   sourceLabel = name: source: if (source.label or null) == null then name else source.label;
-  sources = lib.filterAttrs (
-    _name: source: builtins.any (name: builtins.elem name publishedProfileNames) source.profileNames
-  ) (settings.externalSubscriptions or { });
+  sources = settings.externalSubscriptions or { };
   # The converter returns {nodes, skipped, service}. Only nodes are cached;
   # skipped entries carry the profile index, sanitized remark and a fixed
   # reason code, never outbound values or jq error text.

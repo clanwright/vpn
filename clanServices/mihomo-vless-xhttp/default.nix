@@ -136,7 +136,6 @@ in
                   type = lib.types.enum [
                     "mobile"
                     "router"
-                    "probe"
                   ];
                   default = "mobile";
                 };

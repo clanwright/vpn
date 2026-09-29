@@ -14,10 +14,10 @@ typed non-secret metadata VPN providers, генерирует профили и 
 профилей, provider refs и links page — в [`types.nix`](types.nix).
 Входы: `enable`, `localMachineName`,
 `configGatewayDomain`, `publicIPv4`, `edgeDomain`, `clientDnsEndpoints`, `secretPrefix`,
-`excludedProfileNames`, `tailnetAdminDomains`, `personalProxyDomains`, `profiles`,
+`tailnetAdminDomains`, `personalProxyDomains`, `profiles`,
 `providerRefs`, `externalSubscriptions`, `profileLinks` и `linksPage`. Provider refs
 содержат machine, instance, canonical protocol и optional `display`. Publisher profiles содержат
-`name`, `kind`, optional `publishProfileJson` и `autoProtocols`; имена credential secrets
+`name`, `kind` (`mobile` или `router`), optional `publishProfileJson` и `autoProtocols`; имена credential secrets
 собственных серверов приходят из typed providers.
 
 ## External subscriptions
@@ -39,9 +39,8 @@ externalSubscriptions.skala = {
 };
 ```
 
-Имена в `profileNames` должны явно выбирать объявленные профили; исключение
-через `excludedProfileNames` сохраняется. Источник не добавляется остальным
-устройствам. `auto = true` по умолчанию
+Имена в `profileNames` должны явно выбирать объявленные профили. Источник не
+добавляется остальным устройствам. `auto = true` по умолчанию
 добавляет совместимые внешние узлы в «Авто»; `false` оставляет их только в
 «Ручной». Эта настройка независима от `autoProtocols` собственных providers:
 внешний VLESS TCP не выдаётся за собственный `vless-xhttp`.
@@ -111,14 +110,13 @@ DoH (`own-doh-0`) с `ipv4_only`; чужие DNS не добавляются. Э
 
 Publisher `enable = false`, `secretPrefix` и gateway address fields пусты
 или nullable. При `enable = false` роль не объявляет сервисы и секреты.
-Из публикации исключается
-профиль `probe`; links page включена, path —
+Публикуются ровно профили из `profiles`; links page включена, path —
 `/config-links/`, title — `VPN client profiles`. Private exposure links page
 задаётся только в consumer.
 
 ## Exports and dependencies
 
-Role экспортирует `vpnPublisher` и выбирает providers через raw Clan
+Role не объявляет собственных exports и выбирает providers через raw Clan
 exports и `clanLib.selectExports`: `naiveproxy` требует addon, а
 `vless-xhttp`, `amneziawg`, `mieru`, `anytls`, `trusttunnel` — gateway. Отсутствующий,
 выключенный, неоднозначный или несоответствующий provider блокирует
@@ -225,7 +223,7 @@ sing-box показывают одно имя. Внешние имена выч�
 Смена имён сбрасывает сохранённый в клиенте выбор один раз: `store-selected`
 хранит выбор по имени подключения.
 
-`vpnProvider` использует версию схемы 2, `vpnPublisher` — 1. Read-only NixOS
+`vpnProvider` использует версию схемы 2. Read-only NixOS
 output `clanwright.vpn.publishers.<instance>` содержит `schemaVersion = 1`,
 `configGatewayDomain`, `profileRoot`, `assetRoot`, `linksRoot`, `routeConfig`, `readerGroup`,
 `publicationUnit`, `refreshUnit` и `statusPath`. Consumer использует эти
@@ -426,9 +424,8 @@ Consumer отвечает за доступность каждого DoH с кл
 [hosts transport](https://sing-box.sagernet.org/configuration/dns/server/hosts/).
 
 Naive credentials выбираются по именам профилей из provider export. Карта не
-ограничена встроенными device names, а probe публикуется только если consumer
-явно включает его в `profiles` и `providerRefs`; штатный default исключает
-`probe` из публикации.
+ограничена встроенными device names; профиль получает Naive-подключение, только
+если consumer явно включает его в `profiles` и допускает в `providerRefs`.
 
 ## State and secrets
 

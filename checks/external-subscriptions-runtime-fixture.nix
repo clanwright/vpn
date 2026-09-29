@@ -44,7 +44,6 @@ let
     edgeDomain = "own-edge.example.invalid";
     configGatewayDomain = "profiles.example.invalid";
     secretPrefix = "fixture";
-    excludedProfileNames = [ ];
     clientDnsEndpoints = [
       {
         domain = "own-dns.example.invalid";

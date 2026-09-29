@@ -17,7 +17,6 @@ let
   profiles = [
     {
       name = "cHJvYmU";
-      kind = "probe";
       publishProfileJson = false;
       vlessUuidSecretName = "fixture-vless-uuid";
     }
@@ -272,7 +271,6 @@ rec {
       passwordSecretNames = {
         ibelyasov = "fixture-naive-first-password";
         bsv = "fixture-naive-second-password";
-        probe = "fixture-naive-probe-password";
         cHJvYmU = "fixture-naive-published-password";
       };
     };
@@ -300,13 +298,11 @@ rec {
         }
       ];
       secretPrefix = "fixture";
-      excludedProfileNames = [ ];
       tailnetAdminDomains = [ "admin.example.invalid" ];
       personalProxyDomains = [ "personal.example.invalid" ];
       profiles = [
         {
           name = "cHJvYmU";
-          kind = "probe";
           publishProfileJson = true;
         }
       ];

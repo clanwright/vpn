@@ -25,9 +25,9 @@ let
     serverPublicKey = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=";
     peers = [
       {
-        name = "probe";
+        name = "tablet";
         publicKey = "CCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCA=";
-        clientPrivateKeySecretName = "consumer/arbitrary-probe-private-key";
+        clientPrivateKeySecretName = "consumer/arbitrary-tablet-private-key";
         allowedIPs = [ "10.77.0.2/32" ];
         clientPersistentKeepalive = 25;
       }
@@ -223,7 +223,7 @@ let
           {
             name = "second";
             publicKey = "DDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDA=";
-            clientPrivateKeySecretName = "consumer/arbitrary-probe-private-key";
+            clientPrivateKeySecretName = "consumer/arbitrary-tablet-private-key";
             allowedIPs = [ "10.77.0.3/32" ];
             clientPersistentKeepalive = null;
           }
@@ -349,7 +349,7 @@ let
   exportContract =
     provider.schemaVersion == 2
     && provider.secretNames.headerProtectionKey == "fixture/awg-header-protection-key"
-    && provider.secretNames.clientPrivateKey.probe == "consumer/arbitrary-probe-private-key"
+    && provider.secretNames.clientPrivateKey.tablet == "consumer/arbitrary-tablet-private-key"
     && metadata.generation == 3
     && metadata.profile == validation.profile
     && metadata.mtu == 1280
