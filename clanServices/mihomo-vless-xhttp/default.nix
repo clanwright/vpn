@@ -132,17 +132,6 @@ in
                 name = lib.mkOption { type = identityType; };
                 vlessUuidSecretName = lib.mkOption { type = secretNameType; };
                 realityShortId = lib.mkOption { type = lib.types.addCheck lib.types.str validShortId; };
-                kind = lib.mkOption {
-                  type = lib.types.enum [
-                    "mobile"
-                    "router"
-                  ];
-                  default = "mobile";
-                };
-                publishProfileJson = lib.mkOption {
-                  type = lib.types.nullOr lib.types.bool;
-                  default = null;
-                };
               };
             })
           );

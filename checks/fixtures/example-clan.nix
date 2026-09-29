@@ -17,7 +17,6 @@ let
   profiles = [
     {
       name = "cHJvYmU";
-      publishProfileJson = false;
       vlessUuidSecretName = "fixture-vless-uuid";
     }
   ];

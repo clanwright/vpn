@@ -141,13 +141,23 @@ export. Apply these consumer edits before evaluating the new revision:
 - Remove NaiveProxy `probeUserName`. Every `passwordSecretNames` identity is now
   a device identity in the provider's `profileNames`; delete the former probe
   identity and its secret binding unless it should become an ordinary device.
-- Replace `kind = "probe"` in VLESS/XHTTP and publisher `profiles` with
-  `mobile` or `router`, or remove the profile.
+- Replace `kind = "probe"` in publisher `profiles` with `mobile` or `router`,
+  or remove the profile. VLESS/XHTTP gateway profiles no longer accept `kind`;
+  see the next section.
 - Remove publisher `excludedProfileNames`. Publication includes exactly the
   declared `profiles`; omit any profile that must not be published.
 
 The `/config-links/` page, `profileLinks`, stable module IDs and `packages` are
 unchanged.
+
+## VLESS/XHTTP gateway profile settings
+
+Gateway `profiles` of `@clanwright/vpn-mihomo-vless-xhttp` accept only `name`,
+`vlessUuidSecretName` and `realityShortId`. Delete `kind` and
+`publishProfileJson` from those entries: they had no effect, and evaluation
+now rejects them. Generated Xray configuration and the `vpnProvider` export
+are unchanged. Publisher `profiles[].kind` and `publishProfileJson` in
+`@clanwright/vpn-client-profiles` keep their meaning.
 
 ## Verification and delivery
 

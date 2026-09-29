@@ -162,8 +162,6 @@ let
     && ((localListenerModule.networking or { }).firewall or { }) == { };
   secondProfile = {
     name = "second";
-    kind = "mobile";
-    publishProfileJson = false;
     vlessUuidSecretName = "fixture-vless-uuid-second";
     realityShortId = "fedcba9876543210";
   };
@@ -355,6 +353,18 @@ let
       settings
       // {
         profiles = map (profile: profile // { realityShortId = "aa00"; }) settings.profiles;
+      }
+    ))
+    (schemaResult (
+      settings
+      // {
+        profiles = map (profile: profile // { kind = "mobile"; }) settings.profiles;
+      }
+    ))
+    (schemaResult (
+      settings
+      // {
+        profiles = map (profile: profile // { publishProfileJson = false; }) settings.profiles;
       }
     ))
     (schemaResult (
