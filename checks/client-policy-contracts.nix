@@ -197,7 +197,6 @@ let
           path = "/fixture-dns-query";
         }
       ];
-      secretPrefix = publisher.localMachineName;
       tailnetAdminDomains = [ "admin.example.invalid" ];
       personalProxyDomains = [ "personal.example.invalid" ];
       inherit profiles;
@@ -211,6 +210,7 @@ let
     };
   profile = name: {
     inherit name;
+    pathTokenSecretName = "fixture-${name}-path-token";
     kind = "mobile";
     publishProfileJson = true;
     autoProtocols = [
@@ -885,7 +885,12 @@ let
             type = profileTypes.profileType;
           };
         }
-        { config.value = value; }
+        {
+          config.value = {
+            pathTokenSecretName = "fixture-schema-path-token";
+          }
+          // value;
+        }
       ];
     }).config.value;
   profileSchemaAccepts =

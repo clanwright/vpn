@@ -16,7 +16,6 @@ let
     domains.edge = settings.edgeDomain;
     serviceDomains.configGateway = settings.configGatewayDomain;
   };
-  inherit (settings) secretPrefix;
   inherit (settings) profiles;
   providersFor = protocol: builtins.filter (provider: provider.protocol == protocol) providers;
   vlessProviders = providersFor "vless-xhttp";
@@ -542,7 +541,7 @@ let
           profile.publishProfileJson
         else
           !isRouterProfile;
-      pathTokenSecret = "mihomo-client-${secretPrefix}-${profile.name}-path-token";
+      pathTokenSecret = profile.pathTokenSecretName;
       # Every own connection name of the profile, in both formats, is reserved
       # when subscription nodes are named so both formats name them alike.
       ownDisplayNames = builtins.attrValues (displayNamesFor profile.name);

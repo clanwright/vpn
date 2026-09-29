@@ -43,7 +43,6 @@ let
     publicIPv4 = "192.0.2.10";
     edgeDomain = "own-edge.example.invalid";
     configGatewayDomain = "profiles.example.invalid";
-    secretPrefix = "fixture";
     clientDnsEndpoints = [
       {
         domain = "own-dns.example.invalid";
@@ -57,6 +56,7 @@ let
     profiles = [
       {
         name = "fixture";
+        pathTokenSecretName = "fixture-path-token";
         kind = "mobile";
         publishProfileJson = true;
         autoProtocols = [ "naiveproxy" ];

@@ -365,6 +365,32 @@ let
         in
         settings // { profiles = map (profile: profile // { kind = "probe"; }) settings.profiles; }
       )).success;
+    publisherSecretPrefixRejected =
+      !(schemaResult "vpn-client-profiles" (
+        settingsFor "vpn-client-profiles" "publisher" // { secretPrefix = "fixture"; }
+      )).success;
+    profileLinkPathTokenSecretNameRejected =
+      !(schemaResult "vpn-client-profiles" (
+        let
+          settings = settingsFor "vpn-client-profiles" "publisher";
+        in
+        settings
+        // {
+          profileLinks = map (
+            link: link // { pathTokenSecretName = "fixture-link-path-token"; }
+          ) settings.profileLinks;
+        }
+      )).success;
+    profilePathTokenSecretNameRequired =
+      !(schemaResult "vpn-client-profiles" (
+        let
+          settings = settingsFor "vpn-client-profiles" "publisher";
+        in
+        settings
+        // {
+          profiles = map (profile: builtins.removeAttrs profile [ "pathTokenSecretName" ]) settings.profiles;
+        }
+      )).success;
     vlessProbeKindRejected =
       !(schemaResult "vpn-mihomo-vless-xhttp" (
         let

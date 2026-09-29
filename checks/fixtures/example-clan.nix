@@ -296,12 +296,12 @@ rec {
           path = "/fixture-dns-query";
         }
       ];
-      secretPrefix = "fixture";
       tailnetAdminDomains = [ "admin.example.invalid" ];
       personalProxyDomains = [ "personal.example.invalid" ];
       profiles = [
         {
           name = "cHJvYmU";
+          pathTokenSecretName = "publisher-profile-path-token-cHJvYmU";
           publishProfileJson = true;
         }
       ];
@@ -310,7 +310,6 @@ rec {
           name = "cHJvYmU";
           label = "Fixture profile";
           accountDomain = "profiles.example.invalid";
-          pathTokenSecretName = "mihomo-client-fixture-cHJvYmU-path-token";
         }
       ];
       providerRefs = [

@@ -135,12 +135,12 @@ let
         path = "/dns-query";
       }
     ];
-    secretPrefix = "publisher-a";
     tailnetAdminDomains = [ "admin.example.invalid" ];
     personalProxyDomains = [ "personal.example.invalid" ];
   };
   aliceProfile = autoProtocols: {
     name = "alice";
+    pathTokenSecretName = "publisher-a-alice-path-token";
     kind = "mobile";
     publishProfileJson = true;
     inherit autoProtocols;

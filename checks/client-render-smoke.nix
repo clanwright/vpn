@@ -101,17 +101,15 @@ let
       roles.publisher.machines.vpn-fixture.settings = settings;
     };
   publisherSettingsFor =
-    localMachineName: secretPrefix: configGatewayDomain:
+    localMachineName: tokenPrefix: configGatewayDomain:
     publisherSettings
     // {
-      inherit localMachineName secretPrefix configGatewayDomain;
+      inherit localMachineName configGatewayDomain;
+      profiles = map (
+        profile: profile // { pathTokenSecretName = "${tokenPrefix}-${profile.name}-path-token"; }
+      ) publisherSettings.profiles;
       profileLinks = map (
-        link:
-        link
-        // {
-          pathTokenSecretName = "mihomo-client-${secretPrefix}-${link.name}-path-token";
-          accountDomain = configGatewayDomain;
-        }
+        link: link // { accountDomain = configGatewayDomain; }
       ) publisherSettings.profileLinks;
     };
   firstPublisherSettings = publisherSettingsFor "fixture-a" "fixture-a" "profiles-a.example.invalid";
@@ -194,6 +192,16 @@ let
   duplicateProfileRejected = rejectsInstances "duplicate-profile" (
     publisherWith (
       publisherSettings // { profiles = publisherSettings.profiles ++ publisherSettings.profiles; }
+    )
+  );
+  pathTokenCredentialSecretRejected = rejectsInstances "path-token-credential-secret" (
+    publisherWith (
+      publisherSettings
+      // {
+        profiles = map (
+          profile: profile // { pathTokenSecretName = "fixture-vless-uuid"; }
+        ) publisherSettings.profiles;
+      }
     )
   );
   duplicateProviderRefRejected = rejectsInstances "duplicate-provider-ref" (
@@ -391,7 +399,7 @@ let
       map (profileEntry: profileEntry.name) manifest.profiles == [ "cHJvYmU" ]
       &&
         manifestProfile.pathTokenBinding == {
-          secretName = "mihomo-client-fixture-cHJvYmU-path-token";
+          secretName = "publisher-profile-path-token-cHJvYmU";
           decoding = "path-token";
         };
     artifactOutputs =
@@ -1210,6 +1218,7 @@ let
       duplicateProfileRejected
       duplicateProviderRefRejected
       missingCredentialRejected
+      pathTokenCredentialSecretRejected
       unknownProfileRejected
       ;
     tokenLengthValidationPresent = lib.hasInfix "wc -c" publicationScript;

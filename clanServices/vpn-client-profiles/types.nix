@@ -151,6 +151,10 @@ let
   profileType = lib.types.submodule (_: {
     options = {
       name = lib.mkOption { type = safeIdentityType; };
+      pathTokenSecretName = lib.mkOption {
+        type = safeSecretNameType;
+        description = "Consumer-owned SOPS secret containing the token for this profile's publication path.";
+      };
       kind = lib.mkOption {
         type = lib.types.enum [
           "mobile"
@@ -257,10 +261,6 @@ let
       name = lib.mkOption { type = safeIdentityType; };
       label = lib.mkOption { type = lib.types.str; };
       accountDomain = lib.mkOption { type = lib.types.str; };
-      pathTokenSecretName = lib.mkOption {
-        type = safeSecretNameType;
-        description = "SOPS secret name containing the token for this published profile path.";
-      };
     };
   });
 in

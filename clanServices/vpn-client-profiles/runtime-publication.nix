@@ -33,14 +33,20 @@ let
       manifest
     else
       throw "vpn-client-profiles: invalid internal artifact manifest";
-  allSecretNames = lib.unique (
+  pathTokenSecretNames = map (profile: profile.pathTokenBinding.secretName) checkedManifest.profiles;
+  credentialSecretNames =
     lib.concatMap (
       profile:
-      [ profile.pathTokenBinding.secretName ]
-      ++ lib.concatMap (artifact: map (binding: binding.secretName) artifact.bindings) profile.artifacts
+      lib.concatMap (artifact: map (binding: binding.secretName) artifact.bindings) profile.artifacts
     ) checkedManifest.profiles
-    ++ map (source: source.urlSecretName) (builtins.attrValues externalSources)
-  );
+    ++ map (source: source.urlSecretName) (builtins.attrValues externalSources);
+  # A path token becomes a public URL segment, so it must never share a secret
+  # with a credential or subscription URL.
+  allSecretNames =
+    if lib.intersectLists pathTokenSecretNames credentialSecretNames != [ ] then
+      throw "vpn-client-profiles: path-token secrets must differ from credential and subscription URL secrets."
+    else
+      lib.unique (pathTokenSecretNames ++ credentialSecretNames);
   secretDecls = lib.genAttrs allSecretNames (_name: {
     format = lib.mkDefault "binary";
     owner = "root";

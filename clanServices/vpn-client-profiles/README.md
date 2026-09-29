@@ -13,12 +13,15 @@ typed non-secret metadata VPN providers, генерирует профили и 
 Точная схема и defaults определены в [`default.nix`](default.nix), а типы
 профилей, provider refs и links page — в [`types.nix`](types.nix).
 Входы: `enable`, `localMachineName`,
-`configGatewayDomain`, `publicIPv4`, `edgeDomain`, `clientDnsEndpoints`, `secretPrefix`,
+`configGatewayDomain`, `publicIPv4`, `edgeDomain`, `clientDnsEndpoints`,
 `tailnetAdminDomains`, `personalProxyDomains`, `profiles`,
 `providerRefs`, `externalSubscriptions`, `profileLinks` и `linksPage`. Provider refs
 содержат machine, instance, canonical protocol и optional `display`. Publisher profiles содержат
-`name`, `kind` (`mobile` или `router`), optional `publishProfileJson` и `autoProtocols`; имена credential secrets
-собственных серверов приходят из typed providers.
+`name`, `pathTokenSecretName`, `kind` (`mobile` или `router`), optional `publishProfileJson` и
+`autoProtocols`. `pathTokenSecretName` — consumer-owned SOPS secret с path token профиля;
+модуль использует имя как задано и не строит имена secrets из префиксов или имён машин.
+Имена credential secrets собственных серверов приходят из typed providers. Profile links
+содержат `name`, `label` и `accountDomain` и используют path token своего профиля.
 
 ## External subscriptions
 
@@ -108,7 +111,7 @@ DoH (`own-doh-0`) с `ipv4_only`; чужие DNS не добавляются. Э
 
 ## Defaults
 
-Publisher `enable = false`, `secretPrefix` и gateway address fields пусты
+Publisher `enable = false`, `localMachineName` и gateway address fields пусты
 или nullable. При `enable = false` роль не объявляет сервисы и секреты.
 Публикуются ровно профили из `profiles`; links page включена, path —
 `/config-links/`, title — `VPN client profiles`. Private exposure links page
@@ -434,7 +437,9 @@ UUID/password/key inputs читаются по SOPS paths через задан�
 Generated profiles, link tokens и credentials не записываются в Git или Nix store.
 Имена machine/profile/instance ограничены безопасными 64-символьными
 идентификаторами, а secret names — сегментным SOPS path grammar. Каждый
-profile link обязан ссылаться на renderer-owned path-token secret. Сам token
+profile использует отдельный path-token secret из `pathTokenSecretName`; он не может
+совпадать с credential secret или secret URL внешней подписки, потому что token
+становится публичным сегментом URL. Сам token
 должен состоять из 32–128 unpadded base64url символов без завершающего newline;
 renderer проверяет raw bytes до публикации файлов и links page.
 

@@ -147,8 +147,9 @@ export. Apply these consumer edits before evaluating the new revision:
 - Remove publisher `excludedProfileNames`. Publication includes exactly the
   declared `profiles`; omit any profile that must not be published.
 
-The `/config-links/` page, `profileLinks`, stable module IDs and `packages` are
-unchanged.
+The `/config-links/` page, stable module IDs and `packages` are unchanged.
+`profileLinks` no longer carries the path-token secret; see
+[publisher path-token secrets](#publisher-path-token-secrets).
 
 ## VLESS/XHTTP gateway profile settings
 
@@ -158,6 +159,24 @@ Gateway `profiles` of `@clanwright/vpn-mihomo-vless-xhttp` accept only `name`,
 now rejects them. Generated Xray configuration and the `vpnProvider` export
 are unchanged. Publisher `profiles[].kind` and `publishProfileJson` in
 `@clanwright/vpn-client-profiles` keep their meaning.
+
+## Publisher path-token secrets
+
+Each publisher profile names its own path-token secret in
+`profiles[].pathTokenSecretName`. The renderer and the links page both use
+that name as given; the module no longer derives it. Apply these edits:
+
+- Add `pathTokenSecretName` to every publisher profile. To keep the existing
+  secret and published URLs, set it to the former derived name
+  `mihomo-client-<secretPrefix>-<profile>-path-token`; otherwise supply any
+  valid consumer-owned SOPS name and move the token value to it.
+- Remove publisher `secretPrefix`.
+- Remove `pathTokenSecretName` from `profileLinks` entries; a link uses the
+  path token of its profile.
+
+Every profile needs a distinct path-token secret, and it must differ from
+credential and external subscription URL secrets: the token becomes a public URL
+segment. Token format and publication behaviour are unchanged.
 
 ## Verification and delivery
 

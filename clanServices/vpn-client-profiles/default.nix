@@ -18,7 +18,6 @@ let
     publicIPv4 = null;
     edgeDomain = null;
     clientDnsEndpoints = null;
-    secretPrefix = "";
     tailnetAdminDomains = [ ];
     personalProxyDomains = [ ];
     profiles = [ ];
@@ -67,10 +66,6 @@ let
       type = lib.types.nullOr types.clientDnsEndpointsType;
       default = publisherDefaults.clientDnsEndpoints;
       description = "Consumer-owned DNS-over-HTTPS endpoints; null preserves the edgeDomain/publicIPv4 endpoint.";
-    };
-    secretPrefix = lib.mkOption {
-      type = types.optionalSafeIdentityType;
-      default = publisherDefaults.secretPrefix;
     };
     tailnetAdminDomains = lib.mkOption {
       type = lib.types.listOf lib.types.str;
@@ -168,7 +163,7 @@ in
         publisherProfileNames = map (profile: profile.name) publisher.profiles;
         providerRefKeys = map (ref: "${ref.machine}/${ref.instanceId}/${ref.protocol}") providerRefs;
         profileLinkNames = map (link: link.name) publisher.profileLinks;
-        profileLinkSecretNames = map (link: link.pathTokenSecretName) publisher.profileLinks;
+        profilePathTokenSecretNames = map (profile: profile.pathTokenSecretName) publisher.profiles;
         ownDisplayLabels = map (
           ref: if (ref.display or null) == null then ref.machine else ref.display.label
         ) providerRefs;
@@ -348,10 +343,6 @@ in
                   message = "vpn-client-profiles: enabled publisher requires at least one valid client DNS endpoint.";
                 }
                 {
-                  assertion = !active || publisher.secretPrefix != "";
-                  message = "vpn-client-profiles: secretPrefix is required when publishing is enabled.";
-                }
-                {
                   assertion = !active || providerRefs != [ ];
                   message = "vpn-client-profiles: enabled publisher requires explicit providerRefs.";
                 }
@@ -372,14 +363,8 @@ in
                   message = "vpn-client-profiles: profile link names must be unique.";
                 }
                 {
-                  assertion = profileLinkSecretNames == lib.unique profileLinkSecretNames;
-                  message = "vpn-client-profiles: each profile link requires a distinct path-token secret.";
-                }
-                {
-                  assertion = builtins.all (
-                    link: link.pathTokenSecretName == "mihomo-client-${publisher.secretPrefix}-${link.name}-path-token"
-                  ) publisher.profileLinks;
-                  message = "vpn-client-profiles: each profile link must use the profile renderer path-token secret.";
+                  assertion = profilePathTokenSecretNames == lib.unique profilePathTokenSecretNames;
+                  message = "vpn-client-profiles: each profile requires a distinct path-token secret.";
                 }
                 {
                   assertion = lib.subtractLists publisherProfileNames profileLinkNames == [ ];

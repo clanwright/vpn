@@ -65,7 +65,7 @@ let
   mieruPasswordSecret = machine.sops.secrets."fixture-mieru-password";
   anytlsPasswordSecret = machine.sops.secrets."fixture-anytls-password";
   trustTunnelPasswordSecret = machine.sops.secrets."fixture-trusttunnel-password";
-  pathTokenSecret = machine.sops.secrets."mihomo-client-fixture-cHJvYmU-path-token";
+  pathTokenSecret = machine.sops.secrets."publisher-profile-path-token-cHJvYmU";
   tmpfilesRules = machine.systemd.tmpfiles.rules;
   afterFinalPrivateReset = lib.last (lib.splitString "private_tmp_files=()" publicationUnit.script);
   afterLocalAssetSync = lib.last (lib.splitString "local_asset_tmp=" publicationUnit.script);
@@ -309,6 +309,7 @@ let
     && refreshPreservesCache
     && lib.hasInfix publisherIntegration.statusPath refreshUnit.script
     && pathTokenSecret.restartUnits == [ publisherIntegration.publicationUnit ]
+    && lib.hasInfix pathTokenSecret.path publicationUnit.script
     && machine.services.dnsproxy.settings.listen-addrs == [ "127.0.0.1" ]
     && caddyFragments ? fixture-site
     && builtins.elem "forward-proxy" caddyFragments.fixture-site.capabilities;
