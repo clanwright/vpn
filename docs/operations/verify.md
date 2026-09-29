@@ -15,7 +15,9 @@ does not extend the main gate's execution boundary.
 
 The same harness invokes `scripts/test-subscriptions-runtime.sh` for external
 subscription import. It uses synthetic Xray profiles and a stubbed HTTP client,
-clock and privileged filesystem commands. It checks extraction, per-client
+clock and privileged filesystem commands. It checks extraction, including
+same-country REALITY and XHTTP pairs with an empty XHTTP host, per-node skip
+diagnostics without connection parameters, per-client
 composition, profile scope, `Ручной`/`Авто` membership, the custom `GLOBAL`
 group, node naming and collisions, source labels without refetch, cache
 invalidation and expiry without contacting a subscription or running VPN

@@ -116,6 +116,13 @@ run_lifecycle() {
 		esac
 	' bash "$test_root/runtime.sh" "$operation" "$test_root/mihomo.json" "$test_root/singbox.json" "$(cat "$test_root/own-names.json")") >>"$test_root/lifecycle.log" 2>&1
 }
+# Refresh diagnostics written since the last log_mark.
+log_mark() {
+	log_offset="$(wc -l <"$test_root/lifecycle.log" | tr -d ' ')"
+}
+refresh_log() {
+	tail -n "+$((log_offset + 1))" "$test_root/lifecycle.log" | rg '^VPN external refresh: '
+}
 compose() {
 	cp "$test_root/base-mihomo.json" "$test_root/mihomo.json"
 	cp "$test_root/base-singbox.json" "$test_root/singbox.json"
@@ -150,11 +157,17 @@ assert_no_leaks() {
 # Converter and composer assertions use real jq, generated production filters,
 # and production own-provider templates; no VPN parser is executed.
 "$jq_bin" --arg source fixture --argjson auto true -f "$test_root/converter.jq" \
-	"$VPN_SUBSCRIPTION_TEST_BODY" >"$test_root/nodes.json"
+	"$VPN_SUBSCRIPTION_TEST_BODY" >"$test_root/converted.json"
+# Service outbounds are counted, not reported; the sing-box skip of the XHTTP
+# node is reported per node with its remark and a fixed reason.
+"$jq_bin" -e '.service == 2 and .skipped == [{index: 1, label: "🇩🇪 Германия", target: "sing-box", reason: "unsupported-xhttp"}]' \
+	"$test_root/converted.json" >/dev/null
+"$jq_bin" '.nodes' "$test_root/converted.json" >"$test_root/nodes.json"
 "$jq_bin" -e 'length == 2 and ([.[] | select(.singBox != null)] | length == 1)
 	and all(.[]; .tcp and .udp and .auto)
 	and ([.[].mihomo.port] | sort) == [443,8443]
-	and (.[0].mihomo.uuid == "11111111-1111-4111-8111-111111111111")' "$test_root/nodes.json" >/dev/null
+	and (.[0].mihomo.uuid == "11111111-1111-4111-8111-111111111111")
+	and ([.[] | select(.mihomo.network == "xhttp") | .mihomo."xhttp-opts".host] == ["transport.example.invalid"])' "$test_root/nodes.json" >/dev/null
 # The converter stores only the sanitized remark; naming happens at composition.
 "$jq_bin" -e 'all(.[]; keys == ["auto","label","mihomo","singBox","tcp","udp"] and .label == "🇩🇪 Германия")' \
 	"$test_root/nodes.json" >/dev/null
@@ -244,16 +257,25 @@ assert_nodes 2 1
 	"$VPN_SUBSCRIPTION_TEST_BODY" >"$test_root/unsupported.json"
 cp "$test_root/unsupported.json" "$VPN_SUBSCRIPTION_TEST_BODY"
 export VPN_SUBSCRIPTION_TEST_NOW=110800
+log_mark
 run_lifecycle refresh
 compose
 assert_nodes 1 1
+# Each skipped node is logged once with its remark and cause.
+refresh_log | rg -qxF 'VPN external refresh: source=fixture result=accepted mihomo=1 sing-box=1 skipped=1 service=2'
+refresh_log | rg -qxF 'VPN external refresh: source=fixture result=skipped index=1 remark="🇩🇪 Германия" target=all reason=insecure-tls'
+test "$(refresh_log | rg -c 'result=skipped')" == 1
 "$jq_bin" '.[0].outbounds[0].streamSettings.sockopt = {mark: 123}' \
 	"$VPN_SUBSCRIPTION_TEST_BODY" >"$test_root/unsupported.json"
 cp "$test_root/unsupported.json" "$VPN_SUBSCRIPTION_TEST_BODY"
 export VPN_SUBSCRIPTION_TEST_NOW=114400
+log_mark
 run_lifecycle refresh
 compose
 assert_nodes 0 0
+refresh_log | rg -qxF 'VPN external refresh: source=fixture result=skipped index=0 remark="🇩🇪 Германия" target=all reason=unsupported-transport-field'
+refresh_log | rg -qxF 'VPN external refresh: source=fixture result=skipped index=1 remark="🇩🇪 Германия" target=all reason=insecure-tls'
+test "$(refresh_log | rg -c 'result=skipped')" == 2
 
 # Invalid response invalidates old nodes. Transient HTTP errors alone preserve
 # a bounded prior snapshot; retry is 300 seconds and expiry needs no fetch.
@@ -480,6 +502,90 @@ for cache_file in accepted.json accepted-at next-at; do cp -p "$test_root/legacy
 run_lifecycle prepare
 test -s "$cache_dir/accepted.json"
 
+# Issue #10 shape: seven countries, each with a REALITY node on 443 and a
+# "· Резерв" XHTTP/TLS packet-up node on 8443 whose xhttpSettings.host is
+# empty, inside full Xray profiles with direct, block and dns-out outbounds.
+"$jq_bin" '
+	.[0].outbounds[0] as $r | .[1].outbounds[0] as $x
+	| {log: {loglevel: "warning"}, routing: {rules: []}, dns: {servers: ["https://upstream-dns.example.invalid/dns-query"]},
+		inbounds: [{protocol: "socks", port: 10808}]} as $shell
+	| [{tag: "direct", protocol: "freedom"}, {tag: "block", protocol: "blackhole"}, {tag: "dns-out", protocol: "dns"}] as $service
+	| [["🇸🇪", "Швеция"], ["🇫🇮", "Финляндия"], ["🇳🇱", "Нидерланды"], ["🇩🇪", "Германия"], ["🇵🇱", "Польша"], ["🇱🇻", "Латвия"], ["🇰🇿", "Казахстан"]]
+	| to_entries | map(
+		"country-\(.key).example.invalid" as $address | "\(.value[0]) \(.value[1])" as $remark
+		| ($shell + {remarks: $remark, outbounds: ([$r | .settings.vnext[0].address = $address] + $service)}),
+			($shell + {remarks: "\($remark) · Резерв", outbounds: ([$x
+				| .settings.vnext[0].address = $address
+				| .streamSettings.tlsSettings.serverName = $address
+				| .streamSettings.xhttpSettings.host = ""] + $service)}))
+	| flatten' "$repository_root/checks/fixtures/external-subscriptions.json" >"$test_root/pairs-body.json"
+cp "$test_root/pairs-body.json" "$VPN_SUBSCRIPTION_TEST_BODY"
+rm -f "$cache_dir/next-at"
+export VPN_SUBSCRIPTION_TEST_NOW=225600
+log_mark
+run_lifecycle refresh
+compose
+assert_nodes 14 7
+assert_unique_names
+# Each REALITY/XHTTP pair is told apart by the preserved remark suffix, so no
+# transport or ordinal suffix is needed; sing-box gets the REALITY names.
+"$jq_bin" -e '
+	[.proxies[] | select(.network == "tcp") | .name] as $reality
+	| [.proxies[] | select(.network == "xhttp")] as $xhttp
+	| ($reality | length) == 7 and ($xhttp | length) == 7
+	and ([$xhttp[].name] | sort) == ($reality | map(sub(" · Skala$"; " · Резерв · Skala")) | sort)
+	and all($reality[]; test("^\\S+ \\S+ · Skala$"))
+	and all($xhttp[]; .port == 8443 and ."xhttp-opts" == {path: "/fixture-xhttp/", mode: "packet-up"}
+		and .servername == .server and .alpn == ["h2", "http/1.1"])
+	and ."proxy-groups"[0].proxies == (["Авто"] + [.proxies[].name])
+' "$test_root/mihomo.json" >/dev/null
+"$jq_bin" -e --slurpfile mihomo "$test_root/mihomo.json" '
+	[.outbounds[] | select(.type == "vless") | .tag] == [$mihomo[0].proxies[] | select(.network == "tcp") | .name]' \
+	"$test_root/singbox.json" >/dev/null
+refresh_log | rg -qxF 'VPN external refresh: source=fixture result=accepted mihomo=14 sing-box=7 skipped=0 service=42'
+refresh_log | rg -qxF 'VPN external refresh: source=fixture result=skipped index=1 remark="🇸🇪 Швеция · Резерв" target=sing-box reason=unsupported-xhttp'
+test "$(refresh_log | rg -c 'result=skipped index=[0-9]+ remark="[^"]+ · Резерв" target=sing-box reason=unsupported-xhttp$')" == 7
+test "$(refresh_log | rg -c 'result=skipped')" == 7
+if refresh_log | rg -q 'country-[0-9]\.example\.invalid|fixture-xhttp|11111111-1111-4111-8111-111111111111'; then
+	printf 'skip diagnostics leaked connection parameters\n' >&2
+	exit 1
+fi
+
+# Same-country REALITY + REALITY: a duplicate remark on a second server gains
+# the transport and an ordinal; an identical repeated outbound is imported once.
+"$jq_bin" '.[0] as $first
+	| [$first, ($first | .outbounds[0].settings.vnext[0].address = "country-7.example.invalid"), $first]' \
+	"$test_root/pairs-body.json" >"$VPN_SUBSCRIPTION_TEST_BODY"
+rm -f "$cache_dir/next-at"
+log_mark
+run_lifecycle refresh
+compose
+assert_nodes 2 2
+assert_unique_names
+"$jq_bin" -e '
+	([.proxies[].name] | sort) == ["🇸🇪 Швеция · Skala · REALITY", "🇸🇪 Швеция · Skala · REALITY 2"]
+	and ([.proxies[].server] | sort) == ["country-0.example.invalid", "country-7.example.invalid"]' "$test_root/mihomo.json" >/dev/null
+refresh_log | rg -qxF 'VPN external refresh: source=fixture result=accepted mihomo=2 sing-box=2 skipped=1 service=9'
+refresh_log | rg -qxF 'VPN external refresh: source=fixture result=skipped index=2 remark="🇸🇪 Швеция" target=all reason=duplicate'
+# Unsupported protocols are skipped by name only; a non-string remark is null,
+# and NEL or line/paragraph separators in a remark cannot split a log line.
+"$jq_bin" '.[0] | .outbounds[0] = {tag: "proxy", protocol: "vmess", settings: {vnext: [{address: "country-0.example.invalid", port: 443}]}}
+	| [.remarks = 7, .remarks = ("A" + ([133] | implode) + "result=skipped" + ([8232] | implode) + "B" + ([8233] | implode) + "C")]' \
+	"$test_root/pairs-body.json" >"$VPN_SUBSCRIPTION_TEST_BODY"
+rm -f "$cache_dir/next-at"
+log_mark
+run_lifecycle refresh
+compose
+assert_nodes 0 0
+refresh_log | rg -qxF 'VPN external refresh: source=fixture result=skipped index=0 remark=null target=all reason=unsupported-protocol'
+refresh_log | rg -qxF 'VPN external refresh: source=fixture result=skipped index=1 remark="A result=skipped B C" target=all reason=unsupported-protocol'
+test "$(refresh_log | wc -l | tr -d ' ')" == 3
+cp "$test_root/names-body.json" "$VPN_SUBSCRIPTION_TEST_BODY"
+rm -f "$cache_dir/next-at"
+run_lifecycle refresh
+compose
+assert_nodes 5 4
+
 # Composer edge cases use the production filter directly on converter output:
 # reserved and own-provider names cannot be taken by a subscription node.
 compose_direct() {
@@ -487,7 +593,7 @@ compose_direct() {
 }
 converted_nodes() {
 	"$jq_bin" --arg source "$1" --argjson auto "$2" -f "$test_root/converter.jq" "$names_body" |
-		"$jq_bin" --arg source "$1" --argjson auto "$2" 'map(.auto = $auto | .source = $source)'
+		"$jq_bin" --arg source "$1" --argjson auto "$2" '.nodes | map(.auto = $auto | .source = $source)'
 }
 names_body="$test_root/names-body.json"
 converted_nodes DIRECT true >"$test_root/nodes-direct.json"
@@ -633,4 +739,4 @@ if rg -q 'fixture-secret-url|synthetic-own-secret|11111111-1111-4111-8111-111111
 	exit 1
 fi
 assert_no_leaks
-printf 'subscription runtime harness: PASS (conversion, source-label naming and collisions, format-parity naming, 1024-node naming, legacy-cache refetch, rules untouched, composition, scope, manual selection, empty and unsupported, partial200 timeout, retry and TTL, auth, URL rotation, removal, interrupted timestamps, short TTL, sibling expiry during slow fetch, own before fetch, second-publication cleanup, private logs)\n'
+printf 'subscription runtime harness: PASS (conversion, empty XHTTP host, same-country REALITY+XHTTP and REALITY+REALITY pairs, per-node skip diagnostics, source-label naming and collisions, format-parity naming, 1024-node naming, legacy-cache refetch, rules untouched, composition, scope, manual selection, empty and unsupported, partial200 timeout, retry and TTL, auth, URL rotation, removal, interrupted timestamps, short TTL, sibling expiry during slow fetch, own before fetch, second-publication cleanup, private logs)\n'

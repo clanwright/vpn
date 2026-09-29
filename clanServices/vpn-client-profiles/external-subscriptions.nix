@@ -17,58 +17,81 @@ let
   sources = lib.filterAttrs (
     _name: source: builtins.any (name: builtins.elem name publishedProfileNames) source.profileNames
   ) (settings.externalSubscriptions or { });
+  # The converter returns {nodes, skipped, service}. Only nodes are cached;
+  # skipped entries carry the profile index, sanitized remark and a fixed
+  # reason code, never outbound values or jq error text.
   converter = ''
     def closed($allowed): type == "object" and ((keys - $allowed) | length == 0);
     def text: type == "string" and length > 0 and (test("[\u0000-\u0020\u007f]") | not);
     def fingerprint: IN("chrome","firefox","safari","ios","android","edge","360","qq","random","randomized");
+    def need(f; $reason): if f then . else error({skip: $reason}) end;
+    def service: type == "object" and (.protocol | IN("freedom","blackhole","dns","loopback"));
     def node:
-      select(closed(["tag","protocol","settings","streamSettings"]))
-      | select(.protocol == "vless")
-      | select(.settings | closed(["vnext"]))
-      | select(.settings.vnext | type == "array" and length == 1)
+      need(type == "object"; "malformed")
+      | need(.protocol == "vless"; "unsupported-protocol")
+      | need(closed(["tag","protocol","settings","streamSettings"]); "unsupported-outbound-field")
+      | need(.settings | closed(["vnext"]); "unsupported-settings")
+      | need(.settings.vnext | type == "array" and length == 1; "unsupported-server-count")
       | . as $o | .settings.vnext[0] as $s
-      | select($s | closed(["address","port","users"]))
-      | select($s.address | text)
-      | select($s.port | type == "number" and floor == . and . >= 1 and . <= 65535)
-      | select($s.users | type == "array" and length == 1)
+      | need($s | closed(["address","port","users"]); "invalid-server")
+      | need($s.address | text; "invalid-server")
+      | need($s.port | type == "number" and floor == . and . >= 1 and . <= 65535; "invalid-port")
+      | need($s.users | type == "array" and length == 1; "unsupported-user-count")
       | $s.users[0] as $u
-      | select($u | closed(["id","encryption","flow"]))
-      | select($u.id | type == "string" and test("^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"))
-      | select($u.encryption == "none")
+      | need($u | closed(["id","encryption","flow"]); "invalid-user")
+      | need($u.id | type == "string" and test("^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"); "invalid-user")
+      | need($u.encryption == "none"; "unsupported-encryption")
       | $o.streamSettings as $t
+      | need($t | type == "object"; "unsupported-transport")
       | if $t.network == "tcp" and $t.security == "reality" then
-          select($t | closed(["network","security","realitySettings","tcpSettings"]))
-          | select($t.tcpSettings == null or $t.tcpSettings == {} or $t.tcpSettings == {header:{type:"none"}})
-          | select($u.flow == "xtls-rprx-vision")
+          need($t | closed(["network","security","realitySettings","tcpSettings"]); "unsupported-transport-field")
+          | need($t.tcpSettings == null or $t.tcpSettings == {} or $t.tcpSettings == {header:{type:"none"}}; "unsupported-tcp-header")
+          | need($u.flow == "xtls-rprx-vision"; "unsupported-flow")
           | $t.realitySettings as $r
-          | select($r | closed(["show","fingerprint","serverName","publicKey","shortId","spiderX"]))
-          | select($r.show == null or $r.show == false)
-          | select($r.serverName | text) | select($r.fingerprint | fingerprint)
-          | select($r.publicKey | type == "string" and test("^[A-Za-z0-9_-]{43}$"))
-          | select($r.shortId | type == "string" and test("^([0-9a-fA-F]{2}){0,8}$"))
-          | select($r.spiderX == null or ($r.spiderX | type == "string" and startswith("/")))
+          | need($r | closed(["show","fingerprint","serverName","publicKey","shortId","spiderX"]); "unsupported-reality-field")
+          | need($r.show == null or $r.show == false; "unsupported-reality-field")
+          | need($r.serverName | text; "invalid-server-name")
+          | need($r.fingerprint | fingerprint; "unsupported-fingerprint")
+          | need($r.publicKey | type == "string" and test("^[A-Za-z0-9_-]{43}$"); "invalid-reality-key")
+          | need($r.shortId | type == "string" and test("^([0-9a-fA-F]{2}){0,8}$"); "invalid-reality-short-id")
+          | need($r.spiderX == null or ($r.spiderX | type == "string" and startswith("/")); "invalid-reality-spider-x")
           | {tcp:true,udp:true,auto:$auto,
              mihomo:{type:"vless",server:$s.address,port:$s.port,uuid:$u.id,network:"tcp",udp:true,tls:true,flow:$u.flow,servername:$r.serverName,"client-fingerprint":$r.fingerprint,"reality-opts":{"public-key":$r.publicKey,"short-id":$r.shortId}},
              singBox:{type:"vless",server:$s.address,server_port:$s.port,uuid:$u.id,flow:$u.flow,packet_encoding:"xudp",domain_resolver:{server:"own-doh-0",strategy:"ipv4_only"},tls:{enabled:true,server_name:$r.serverName,utls:{enabled:true,fingerprint:$r.fingerprint},reality:{enabled:true,public_key:$r.publicKey,short_id:$r.shortId}}}}
         elif $t.network == "xhttp" and $t.security == "tls" then
-          select($t | closed(["network","security","tlsSettings","xhttpSettings"]))
-          | select(($u.flow // "") == "")
+          need($t | closed(["network","security","tlsSettings","xhttpSettings"]); "unsupported-transport-field")
+          | need(($u.flow // "") == ""; "unsupported-flow")
           | $t.tlsSettings as $tls | $t.xhttpSettings as $x
-          | select($tls | closed(["serverName","fingerprint","alpn","allowInsecure"]))
-          | select($tls.allowInsecure == null or $tls.allowInsecure == false)
-          | select($tls.serverName | text) | select($tls.fingerprint | fingerprint)
-          | select($tls.alpn | type == "array" and length > 0 and all(.[]; . == "h2" or . == "http/1.1"))
-          | select($x | closed(["path","mode","host"]))
-          | select($x.mode == "packet-up")
-          | select($x.path | type == "string" and startswith("/"))
-          | select($x.host | text)
+          | need($tls | closed(["serverName","fingerprint","alpn","allowInsecure"]); "unsupported-tls-field")
+          | need($tls.allowInsecure == null or $tls.allowInsecure == false; "insecure-tls")
+          | need($tls.serverName | text; "invalid-server-name")
+          | need($tls.fingerprint | fingerprint; "unsupported-fingerprint")
+          | need($tls.alpn | type == "array" and length > 0 and all(.[]; . == "h2" or . == "http/1.1"); "unsupported-alpn")
+          | need($x | closed(["path","mode","host"]); "unsupported-xhttp-field")
+          | need($x.mode == "packet-up"; "unsupported-xhttp-mode")
+          | need($x.path | type == "string" and startswith("/"); "invalid-xhttp-path")
+          # An empty host is omitted: Xray and Mihomo then send servername as Host.
+          | need($x.host == null or $x.host == "" or ($x.host | text); "invalid-xhttp-host")
           | {tcp:true,udp:true,auto:$auto,singBox:null,
-             mihomo:{type:"vless",server:$s.address,port:$s.port,uuid:$u.id,network:"xhttp",udp:true,tls:true,servername:$tls.serverName,"client-fingerprint":$tls.fingerprint,alpn:$tls.alpn,"skip-cert-verify":false,"xhttp-opts":{path:$x.path,mode:$x.mode,host:$x.host}}}
-        else empty end;
+             mihomo:{type:"vless",server:$s.address,port:$s.port,uuid:$u.id,network:"xhttp",udp:true,tls:true,servername:$tls.serverName,"client-fingerprint":$tls.fingerprint,alpn:$tls.alpn,"skip-cert-verify":false,"xhttp-opts":({path:$x.path,mode:$x.mode} + (if ($x.host // "") == "" then {} else {host:$x.host} end))}}
+        else error({skip: "unsupported-transport"}) end;
     if type != "array" or length > 1024 or (all(.[]; type == "object" and (.outbounds | type == "array")) | not)
     then error("invalid-envelope") else
       if ([.[] | .outbounds[]] | length) > 1024 then error("too-many-outbounds") else
-        [.[] as $profile | $profile.outbounds[] | try (node | . + {label: ($profile.remarks | if type == "string" then gsub("[\u0000-\u001f\u007f]"; " ") | .[0:64] | gsub("^\\s+|\\s+$"; "") | if length > 0 then . else null end else null end)}) catch empty] | unique
+        [to_entries[] | .key as $index | .value as $profile
+          | ($profile.remarks | if type == "string" then gsub("[\u0000-\u001f\u007f-\u009f\u2028\u2029]"; " ") | .[0:64] | gsub("^\\s+|\\s+$"; "") | if length > 0 then . else null end else null end) as $label
+          | $profile.outbounds[] | select(service | not)
+          | {index:$index,label:$label}
+            + (try {node:(node + {label:$label})}
+               catch {reason:(if type == "object" and (.skip | type == "string") then .skip else "malformed" end)})]
+        as $candidates
+        | ([$candidates[] | select(has("node"))] | group_by(.node)) as $groups
+        | {nodes:[$groups[] | .[0].node],
+           service:([.[] | .outbounds[] | select(service)] | length),
+           skipped:([$candidates[] | select(has("reason")) | {index,label,target:"all",reason}]
+             + [$groups[] | .[1:][] | {index,label,target:"all",reason:"duplicate"}]
+             + [$groups[] | .[0] | select(.node.singBox == null) | {index,label,target:"sing-box",reason:"unsupported-xhttp"}]
+             | sort_by(.index))}
       end
     end
   '';
@@ -189,13 +212,14 @@ let
           rm -f -- "$source_dir/accepted.json" "$source_dir/accepted-at"
         elif [ "$http_code" = 200 ] && [ "$curl_rc" -eq 0 ] && jq --arg source ${lib.escapeShellArg name} --argjson auto ${
           if source.auto or true then "true" else "false"
-        } -f ${lib.escapeShellArg converterPath} "$request_dir/body.json" > "$request_dir/accepted.json"; then
+        } -f ${lib.escapeShellArg converterPath} "$request_dir/body.json" > "$request_dir/converted.json" \
+          && jq '.nodes' "$request_dir/converted.json" > "$request_dir/accepted.json"; then
           mv -- "$request_dir/accepted.json" "$source_dir/accepted.json"
           accepted_now=1
-          printf 'VPN external refresh: source=${name} result=accepted mihomo=%s sing-box=%s skipped=%s reason=compatible-tuples\n' \
-            "$(jq 'length' "$source_dir/accepted.json")" \
-            "$(jq '[.[] | select(.singBox != null)] | length' "$source_dir/accepted.json")" \
-            "$(jq --slurpfile nodes "$source_dir/accepted.json" '[.[] | .outbounds[]] | length - ($nodes[0] | length)' "$request_dir/body.json")" >&3
+          jq -r --arg source ${lib.escapeShellArg name} '
+            "VPN external refresh: source=\($source) result=accepted mihomo=\(.nodes | length) sing-box=\([.nodes[] | select(.singBox != null)] | length) skipped=\([.skipped[] | select(.target == "all")] | length) service=\(.service)",
+            (.skipped[] | "VPN external refresh: source=\($source) result=skipped index=\(.index) remark=\(.label | tojson) target=\(.target) reason=\(.reason)")
+          ' "$request_dir/converted.json" >&3 || true
           date +%s > "$source_dir/accepted-at"
           now="$(date +%s)"
           printf '%s' "$((now + ${
