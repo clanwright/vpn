@@ -17,8 +17,10 @@ configuration framework, hosting provider, or protocol portfolio.
 
 Use available configuration and results first. Ask only for missing information
 that changes the recommendation: target ISP/SIM/MVNO and region, home/mobile
-path, client OS and core versions, symptoms, and whether the priority is access,
-all-traffic confidentiality, latency, or compatibility with Russian services.
+path, client OS and core versions, who operates the path (self-hosted,
+commercial service, reseller, public list), symptoms, and whether the priority
+is access, all-traffic confidentiality, latency, or compatibility with Russian
+services.
 Do not request credentials or live subscription/profile URLs.
 
 Separate three questions: can the carrier carry the tunnel; can an app identify
@@ -30,6 +32,8 @@ not solve the others. A failed connection alone does not attribute a block to RK
 - **Choose a design or configure a protocol:** [protocols.md](references/protocols.md).
   Compare conditional candidates, then inspect the installed client/server core,
   effective sanitized config and current upstream syntax before writing a patch.
+- **Hosting, Russian ingress, subscriptions, commercial or reseller services:**
+  [hosting.md](references/hosting.md).
 - **Connection fails, stalls, or differs by network; mobile allowlist/outage:**
   [diagnostics.md](references/diagnostics.md). Start with the smallest test that
   distinguishes censorship from server, DNS, routing, MTU, or application failure.
@@ -45,14 +49,21 @@ For time-sensitive advice, browse primary upstream documentation/releases and
 current Russian measurements. Record access date separately from event or test
 date. Official software support proves compatibility, not Russian reachability;
 a vendor outage report or single-SIM success is not nationwide protocol evidence.
-Prefer explicit operator/region/version results over marketing rankings.
+Prefer explicit operator/region/version results over marketing rankings;
+complaint counts, affiliate rankings and a vendor's own test are not
+reachability evidence. Confirm release, pre-release and merge state from the
+upstream repository itself, and confirm dates and years: fetched summaries
+misreport them.
 Community reports can justify a conditional starting configuration without a
 nationwide trial. Read the original post and later corrections, distinguish a
 client bug from a blocking claim, and check whether a proposed fix actually
 shipped. Do not turn a workaround that changed several variables into a causal
 rule, or an unresolved single-build issue into a universal protocol defect.
 
-The research baseline is **2026-09-07**; it is not an expiry-free prescription.
+The research baseline is **2026-09-29**; it is not an expiry-free prescription.
+Blocking and core compatibility changed several times within single weeks of
+August–September 2026, so check for events after the baseline whenever the
+user reports a widespread outage or a sudden break after an upgrade.
 When fresh measurements are unavailable, give a conditional recommendation and
 state the missing test. Do not fill gaps with remembered release numbers or
 promises of an undetectable/always-working VPN. Preserve inaccessible sources as

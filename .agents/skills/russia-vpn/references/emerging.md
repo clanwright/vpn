@@ -1,219 +1,166 @@
 # Additional and emerging protocols
 
-Checked 2026-09-07. “Worth testing” below is engineering judgment based on
-implementation properties. No controlled August–September RU operator matrix
-was found for these candidates. A released feature can still have immature
-client support; software maturity and censorship efficacy are separate axes.
-Use [diagnostics.md](diagnostics.md) for comparable tests and retain the known
-working profile. Avoid generating a deployable config before checking the exact
-implementation's schema and client support.
+Checked 2026-09-29. No controlled operator matrix exists for any candidate here;
+Russian-efficacy evidence is anecdotal (single-author NTC posts, no captures), and
+software maturity differs from censorship efficacy. Use [diagnostics.md](diagnostics.md)
+for comparable tests, keep the known working profile, and check the implementation's
+schema and client support before generating a config. AmneziaWG 3/3.1 lives in
+[udp.md](udp.md); read it before blaming DPI for an AWG failure.
 
-## AnyTLS — TLS/TCP session and padding alternative
+Connection count and TLS-library fingerprint can matter as much as the protocol.
+One secondary-sourced report (a blog post and a Tor team meeting note) describes a
+TSPU trigger on the rustls ClientHello and on more than 3 parallel TLS connections
+to one SNI within ~60 s (first seen June 2026). Treat it as a hypothesis when a
+many-connection design stalls.
 
-**Why consider it:** session reuse and configurable early-write padding give a
-maintained alternative TLS proxy design. That diversifies software behavior,
-not destination IP/ASN dependencies. It is not itself a complete TLS identity
-or an automatic allowlist solution.
+## AnyTLS: TLS/TCP session and padding alternative
 
-**Configuration:** start with supported TLS/SNI and the implementation's default
-padding/session strategy. In sing-box, the researched defaults were
-`idle_session_check_interval: 30s`, `idle_session_timeout: 30s` and
-`min_idle_session: 0`; do not set five idle connections from a copied preset.
-[sing-box AnyTLS configuration](https://sing-box.sagernet.org/configuration/outbound/anytls/).
+**Consider it** for a maintained TLS proxy with session reuse and padding. It diversifies
+software, not destination IP/ASN dependencies, and is not an allowlist solution.
 
-Server `paddingScheme` affects early writes; match protocol support before
-customizing it. anytls-go v0.0.13 (2026-06-27) added `-dr` to disable reuse, but
-upstream says reuse was not shown problematic. Disable it only as a controlled
-stall comparison, not a permanent anti-RKN rule.
-[Protocol](https://github.com/anytls/anytls-go/blob/main/docs/protocol.md),
-[release](https://github.com/anytls/anytls-go/releases/tag/v0.0.13).
+**Configuration:** start with supported TLS/SNI and default padding/session values
+; do not copy a preset with five idle connections. Use
+sing-box 1.14.2+ or Mihomo 1.19.31+: older clients sent identifying name/version
+metadata, so check the installed core's default. Mihomo excludes AnyTLS+REALITY.
+anytls-go `-dr` disables reuse; use it only as a controlled stall comparison.
+[sing-box AnyTLS](https://sing-box.sagernet.org/configuration/outbound/anytls/),
+[metadata note](https://sing-box.sagernet.org/manual/misc/anytls-client-metadata/),
+[Mihomo](https://wiki.metacubex.one/en/config/proxies/anytls/),
+[protocol](https://github.com/anytls/anytls-go/blob/main/docs/protocol.md).
 
-**Pitfalls:** older clients sent identifying name/version metadata. Verify the
-installed behavior; sing-box 1.13.16/1.14-beta.5 and Mihomo 1.19.30 changed the
-default. Do not add unsupported AnyTLS+REALITY: Mihomo explicitly excludes it.
-TLS/ShadowTLS choices require their own compatible chain.
-[Metadata note](https://sing-box.sagernet.org/manual/misc/anytls-client-metadata/),
-[Mihomo support](https://wiki.metacubex.one/en/config/proxies/anytls/).
+**Status:** trial where clients support it; no RU comparative measurement. Reuse can
+still stall per flow.
 
-The upstream [2026-08-03 metadata clarification](https://github.com/anytls/anytls-go/commit/fd6167a)
-says `client` is inside the encrypted connection, so a passive network observer
-cannot read it. The proxy operator can read it and apply rejection policy, but
-the self-declared value is not a reliable client identifier. Separately,
-[issue #46](https://github.com/anytls/anytls-go/issues/46) found that an endpoint
-padding update leaked through a process-global default; the issue is closed, but
-the report does not identify a fixed release or establish the behavior of every
-AnyTLS client. Check the exact implementation and release before relying on
-per-endpoint padding isolation.
+## TrustTunnel: HTTP-based full-device candidate
 
-**Status:** useful trial where clients support it; no strong current RU
-comparative measurement located. Session reuse can still meet a per-flow stall,
-and extra connections can meet a burst trigger.
+**Consider it** for TCP/UDP/ICMP carriage with TUN or SOCKS and split routing/DNS
+("indistinguishable" is a vendor claim). [Project](https://github.com/TrustTunnel/TrustTunnel).
 
-## TrustTunnel — HTTP-based full-device candidate
+**Configuration:** for a TCP trial set client `upstream_protocol: http2`; HTTP/3 is a
+separate UDP-dependent trial. Verify endpoint TLS identity, client authentication,
+DNS and TUN routes (SOCKS mode does not cover every application), connection limits
+and endpoint access controls.
+[Client](https://github.com/TrustTunnel/TrustTunnelClient/blob/master/trusttunnel/README.md),
+[endpoint](https://github.com/TrustTunnel/TrustTunnel/blob/master/CONFIGURATION.md).
 
-**Why consider it:** the implementation carries TCP/UDP/ICMP, supports TUN or
-SOCKS use and provides split routing/DNS configuration. Its official HTTP/2
-path offers another TCP-based option. “Indistinguishable” is a vendor assertion,
-not a measured guarantee.
-[Project](https://github.com/TrustTunnel/TrustTunnel).
+- Use endpoint 1.1.0+. With `allow_private_network_connections=false`, a loopback or
+  private reverse-proxy origin works from 1.1.0; earlier endpoints wrongly blocked
+  it. Client traffic to private networks stays forbidden.
+- `per_client_metrics` (off by default) exposes usernames and client IPs: protect it.
+- Use client 1.1.7+ (1.1.5 changed the config:
+  `VpnUpstreamSessionRecoverySettings::attempts`, no infinite retry). Read the
+  [changelog](https://github.com/TrustTunnel/TrustTunnel/blob/master/CHANGELOG.md)
+  first; do not assume CLI/GUI parity.
+- Soak-test for [#140](https://github.com/TrustTunnel/TrustTunnel/issues/140) memory
+  growth (cause unconfirmed), [#144](https://github.com/TrustTunnel/TrustTunnel/issues/144)
+  drop without reconnect (open), and
+  [#153](https://github.com/TrustTunnel/TrustTunnel/issues/153) UDP-over-H2 at
+  3–12 Mbit/s against ~133 Mbit/s for TCP on OpenWrt armv7: measure UDP
+  applications separately.
 
-**Configuration:** for a TCP trial choose client `upstream_protocol: http2`;
-HTTP/3 is a separate UDP-dependent trial. Verify endpoint TLS identity, client
-authentication, DNS and TUN routes; a SOCKS mode does not cover every device
-application. Inspect HTTP connection limits and endpoint access controls.
-[Client configuration](https://github.com/TrustTunnel/TrustTunnelClient/blob/master/trusttunnel/README.md),
-[endpoint configuration](https://github.com/TrustTunnel/TrustTunnel/blob/master/CONFIGURATION.md).
+**RU evidence (NTC anecdotes, no captures):** on Megafon mobile the QUIC variant failed
+while HTTP/2 worked (2026-06-01), and TrustTunnel-over-HTTPS, NaiveProxy and some
+XHTTP modes held only ~2 Mbit/s (2026-07-19, region unstated) while the same configs
+were fine on Beeline mobile. Try HTTP/2 first there, but test. An app detecting the
+client does not show a carrier blocks the transport.
 
-**Pitfalls/status:** check the exact current OS/client release instead of assuming
-CLI and GUI parity. The endpoint changelog includes a private-network restriction
-bypass fix, making version/security review part of adoption. No current same-path
-RU efficacy comparison was located. A user's report that an app detects it is
-not evidence the carrier blocks its transport.
-[Changelog](https://github.com/TrustTunnel/TrustTunnel/blob/master/CHANGELOG.md).
+## ShadowTLS v3: wrapper requiring an encrypted backend
 
-Recent endpoint reports reinforce the need for a bounded soak test. A July 18
-[Android 1.1.1 / endpoint 1.0.33 report](https://github.com/TrustTunnel/TrustTunnel/issues/134)
-observed an ECH handshake timeout, but was closed without a confirmed cause. An
-August 3 [1 GiB server report](https://github.com/TrustTunnel/TrustTunnel/issues/140)
-recorded memory growth and a separate HTTP/2 panic without proving one root
-cause. An August 22 [drop/no-reconnect report](https://github.com/TrustTunnel/TrustTunnel/issues/144)
-contains no ISP evidence. These are useful failure checks, not Russian blocking
-measurements or proof that all endpoint versions share the failures.
-
-## ShadowTLS v3 — a wrapper requiring an encrypted backend
-
-**Why consider it:** reuses a real TLS handshake then transfers to an encrypted
-proxy over the same TCP connection. It is a composable alternative, not new
-payload encryption. It needs a separate compatible encrypted backend, such as
-Shadowsocks, on both ends.
+**Consider it** to reuse a real TLS handshake, then carry an encrypted proxy
+(Shadowsocks, Snell) on the same TCP connection. It adds no payload encryption and
+needs a compatible backend on both ends.
 [Protocol v3](https://github.com/ihciah/shadow-tls/blob/master/docs/protocol-v3-en.md).
 
-**Configuration:** use v3 consistently and keep strict mode with a tested TLS
-1.3 handshake target. Non-strict TLS 1.2 support changes hijack resistance;
-do not disable strictness to hide a target mismatch. Bind the backend privately;
-public direct access defeats the wrapper. Verify normal fallback and encrypted
-backend authentication separately.
-[How to run](https://github.com/ihciah/shadow-tls/wiki/How-to-Run),
-[project](https://github.com/ihciah/shadow-tls/blob/master/README.md).
+**Configuration:** use v3 consistently with strict mode and a tested TLS 1.3
+handshake target; do not disable strictness to hide a target mismatch. Bind the
+backend to localhost, since public direct access defeats the wrapper. Verify
+fallback and backend authentication separately.
+[How to run](https://github.com/ihciah/shadow-tls/wiki/How-to-Run).
 
-**Status:** established implementation pattern worth a compatible test profile;
-no current controlled RU comparison found. A famous decoy cannot hide the VPS
-address, service-side exit identity or sustained-flow shape.
+**Status:** upstream is dormant (last release v0.2.25, 2023-12-13); prefer clients that
+bundle it. One NTC anecdote (2026-09-05, Megafon): bare Snell detected, ShadowTLS+Snell
+working. A well-known decoy cannot hide the VPS address, exit identity or flow shape.
 
-## mieru — non-TLS transport diversity
+## Snell: watchlist
 
-**Why consider it:** dedicated encrypted TCP/UDP proxy with padding and multiplexing,
-without the domain/TLS front-site requirement. Upstream generally recommends
-TCP. This avoids reliance on a TLS camouflage target but gives DPI a distinct
-wire protocol; it is not HTTPS impersonation.
+Native in sing-box 1.14.0+ and Mihomo; evidence is the one Megafon anecdote above.
+Its thread reports 10–15 parallel TCP flows per browsing burst: test it
+ShadowTLS-wrapped and watch connection counts.
+
+## mieru: non-TLS transport diversity
+
+**Consider it** for a dedicated encrypted TCP/UDP proxy with padding and
+multiplexing, no domain or TLS front-site requirement; upstream generally recommends
+TCP. It gives DPI a distinct wire protocol and is not HTTPS impersonation.
 [Project](https://github.com/enfein/mieru/blob/main/README.md),
 [protocol](https://github.com/enfein/mieru/blob/main/docs/protocol.md).
 
-**Configuration:** use compatible `mieru` client/`mita` server profiles; prefer a
-TCP trial first, match authentication and transport/port settings, and validate
-new padding fields against the installed version. Client ecosystem support
-varies; verify OS/plugin availability before choosing it for mixed devices.
-Do not equate a running SOCKS service with full-device/UDP coverage.
+**Configuration:** match `mieru` client and `mita` server profiles; try TCP first;
+validate padding fields against the installed version. SOCKS is not full-device/UDP coverage.
 
-**Status:** an active diversity candidate; RU efficacy remains anecdotal. In the
-[maintainer discussion](https://github.com/enfein/mieru/discussions/263), June–July
-2026 users reported success and an allowlist limitation, without operator,
-region, throughput or packet controls. That warrants a trial, not a winner label.
+**Security check:** through v3.38.0 the SOCKS5 server selects no-authentication
+whenever the client offers it, even with credentials configured
+([PR #316](https://github.com/enfein/mieru/pull/316), merged 2026-09-28, not in a
+tagged release). Bind any credentialed SOCKS5 listener to loopback or firewall it,
+and update once a tagged release includes the fix.
 
-The July 29 [v3.35.0 release](https://github.com/enfein/mieru/releases/tag/v3.35.0)
-added low-entropy modes. Upstream's controlled
-[traffic-pattern analysis](https://github.com/enfein/mieru/blob/main/docs/traffic-pattern.md)
-puts full-chunk body expansion at about 1.15x–2x, depending on mode, and states
-that metadata, nonces, authentication tags and some control traffic remain high
-entropy. Treat this as a measurable shaping tradeoff, not a promise of evasion.
-The older [China report #54](https://github.com/enfein/mieru/issues/54) does not
-establish current behavior in Russia.
+**Status:** RU efficacy anecdotal (a [maintainer discussion](https://github.com/enfein/mieru/discussions/263)
+without operator, region or throughput; one NTC post ranks it second to Snell).
+Upstream's [traffic-pattern analysis](https://github.com/enfein/mieru/blob/main/docs/traffic-pattern.md)
+puts body expansion at ~1.15x–2x: a shaping tradeoff, not an evasion promise.
 
-## Sudoku — implementation-specific entropy shaping
+## Sudoku: implementation-specific entropy shaping
 
-**Why consider it:** current Mihomo documents a standalone encrypted proxy with
-selectable AEAD, padding ratios, byte-layout tables, multiplexing and HTTP mask
-options. Those are the current fields to validate against the installed build:
-`key`, `aead-method`, `padding-min`, `padding-max`, `table-type`, optional custom
-tables, `multiplex`, `httpmask.*` and `enable-pure-downlink`.
-Keep `aead-method` as `chacha20-poly1305` or `aes-128-gcm`; `none` disables
-AEAD protection and must not be used for traffic that requires confidentiality
-and integrity.
-[Current Mihomo schema](https://wiki.metacubex.one/en/config/proxies/sudoku/).
+**Consider it** as a Mihomo standalone encrypted proxy with selectable AEAD, padding
+ratios, byte-layout tables, multiplexing and HTTP mask options. Sudoku_ASCII, Mihomo
+and Xray modes are different implementations: validate the fields (`aead-method`,
+`padding-*`, `table-type`, `multiplex`, `httpmask.*`) against the installed build.
+Keep `aead-method` as `chacha20-poly1305` or `aes-128-gcm`; `none` removes
+confidentiality and integrity. Upgrade both ends together. On Xray
+`unknown config id`, check config syntax first.
+[Mihomo schema](https://wiki.metacubex.one/en/config/proxies/sudoku/).
+No RU efficacy evidence: a version-pinned trial beside a working profile.
 
-**Pitfalls/status:** the older Sudoku_ASCII project and newer Mihomo/Xray modes
-are different implementations. Do not generalize old no-Android or sub-30%
-throughput claims to current clients. A May 7
-[Xray finalmask report](https://github.com/XTLS/Xray-core/issues/6088) showed an
-`unknown config id` startup failure after moving from 25.10.15 to 26.3.27; it is
-a version/configuration compatibility report, not transport or RU efficacy
-evidence. Keep Sudoku a version-pinned trial beside a known-working profile.
+## Samizdat: watchlist only
 
-## Samizdat — watchlist only
+[Samizdat](https://github.com/getlantern/samizdat) (TCP/TLS/HTTP2 with probe fallback,
+padding, ClientHello fragmentation) has only v0.0.x releases and project-authored
+Russian-resilience claims. Track it; do not deploy.
 
-The [Samizdat repository](https://github.com/getlantern/samizdat) describes a
-TCP/TLS/HTTP2 design with active-probe fallback, multiplexing, padding, jitter
-and fragmentation. As of this check it has no published releases and its broad
-Russian-resilience claims are project-authored; no primary Russian operator
-measurements were validated. Track it for releases and independent same-path
-tests rather than promoting it to a deployment candidate.
+## Hysteria Mimic: Linux/root outer-packet experiment
 
-## AmneziaWG 3 — header protection, with import risks
+**Consider it** to replace the outer UDP presentation with fake TCP headers via
+eBPF/XDP (a separate `mimic` executable managed by Hysteria) while keeping QUIC
+inside. It is not ordinary Hysteria2, Salamander, or a real TCP transport.
 
-**Why consider it:** extends AWG header concealment. It still needs its underlying
-path; it is not evidence that blanket UDP denial or allowlists are bypassed.
-
-**Configuration:** `HeaderProtectionKey` must match both peers; its documented
-nonce requirement makes all `S1`–`S4` at least 12. New content-padding and timing
-ranges introduce more version-specific parameters. Export/import round trips
-must preserve them, and the server engine/module must implement them.
-[AWG configuration](https://github.com/amnezia-vpn/amneziawg-go#configuration).
-Use the ordinary compatibility checklist in [udp.md](udp.md) as well.
-
-**Status:** AWG3 support is a released client feature, but exact builds/importers
-still matter. [Client release 5.0.0.5](https://github.com/amnezia-vpn/amnezia-client/releases/tag/5.0.0.5)
-mentions support; an [August import report](https://github.com/amnezia-vpn/amnezia-client/issues/2942)
-describes dropped fields. These are implementation reports, not proof of failure
-on every client. Controlled August issues report
-[handshake without traffic](https://github.com/amnezia-vpn/amnezia-client/issues/3043)
-and [an imported MTU mismatch](https://github.com/amnezia-vpn/amnezia-client/issues/3064).
-Check these failure classes before blaming DPI or switching protocols.
-
-## Hysteria Mimic — Linux/root outer-packet experiment
-
-**Why consider it:** Hysteria can manage a separate `mimic` executable that uses
-eBPF/XDP to replace the outer UDP presentation with fake TCP headers, while
-retaining QUIC internally. Do not conflate this with ordinary Hysteria2 UDP,
-Salamander, or a real TCP transport with ordinary TCP semantics.
-
-**Configuration:** both ends need Linux, root, the executable and compatible
-`mimic` settings. Check `interface`, `xdpMode` (`native` or `skb`) and executable
+**Configuration:** both ends need Linux, root, the executable and compatible `mimic`
+settings; use Hysteria 2.12.2+. Check `interface`, `xdpMode` (`native` or `skb`) and
 `path`; treat raw `extraArgs` as implementation-specific. It disables UDP
-segmentation offload, can reduce throughput, cannot coexist with port hopping,
-and does not serve ordinary Hysteria clients in that mode.
-[Official Mimic guide](https://v2.hysteria.network/docs/advanced/Mimic/).
+segmentation offload, can reduce throughput, cannot coexist with port hopping, and
+ordinary Hysteria clients cannot use that listener.
+[Mimic guide](https://v2.hysteria.network/docs/advanced/Mimic/).
 
-**Status:** released integration with a narrow deployment envelope; no credible
-RU field result located. A Linux lab or separately authorized router setup is
-plausible; native phone clients do not inherit support. Fake TCP is not a
-whitelist admission mechanism. Test the actual outer path, not just UDP/443.
+**Status:** no RU field result; phone clients lack support, and fake TCP is not a
+whitelist admission mechanism. Test the actual outer path, not just UDP/443. Other
+Hysteria2 topics: [udp.md](udp.md).
 
-## Slipstream — emergency DNS-carried TCP service
+## Slipstream: emergency DNS-carried TCP service
 
-**Why consider it:** a real experimental implementation carrying data through DNS
-resolvers, potentially useful where the resolver path remains. It is a local
-TCP forwarder to a configured service, not a turnkey full IP VPN.
+**Consider it** only where a resolver path remains: a local TCP forwarder to a
+configured service, not a full IP VPN. Rust port:
+[slipstream-rust](https://github.com/Mygod/slipstream-rust); DNS-tunnel ecosystem and
+UDP/53 interception: [alternatives.md](alternatives.md).
 
-**Configuration:** requires an owned domain with correct NS/A delegation to the
-server, a forwarded TCP service, and selected recursive resolvers. Test each
-resolver's behavior, throughput and limits; direct server port 53 removes the
-recursive-relay advantage. Bootstrap/delegation are real infrastructure changes.
-[Usage](https://endpositive.github.io/slipstream/usage.html).
-
-**Limits/status:** v0.1.1 was released 2026-04-12. Modified QUIC data encoded in
-DNS queries/TXT replies incurs polling, size/rate and latency constraints, and
-high-volume subdomains can be classified or blocked. No primary Russian
-operator validation was found. Keep it an emergency experiment with measured
-service usefulness, not a substitute for a healthy primary path.
-[Release](https://github.com/EndPositive/slipstream/releases/tag/v0.1.1),
+**Configuration:** needs an owned domain with correct NS/A delegation, a forwarded
+TCP service and selected recursive resolvers. Test each resolver's behavior,
+throughput and limits; direct server port 53 removes the recursive-relay advantage.
+DNS carriage means polling, size/rate and latency limits, and high-volume
+subdomains can be classified.
+[Usage](https://endpositive.github.io/slipstream/usage.html),
 [protocol](https://endpositive.github.io/slipstream/protocol.html).
+
+**RU evidence (NTC, April–May 2026, per vantage, no controls):** Tele2 St Petersburg
+worked via the operator resolver (11.1 Mbit/s down); MTS Moscow was poor (100–200
+kbit/s, sessions tearing after ~10 min); Tele2 Siberia mobile passed ~2 KB then nothing.
+All predate the UDP/53 interception, so none validates a public-resolver path; use
+operator, NSDI or Yandex resolvers, or TCP/DoH.
