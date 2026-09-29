@@ -14,8 +14,12 @@ authentication, relay or external-reachability check.
 
 Select an unused TCP port and the intended public IPv4. Native mita binds the
 port on wildcard addresses; the module restricts ingress with nftables. A
-different service cannot reuse that wildcard port on another address. No TLS
-certificate, domain, reverse proxy or UDP ingress is required.
+different service cannot reuse that wildcard port on another address, and the
+ingress guard drops the port for every other IPv4 destination and all IPv6.
+Keep the port exclusive on the host: when other services already listen on
+TCP 443 on other addresses, choose a different port for Mieru. The guards do
+not affect other ports or other processes' egress. No TLS certificate, domain,
+reverse proxy or UDP ingress is required.
 
 Configure the host's resolver and provide its numeric IPv4 addresses to the
 module. Mita uses the system resolver; its DNS option selects the address family,

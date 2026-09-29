@@ -287,6 +287,11 @@ let
   };
   provider = enabled.instance.exports.vpnProvider;
   tableContent = enabled.table.content;
+  dportsIn =
+    text:
+    lib.unique (
+      map builtins.head (builtins.filter builtins.isList (builtins.split "dport ([0-9]+)" text))
+    );
   source = builtins.readFile ../clanServices/mieru/default.nix;
   disabledResults = {
     exports = disabled.instance.exports == { };
@@ -433,7 +438,14 @@ let
       unwrap enabled.module.networking.firewall.extraInputRules
     )
     && !(enabled.module.networking.firewall ? allowedTCPPorts)
-    && !(enabled.module.networking.firewall ? trustedInterfaces);
+    && !(enabled.module.networking.firewall ? trustedInterfaces)
+    && highPort.assertionsPass
+    &&
+      dportsIn highPort.table.content == [
+        "8443"
+        "53"
+      ]
+    && dportsIn (unwrap highPort.module.networking.firewall.extraInputRules) == [ "8443" ];
   runtimeContract =
     enabled.unit.serviceConfig.Type == "exec"
     && enabled.unit.serviceConfig.User == "mita"
