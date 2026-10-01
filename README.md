@@ -1,3 +1,7 @@
+> **Archived.** This module now lives in the Clanwright monorepository as
+> `bricks/vpn` (https://github.com/ibelyasov/clanwright) and is no longer
+> developed or released here.
+
 # Clanwright VPN
 
 Nine VPN and DNS modules for Clan/NixOS on `x86_64-linux`.
