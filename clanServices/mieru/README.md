@@ -93,10 +93,9 @@ TCP/UDP port 53.
 
 ## Export
 
-Role публикует `vpnProvider` schema v2 с `protocol = "mieru"`, endpoint
-`{ domain = null; ipv4 = ingressIPv4; port; transport = "tcp"; }`, metadata
-`userNames` и `credentialEncoding = "base64url"`, а также
-`secretNames.users = { <device> = <SOPS-name>; }`. Disabled role не публикует
+Role публикует `vpnProvider` schema 3 с `connection.mieru`, endpoint
+`{ ipv4 = ingressIPv4; port; }` и `clients.<username>.passwordSecret`.
+Ключи — реальные auth usernames; TLS/domain metadata не добавляется. Disabled role не публикует
 export и не объявляет unit, users, secrets, template, overlay или nftables table.
 
 ## Границы проверки

@@ -7,7 +7,7 @@ the settings documented on each module page.
 
 | Stable module ID | Settings and integration |
 | --- | --- |
-| `@clanwright/vpn-mihomo-vless-xhttp` | [VLESS/XHTTP](../clanServices/mihomo-vless-xhttp/README.md) |
+| `@clanwright/vpn-mihomo-vless-xhttp` | [VLESS/XHTTP](../clanServices/vless-xhttp/README.md) |
 | `@clanwright/vpn-amneziawg` | [AmneziaWG](../clanServices/amneziawg/README.md) |
 | `@clanwright/vpn-naiveproxy` | [NaiveProxy](../clanServices/naiveproxy/README.md) |
 | `@clanwright/vpn-mieru` | [Mieru](../clanServices/mieru/README.md) |
@@ -27,68 +27,63 @@ The VLESS module ID contains `mihomo` for identity stability; its runtime is Xra
 | `clanModule` | Nix module registering the export interface. |
 | `lib.exportInterfaces { lib }` | Constructs the interface definition. |
 
-The provider schema rejects unknown fields. Its definition is in
-[the export schema](../modules/contracts/vpn-exports.nix); modules and checks
-use the same definition. Provider selection derives the required role from the
-protocol; callers do not supply a separate role mapping.
+The closed provider schema is defined in
+[the export schema](../modules/contracts/vpn-exports.nix). Modules and checks use
+that same native Nix type: `schemaVersion = 3` and exactly one
+`connection.<tag>` selected by `lib.types.attrTag`. Unknown fields, unknown tags,
+multiple tags and older schemas are rejected. The publisher declares no exports.
 
-`vpnProvider` uses schema version 2. The publisher declares no exports. AWG peer
-public keys have one canonical representation in `transportMetadata.peers`.
-Each AWG peer supplies `clientPrivateKeySecretName`; its exact consumer binding
-is exported through `secretNames.clientPrivateKey`.
+`Endpoint` means `{ hostname; ipv4; port; }`, with a valid DNS hostname,
+mandatory numeric IPv4 and port 1–65535. Mieru uses `{ ipv4; port; }`.
+The publisher never substitutes its own address for a provider endpoint.
 
-VLESS provider version 2 accepts the optional boolean
-`transportMetadata.reality.supportX25519MLKEM768`, defaulting to `false` when
-absent in older or synthetic exports. The gateway publishes it from
-`clientSupportX25519MLKEM768`; its `clientFingerprint` additionally accepts
-`chrome`, retaining the `edge` default. The own-provider Mihomo renderer emits
-`reality-opts.support-x25519mlkem768 = true` only when enabled; false or omitted
-policy retains the previous client output. Consumers must update their
-publisher before selecting exports with this added field. Xray 26.9.9 with
-Mihomo 1.19.31 requires both Chrome and the enabled flag; see the explicit
-[consumer migration](operations/vless.md#client-reality-policy).
+| Connection tag | Payload beyond `clients` | `clients.<account>` |
+| --- | --- | --- |
+| `naiveproxy` | `endpoint` | `passwordSecret` |
+| `vless-xhttp` | `endpoint`, `reality = { serverName; publicKey; fingerprint; supportX25519MLKEM768; }`, `xhttp.path`, `doh = { hostname; ipv4; }` | `uuidSecret`, `shortId` |
+| `amneziawg` | `endpoint`, `serverPublicKey`, `headerProtectionKeySecret` | `ipv4`, `privateKeySecret`, nullable `keepaliveSeconds` |
+| `mieru` | numeric `endpoint` | `passwordSecret` |
+| `anytls` | `endpoint` | `passwordSecret` |
+| `trusttunnel` | `endpoint` | `passwordSecret` |
 
-Mieru extends provider version 2 with protocol `mieru` and role `gateway`.
-Its endpoint requires numeric IPv4 and TCP; `domain = null` is permitted only
-for Mieru. Existing protocols still require their domain field. Its exact
-transport metadata contains `protocol`, `userNames` and
-`credentialEncoding = "base64url"`; `secretNames.users` maps those identities
-to consumer-owned secrets. No TLS or arbitrary transport attributes are accepted.
-Clients require an updated publisher to consume the new protocol; existing
-provider exports retain their schema and behavior.
+Client keys are the actual provider authentication accounts or device/peer IDs;
+secret fields contain consumer-owned SOPS binding names, never values. VLESS
+short IDs are exactly 16 lowercase hex digits. Server private-key bindings,
+AWG peer public keys and server-only configuration stay in provider settings.
+Fixed protocol policy is internal: XHTTP `auto`, AWG generation 3 and MTU 1280,
+AnyTLS verified TLS 1.3 with UoT v2, Mieru TCP relay and TrustTunnel verified H2.
+VLESS effective fingerprint/MLKEM policy and DoH pinning hints are retained;
+AWG nullable keepalive semantics are unchanged. VLESS retains the three
+supported fingerprint choices and endpoint MLKEM opt-in because they select
+supported client features per endpoint. Chrome with MLKEM remains the deployment
+recommendation; changing protocol policy or existing consumers is separate work.
 
-AnyTLS also extends provider version 2, with protocol `anytls` and role
-`gateway`. Its TCP endpoint requires both domain and numeric IPv4. Exact
-transport metadata includes the catalog protocol, `userNames`, `tlsServerName`,
-`tlsVerify = true`, `tlsMinVersion = "1.3"` and
-`credentialEncoding = "base64url"`; `secretNames.users` binds each device to
-its consumer-owned password secret. TLS 1.3 is enforced by the server.
-Both Mihomo and sing-box publishers support this provider, including UDP via
-UoT v2. Consumers must update their publisher before selecting AnyTLS exports.
+Selection obtains machine, instance, service and role identity from Clan's
+native export scope. It requires exactly one matching export from a known
+provider service/role and checks that its connection tag matches that scope.
+Scope identity is not duplicated in the exported payload.
 
-The AnyTLS gateway requires a consumer-owned `dnsEndpoint` with `domain`,
-public `ipv4`, optional `port` (443) and `path` (`/dns-query`). It uses only
-that own DoH endpoint, retaining its verified hostname while connecting to
-the numeric address. System DNS configuration is independent, with no local
-or third-party resolver fallback. Private/reserved IPv4 endpoints are rejected;
-the process egress guard has no DNS exceptions into internal networks.
+Publisher `providerRefs` contain `machine`, `instanceId`, a nonempty
+`clients = { <publisher-profile> = "<provider-account>"; }` map and optional
+`display`. Every profile and account must exist. A provider account cannot be
+assigned to multiple profiles within a ref; duplicate refs are rejected.
+There is no `protocol` discriminator or empty-list selection of all accounts.
+External subscription `profileNames` remain a separate explicit source input.
+See [migration](operations/migrate-contracts.md).
 
-TrustTunnel extends provider version 2 with protocol `trusttunnel`, role
-`gateway`, and a TCP endpoint requiring a domain and numeric IPv4. Its exact
-transport metadata includes `protocol`, `userNames`, `tlsServerName`,
-`tlsVerify = true`, `upstreamProtocol = "http2"`, and
-`credentialEncoding = "base64url"`; `secretNames.users` maps device identities
-to consumer-owned password secrets. The server uses stock TLS defaults rather
-than advertising an unsupported TLS-version setting. The Mihomo profile
-supports this provider and its UDP relay; official sing-box does not.
-Consumers must update the publisher before selecting TrustTunnel exports.
+AnyTLS requires a consumer-owned public `dnsEndpoint` with domain, numeric IPv4,
+optional port (443) and path (`/dns-query`). Its native sing-box singleton uses
+only that pinned, verified DoH endpoint; host resolver configuration remains
+independent. The process guard has no private DNS exceptions. Both Mihomo and
+sing-box support the provider. Consumers must reserve the native sing-box
+service/settings/user namespace for this module.
 
-The TrustTunnel gateway requires explicit `dnsResolverIPv4s` for narrow TCP/UDP
-port 53 exceptions in its process guard. This list does not configure the host
-resolver. The consumer owns resolver configuration through its own AdGuard,
-including any local stub and fallback policy. Native destination checks still
-deny tunneled access to internal DNS addresses. IPv4-only is enforced beyond
-`ipv6_available = false`, which does not block all upstream literal IPv6 paths.
+TrustTunnel requires explicit `dnsResolverIPv4s` for narrow TCP/UDP port 53
+exceptions in its process guard. This list does not configure the host resolver.
+The consumer owns its effective resolver and fallback policy. Native destination
+checks deny tunneled access to internal DNS addresses, and process restrictions
+enforce IPv4-only. It is exported to Mihomo; official sing-box has no matching
+outbound.
 
 Consumers must use public attributes, without importing internal files under
 `modules/`, `packages/`, `checks/` or `clanServices/`. Extending the interface
@@ -107,15 +102,33 @@ ingress requires an enabled nftables firewall; those roles assert that backend.
 
 Xray's optional `localListener` binds only to IPv4 loopback behind a
 consumer-owned TCP passthrough entry. Its public `bindIPv4`, `domain` and `port`
-continue to define the provider endpoint; provider schema version 2 is unchanged.
+continue to define the provider endpoint; the schema 3 endpoint remains public.
 The local mode creates no ingress firewall rule. SNI routing, public exposure
 and web-server composition belong to the consumer; TLS must reach Xray intact.
 
-NaiveProxy requires one explicit listener on
-its selected public-site claim, matching the declared bind address. Its provider
-export lists every `passwordSecretNames` identity in both
-`transportMetadata.userNames` and `profileNames`; selection rejects any
-difference between them. The consumer
+NaiveProxy requires explicit `domain`, advertised `publicIPv4` and actual
+`bindIPv4`. The native `services.caddy.virtualHosts.<domain>` must have one
+existing base owner and exactly `[ bindIPv4 ]` on TCP `443`; it is the only
+vhost with `forwardProxy = true`, with native Caddy `httpsPort = 443`. Network
+owns the unique base-owner/extension contract. The addon does not redeclare the site owner,
+listeners, aliases or physical certificate ID. Its read-only
+`clanwright.vpn.naiveproxy.connectRoute` is the complete authenticated CONNECT
+fragment, including the same runtime authentication, ACL and probe-resistance
+import and internal method/address/443
+guards inside a matcherless outer route. The selected root catch-all receives
+one automatic attachment at order 500. Consumers explicitly attach the same
+fragment with `lib.mkBefore` inside each named canonical/alias native Host route
+on the selected public listener that can shadow an allowed CONNECT target.
+Outer terminal Host precedence is separate from inner order 500. Authentication
+is listener-wide, not a TLS SNI allowlist; the destination authority port is
+not the local listener port. The local-port expression uses numeric `== 443`,
+not a quoted string; source adaptation alone does not prove its effective type.
+Local bind/443 guards retain private, mixed and
+disjoint listener boundaries. Ordinary sites do not set `forwardProxy = true`;
+site ownership, hostName, certificates, listeners and GET remain unchanged.
+There is no scanner or registry. Its provider
+export lists each `passwordSecretNames` authentication identity as a key in
+`connection.naiveproxy.clients` with its password binding. The consumer
 supplies AdGuard's Unbound upstream binding and any systemd startup relationship
 between the two services.
 
@@ -151,27 +164,45 @@ important block from such a feed can still block a direct private-name query;
 repository evaluation does not assert that current feeds contain no conflict.
 This affects answer availability, not the closed private forwarding route.
 
-AdGuard and the profile publisher do not create Network claims, ACME bindings
+AdGuard and the profile publisher do not create Caddy sites, ACME bindings
 or Tailscale ordering. Their read-only NixOS integration outputs expose runtime
 endpoints and paths for consumer composition:
 
 - `clanwright.dns.adguardhome.integration`: version 1, `uiBackend`,
   `dohBackend` (including TLS server name), and `reloadUnits`; null when disabled.
-- `clanwright.vpn.publishers.<instance>`: version 1, consumer-supplied gateway
-  domain, publication and public-asset
-  paths, static route configuration, reader group, unit names and update status.
+- `clanwright.vpn.publishers.<instance>`: version 2, consumer-supplied gateway
+  domain, publication and public-asset paths, site-level `logConfig`, complete
+  `routeConfig`, reader group, unit names and update status.
 
 The consumer owns host names, bind addresses, certificate permissions, Caddy
-claims and private access to the links page. It grants Caddy the exported reader
-group and uses the publisher's static route configuration with access logging
-suppressed. Tokenized request URIs must never enter access logs.
+sites and private access to the links page. It grants Caddy the exported reader
+group and attaches `logConfig` at site level before alias responses at order
+1000. Its unconditional `log_skip` covers canonical and configured alias requests.
+`routeConfig` is a matcherless outer `route` with canonical-host/path guards
+inside, attached at order 1500 before terminal fallback at 2000. Consumers
+compose the context-bearing fragments without parsing, unwrapping or rerendering
+them. Tokenized request URIs must never enter access logs.
 Each active publisher has a distinct runtime label and gateway domain on its
 machine; one static route configuration belongs to one Caddy virtual host.
 
+Native composition qualification and outstanding runtime acceptance are defined
+in [verification](operations/verify.md#evidence-and-runtime-acceptance).
+
 The profile renderer is internal. Consumers use the publisher role and its
 integration output rather than importing renderer files. See the
-[migration procedure](operations/migrate-contracts.md) for provider schema 2 and
+[migration procedure](operations/migrate-contracts.md) for provider schema 3 and
 the separated publication/exposure contracts.
+
+Consumers may use Access's public
+`lib.tailscaleReadyGate { pkgs; ipv4; interface; }` for private-listener startup.
+This optional integration is separately qualified in ignored consumer artifacts;
+VPN has no shipped Access input, lock edge or mandatory fixture dependency.
+When selected, effective native Tailscale retains Access package authority and
+the finite helper attaches to ordinary native `ExecStartPre` for the selected
+IPv4/native interface, without a reload hook, watcher, privileged prefix or
+sandbox relaxation. The startup evidence boundary is defined in
+[verification](operations/verify.md#evidence-and-runtime-acceptance).
+
 
 The publisher accepts `externalSubscriptions.<sourceId>` with `urlSecretName`,
 optional `label`, `format = "xray-json"`, explicit nonempty `profileNames`, `auto` (default true),
@@ -189,8 +220,9 @@ Roles with an `enable` setting use it alone to control their declarations.
 Disabled roles do not retain service or secret declarations; credential storage
 remains consumer-owned.
 Protocol policy with a single supported value is fixed by the implementation.
-The VLESS XHTTP export accepts only `mode = "auto"`, matching provider selection
-and client rendering. Identity and secret-name rules share the same contract
+The schema 3 VLESS XHTTP payload contains only `xhttp.path`; `auto` is fixed
+internal client-renderer policy, not an exported mode field. Identity and
+secret-name rules share the same contract
 definitions across provider roles and exports.
 
 AdGuard Home, Unbound and NaiveProxy permit at most one active instance per
@@ -207,12 +239,15 @@ settings therefore keep their enabled behavior when this setting is omitted.
 
 These are templates, not live profile URLs. Per-device eligibility, DNS and
 routing policy are documented in [client profiles](../clanServices/vpn-client-profiles/README.md).
-Both formats expose two selection groups: `Ручной` lists `Авто` first and then
-every published connection, including manual-only ones; `Авто` probes only
-connections admitted by `autoProtocols` or auto-eligible external sources and
-never contains DIRECT. The group names are fixed. UDP follows the connection
+Both formats expose `Ручной` with every published compatible connection,
+including manual-only ones. When automatic candidates exist, `Авто` appears
+first in `Ручной` and probes only connections admitted by `autoProtocols` or
+auto-eligible external sources. With no candidates, `Авто` is omitted and
+manual selection defaults to the first compatible connection. Neither selector
+contains DIRECT. The group names are fixed. UDP follows the connection
 selected in `Ручной`; protected UDP is rejected rather than sent DIRECT when that
-connection lacks UDP. Mihomo also defines `GLOBAL` as `Ручной` and `Авто`, so the
+connection lacks UDP. Mihomo also defines `GLOBAL` as `Ручной` and the
+conditional `Авто`, so the
 client Global mode never starts on DIRECT.
 
 Connection names are client-visible labels, not identifiers. An optional
@@ -238,11 +273,14 @@ These are renderer defaults and add no publisher settings.
 
 Publisher `profiles[].autoProtocols` controls only automatic selection and probes; manual
 compatible connections remain published. Its default includes all supported
-protocols for compatibility. An empty list disables automatic selection.
+protocols for compatibility. An empty list excludes own providers from automatic selection; external
+source `auto` eligibility remains independent.
 Exclude `amneziawg` to keep AWG manual without background probes or keepalive.
-Rule assets use opaque canonical paths while previous URL paths remain aliases.
-These aliases preserve rule downloads for already-issued profiles; subscription
-token paths and output filenames are unchanged.
+Rule assets use stable opaque canonical paths. The 11 historical catalog aliases
+are retired under [ADR-0001](adr/0001-retire-asset-path-aliases.md); old profiles
+may lose asset refresh after future adoption. All 15 canonical assets, tokenized
+profile endpoints, output filenames, private links and native host aliases
+remain unchanged.
 The new AI/GitHub assets use only opaque canonical paths: classical text in
 Mihomo to retain regex rules and binary SRS in sing-box. Their required asset
 references participate in the existing readiness guard. Classical text uses

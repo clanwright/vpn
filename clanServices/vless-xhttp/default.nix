@@ -1,28 +1,14 @@
 {
-  xrayPackageFor ? (
-    _system: throw "mihomo-vless-xhttp requires an explicit xrayPackageFor dependency"
-  ),
+  xrayPackageFor ? (_system: throw "vless-xhttp requires an explicit xrayPackageFor dependency"),
   lib,
   ...
 }:
 let
   identities = import ../../modules/contracts/identities.nix { inherit lib; };
-  providerEnvelope = import ../../modules/contracts/provider-envelope.nix { inherit lib; };
-  validHostname =
-    value:
-    let
-      labels = lib.splitString "." value;
-      validLabel = label: builtins.match "[A-Za-z0-9]([A-Za-z0-9-]{0,61}[A-Za-z0-9])?" label != null;
-    in
-    value != "" && builtins.stringLength value <= 253 && builtins.all validLabel labels;
-  parseDecimal = value: builtins.match "(0|[1-9][0-9]{0,2})" value != null;
-  validIPv4 =
-    value:
-    let
-      octets = lib.splitString "." value;
-    in
-    lib.length octets == 4
-    && builtins.all (octet: parseDecimal octet && builtins.fromJSON octet <= 255) octets;
+  inherit (import ../../modules/contracts/address-validation.nix { inherit lib; })
+    validHostname
+    validIPv4
+    ;
   validLoopbackIPv4 = value: validIPv4 value && builtins.head (lib.splitString "." value) == "127";
   validShortId = value: builtins.match "[0-9a-f]{16}" value != null;
   validPublicKey = value: builtins.match "[A-Za-z0-9_-]{43}" value != null;
@@ -142,66 +128,48 @@ in
     perInstance =
       {
         settings,
-        instanceName ? "mihomo-vless-xhttp",
-        machine ? {
-          name = null;
-        },
+        instanceName,
         mkExports ? (value: value),
         ...
       }:
       let
         active = settings.enable;
-        providerMachine =
-          if machine ? name && machine.name != null && machine.name != "" then
-            machine.name
-          else
-            builtins.head (lib.splitString "--" instanceName);
         profileNames = map (profile: profile.name) settings.profiles;
         uuidSecretNames = map (profile: profile.vlessUuidSecretName) settings.profiles;
         shortIds = map (profile: profile.realityShortId) settings.profiles;
-        shortIdsByProfile = lib.listToAttrs (
-          map (profile: {
-            inherit (profile) name;
-            value = profile.realityShortId;
-          }) settings.profiles
-        );
-        secretNames = {
-          realityPrivateKey = settings.reality.privateKeySecretName;
-          vlessUuid = lib.listToAttrs (
-            map (profile: {
-              inherit (profile) name;
-              value = profile.vlessUuidSecretName;
-            }) settings.profiles
-          );
-        };
         localListener = settings.localListener or null;
       in
       {
         exports = lib.optionalAttrs active (mkExports {
-          vpnProvider = providerEnvelope.mkProvider {
-            protocol = "vless-xhttp";
-            instanceId = instanceName;
-            machine = providerMachine;
-            endpoint = {
-              inherit (settings) domain port;
-              ipv4 = settings.bindIPv4;
-            };
-            transportMetadata = {
+          vpnProvider = {
+            schemaVersion = 3;
+            connection.vless-xhttp = {
+              endpoint = {
+                hostname = settings.domain;
+                inherit (settings) port;
+                ipv4 = settings.bindIPv4;
+              };
               reality = {
                 serverName = settings.reality.targetHost;
-                inherit (settings.reality) serverNames publicKey;
-                target = "${settings.reality.targetHost}:443";
-                inherit shortIdsByProfile;
+                inherit (settings.reality) publicKey;
+                fingerprint = settings.clientFingerprint;
                 supportX25519MLKEM768 = settings.clientSupportX25519MLKEM768 or false;
               };
-              xhttp = {
-                inherit (settings.xhttp) path;
-                mode = "auto";
+              xhttp = { inherit (settings.xhttp) path; };
+              doh = {
+                hostname = settings.doh.domain;
+                inherit (settings.doh) ipv4;
               };
-              fingerprint = settings.clientFingerprint;
-              inherit (settings) doh;
+              clients = lib.listToAttrs (
+                map (profile: {
+                  inherit (profile) name;
+                  value = {
+                    uuidSecret = profile.vlessUuidSecretName;
+                    shortId = profile.realityShortId;
+                  };
+                }) settings.profiles
+              );
             };
-            inherit profileNames secretNames;
           };
         });
 

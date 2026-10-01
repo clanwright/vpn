@@ -56,24 +56,77 @@ let
       module = instance.nixosModule { inherit config lib pkgs; };
     in
     module.config;
-  placeholderConfig = {
-    clanwright.dns.adguardhome.activeInstances = [ "dns-adguardhome" ];
-    sops.placeholder.${baseSettings.auth.passwordSecretName} =
-      "<SOPS:fixture-adguard-bcrypt:PLACEHOLDER>";
-  };
-  baselineModule = moduleFor baseSettings placeholderConfig;
-  baselineConfig = lib.recursiveUpdate placeholderConfig {
-    services = {
-      inherit (baselineModule.services) adguardhome dnsproxy;
+  # Evaluate security assertions against native NixOS option merging, including
+  # systemd's preStart -> ExecStartPre projection and real sops template paths.
+  evaluate =
+    rawSettings: extraModule:
+    let
+      instance = service.roles.resolver.perInstance {
+        settings = evalSettings rawSettings;
+        instanceName = "dns-adguardhome";
+        machine.name = "vpn-fixture";
+      };
+      evaluated = lib.nixosSystem {
+        inherit system;
+        modules = [
+          (lib.setDefaultModuleLocation "adguardhome-fixture-owned" instance.nixosModule)
+          inputs.clan-core.inputs.sops-nix.nixosModules.sops
+          ({ lib, ... }: {
+            options.clan.core.state = lib.mkOption {
+              type = lib.types.attrsOf (
+                lib.types.submodule {
+                  options.folders = lib.mkOption { type = lib.types.listOf lib.types.str; };
+                }
+              );
+              default = { };
+            };
+            config = {
+              nixpkgs.pkgs = inputs.nixpkgs.legacyPackages.${system};
+              boot.isContainer = true;
+              system.stateVersion = "26.11";
+              sops = {
+                defaultSopsFile = ./fixtures/empty-sops.yaml;
+                age.keyFile = "/run/vpn-fixture/age-key";
+                validateSopsFiles = false;
+              };
+            };
+          })
+          extraModule
+        ];
+      };
+      ownedAssertions = lib.concatMap (definition: definition.value) (
+        builtins.filter (
+          definition: definition.file == "adguardhome-fixture-owned"
+        ) evaluated.options.assertions.definitionsWithLocations
+      );
+      ownedValues = map (entry: entry.assertion) ownedAssertions;
+      nativeValues = map (entry: entry.assertion) evaluated.config.assertions;
+    in
+    evaluated.config
+    // {
+      assertions = ownedAssertions;
+      ownedAssertionsPass = builtins.deepSeq ownedValues (
+        ownedAssertions != [ ] && builtins.all (value: value) ownedValues
+      );
+      nativeAssertionsPass = builtins.deepSeq nativeValues (builtins.all (value: value) nativeValues);
     };
-  };
+  baselineConfig = evaluate baseSettings { };
+  placeholderConfig = baselineConfig;
+  baselineModule = moduleFor baseSettings baselineConfig;
+  # Select only this module's definition values by source metadata above.
+  # Native diagnostics are never examined or deep-forced on successful cases.
+  matchesMessage = predicate: entry: predicate entry.message;
+  ownedAssertion =
+    message: assertions:
+    let
+      selected = builtins.filter (matchesMessage (value: value == message)) assertions;
+    in
+    assert builtins.length selected == 1;
+    (builtins.head selected).assertion;
   assertionFor =
-    message: rawSettings: config:
-    builtins.head (
-      builtins.filter (entry: entry.message == message) (moduleFor rawSettings config).assertions
-    );
-  rejectsSetting =
-    message: rawSettings: !(assertionFor message rawSettings placeholderConfig).assertion;
+    message: rawSettings: extraModule:
+    ownedAssertion message (evaluate rawSettings extraModule).assertions;
+  rejectsSetting = message: rawSettings: !(assertionFor message rawSettings { });
   active = (import ./lib/consumer.nix { inherit inputs root self; }) {
     instanceNames = [ "dns-adguardhome" ];
     includeNetwork = false;
@@ -101,19 +154,12 @@ let
   disabledModule = moduleFor (baseSettings // { enable = false; }) {
     clanwright.dns.adguardhome.activeInstances = [ ];
   };
-  duplicateInstancesModule = moduleFor baseSettings (
-    lib.recursiveUpdate placeholderConfig {
-      clanwright.dns.adguardhome.activeInstances = [
-        "dns-adguardhome"
-        "dns-second-adguardhome"
-      ];
-    }
-  );
-  missingInstanceClaimModule = moduleFor baseSettings (
-    lib.recursiveUpdate placeholderConfig {
-      clanwright.dns.adguardhome.activeInstances = [ ];
-    }
-  );
+  duplicateInstancesModule = evaluate baseSettings {
+    clanwright.dns.adguardhome.activeInstances = [ "dns-second-adguardhome" ];
+  };
+  missingInstanceClaimModule = evaluate baseSettings {
+    clanwright.dns.adguardhome.activeInstances = lib.mkForce [ ];
+  };
   disabledSiblingModule = moduleFor (baseSettings // { enable = false; }) placeholderConfig;
   privateSettings = lib.recursiveUpdate baseSettings {
     dns = privateDnsFixture;
@@ -123,38 +169,14 @@ let
       "||telemetry.example.invalid^"
     ];
   };
-  privateDeclaredModule = moduleFor privateSettings placeholderConfig;
-  privateConfig = lib.recursiveUpdate placeholderConfig {
-    services = {
-      adguardhome = privateDeclaredModule.services.adguardhome // {
-        package = adguardPackage;
-      };
-      dnsproxy = privateDeclaredModule.services.dnsproxy // {
-        package = dnsproxyPackage;
-      };
-    };
-    sops.templates = privateDeclaredModule.sops.templates;
-  };
-  privateModule = moduleFor privateSettings privateConfig;
+  privateModule = evaluate privateSettings { };
   privateEffective =
     builtins.fromJSON
       privateModule.sops.templates."dns-adguardhome-adguardhome.yaml".content;
   privateFilteringDisabledSettings = lib.recursiveUpdate privateSettings {
     filtering.enable = false;
   };
-  privateFilteringDisabledDeclaredModule = moduleFor privateFilteringDisabledSettings placeholderConfig;
-  privateFilteringDisabledConfig = lib.recursiveUpdate placeholderConfig {
-    services = {
-      adguardhome = privateFilteringDisabledDeclaredModule.services.adguardhome // {
-        package = adguardPackage;
-      };
-      dnsproxy = privateFilteringDisabledDeclaredModule.services.dnsproxy // {
-        package = dnsproxyPackage;
-      };
-    };
-    sops.templates = privateFilteringDisabledDeclaredModule.sops.templates;
-  };
-  privateFilteringDisabledModule = moduleFor privateFilteringDisabledSettings privateFilteringDisabledConfig;
+  privateFilteringDisabledModule = evaluate privateFilteringDisabledSettings { };
   privateFilteringDisabledEffective =
     builtins.fromJSON
       privateFilteringDisabledModule.sops.templates."dns-adguardhome-adguardhome.yaml".content;
@@ -174,7 +196,7 @@ let
       silentFailureBudgetSeconds = 45;
     };
   };
-  alternateTimeoutModule = moduleFor alternateTimeoutSettings placeholderConfig;
+  alternateTimeoutModule = evaluate alternateTimeoutSettings { };
   alternateTimeoutEffective =
     builtins.fromJSON
       alternateTimeoutModule.sops.templates."dns-adguardhome-adguardhome.yaml".content;
@@ -214,48 +236,70 @@ let
       (lib.recursiveUpdate baseSettings { systemResolver.nameservers = [ "127.0.0.2" ]; })
     )
   ];
+  rejectsOverride = message: extraModule: !(assertionFor message baseSettings extraModule);
   packageOverrideResults = [
-    (
-      !(assertionFor "adguardhome: the runtime package must come from the VPN domain platform pin."
-        baseSettings
-        (lib.recursiveUpdate baselineConfig { services.adguardhome.package = pkgs.hello; })
-      ).assertion
-    )
-    (
-      !(assertionFor
-        "adguardhome: the fallback dnsproxy package must come from the VPN domain platform pin."
-        baseSettings
-        (lib.recursiveUpdate baselineConfig { services.dnsproxy.package = pkgs.hello; })
-      ).assertion
+    (rejectsOverride "adguardhome: the runtime package must come from the VPN domain platform pin." {
+      services.adguardhome.package = lib.mkOverride 0 pkgs.hello;
+    })
+    (rejectsOverride
+      "adguardhome: the fallback dnsproxy package must come from the VPN domain platform pin."
+      { services.dnsproxy.package = lib.mkOverride 0 pkgs.hello; }
     )
   ];
   dnsproxyOverrideResults =
     map
-      (
-        override:
-        !(assertionFor
-          "adguardhome: dnsproxy settings and flags must preserve the loopback encrypted-to-plaintext cascade."
-          baseSettings
-          (lib.recursiveUpdate baselineConfig { services.dnsproxy = override; })
-        ).assertion
-      )
+      (rejectsOverride "adguardhome: dnsproxy settings and flags must preserve the loopback encrypted-to-plaintext cascade.")
       [
-        { settings.listen-addrs = [ "0.0.0.0" ]; }
-        { settings.upstream = [ "1.1.1.1:53" ]; }
-        { settings.fallback = [ ]; }
-        { settings.insecure = true; }
-        { settings.timeout = "4s"; }
-        { flags = [ "--insecure" ]; }
+        { services.dnsproxy.settings.listen-addrs = lib.mkForce [ "0.0.0.0" ]; }
+        { services.dnsproxy.settings.upstream = lib.mkForce [ "1.1.1.1:53" ]; }
+        { services.dnsproxy.settings.fallback = lib.mkForce [ ]; }
+        { services.dnsproxy.settings.insecure = lib.mkForce true; }
+        { services.dnsproxy.settings.timeout = lib.mkForce "4s"; }
+        { services.dnsproxy.flags = lib.mkForce [ "--insecure" ]; }
       ];
   templateOverrideRejected =
-    !(assertionFor "adguardhome: the final template must exactly preserve the generated policy."
-      baseSettings
+    rejectsOverride "adguardhome: the final template must exactly preserve the generated policy."
+      {
+        sops.templates."dns-adguardhome-adguardhome.yaml".content = lib.mkForce "{}";
+      };
+  startupOverrideResults =
+    lib.imap0
       (
-        lib.recursiveUpdate baselineConfig {
-          sops.templates."dns-adguardhome-adguardhome.yaml".content = "{}";
-        }
+        index: extraModule:
+        rejectsOverride (
+          if index < 3 then
+            "adguardhome: the native service must retain credential-owned settings and closed firewall defaults."
+          else
+            "adguardhome: the effective native unit must install and validate its credential before starting the closed DNS runtime without DHCP capabilities."
+        ) extraModule
       )
-    ).assertion;
+      [
+        { services.adguardhome.enable = lib.mkForce false; }
+        { services.adguardhome.extraArgs = [ "--config /run/override.yaml" ]; }
+        { services.adguardhome.allowDHCP = true; }
+        {
+          systemd.services.adguardhome.serviceConfig.LoadCredential = lib.mkForce "config:/run/override.yaml";
+        }
+        { systemd.services.adguardhome.serviceConfig.ExecStartPre = lib.mkForce [ ]; }
+        { systemd.services.adguardhome.serviceConfig.ExecStartPre = lib.mkForce [ "echo bypass" ]; }
+        { systemd.services.adguardhome.serviceConfig.ExecStart = lib.mkForce "echo bypass"; }
+        { systemd.services.adguardhome.preStart = "echo bypass"; }
+        { systemd.services.adguardhome.serviceConfig.DynamicUser = lib.mkForce false; }
+        { systemd.services.adguardhome.serviceConfig.StateDirectory = lib.mkForce "OtherState"; }
+        { systemd.services.adguardhome.serviceConfig.RuntimeDirectory = lib.mkForce "OtherRuntime"; }
+        { systemd.services.adguardhome.serviceConfig.NoNewPrivileges = lib.mkForce false; }
+        { systemd.services.adguardhome.serviceConfig.ProtectSystem = lib.mkForce false; }
+        {
+          systemd.services.adguardhome.serviceConfig.CapabilityBoundingSet = lib.mkForce [ "CAP_NET_RAW" ];
+        }
+        { systemd.services.adguardhome.serviceConfig.AmbientCapabilities = lib.mkForce [ "CAP_NET_RAW" ]; }
+        {
+          systemd.services.adguardhome.serviceConfig.RestrictAddressFamilies = lib.mkForce [
+            "AF_INET"
+            "AF_PACKET"
+          ];
+        }
+      ];
   inherit (active) machine;
   templateNames = builtins.filter (lib.hasSuffix "-adguardhome.yaml") (
     builtins.attrNames machine.sops.templates
@@ -586,11 +630,10 @@ let
   };
   privateAssertionResults = {
     benignImportantTextAccepted =
-      (assertionFor
+      assertionFor
         "adguardhome: userRules must not use dnsrewrite, badfilter, or important modifiers when private zones are configured."
         privateSettings
-        placeholderConfig
-      ).assertion;
+        { };
     malformedZoneRejected =
       !(schemaAccepts (
         lib.recursiveUpdate baseSettings {
@@ -882,12 +925,14 @@ let
         );
   };
   effectiveContract =
-    builtins.all (entry: entry.assertion) machine.assertions
+    baselineConfig.ownedAssertionsPass
+    && baselineConfig.nativeAssertionsPass
+    && builtins.all (entry: entry.assertion) machine.assertions
     && !twoActiveAttempt.success
     && activeWithDisabled.machine.clanwright.dns.adguardhome.activeInstances == [ "dns-adguardhome" ]
     && builtins.all (entry: entry.assertion) activeWithDisabled.machine.assertions
-    && !(builtins.all (entry: entry.assertion) duplicateInstancesModule.assertions)
-    && !(builtins.all (entry: entry.assertion) missingInstanceClaimModule.assertions)
+    && !(ownedAssertion "adguardhome: only one active instance may claim the native AdGuard Home and dnsproxy runtimes per machine." duplicateInstancesModule.assertions)
+    && !(ownedAssertion "adguardhome: only one active instance may claim the native AdGuard Home and dnsproxy runtimes per machine." missingInstanceClaimModule.assertions)
     && builtins.all (entry: entry.assertion) disabledSiblingModule.assertions
     && (disabledSiblingModule.services or { }) == { }
     && (disabledSiblingModule.sops or { }) == { }
@@ -934,7 +979,8 @@ let
         }
       ];
   privateDnsContract =
-    builtins.all (entry: entry.assertion) privateModule.assertions
+    privateModule.ownedAssertionsPass
+    && privateModule.nativeAssertionsPass
     && privateEffective.dns.upstream_dns == [ "127.0.0.1:5335" ] ++ expectedPrivateUpstreams
     && privateEffective.dns.fallback_dns == [ "127.0.0.1:5336" ] ++ expectedPrivateUpstreams
     &&
@@ -952,7 +998,8 @@ let
     && privateModule.services.dnsproxy.settings == baselineModule.services.dnsproxy.settings
     && privateModule.services.dnsproxy.flags == baselineModule.services.dnsproxy.flags;
   filteringDisabledContract =
-    builtins.all (entry: entry.assertion) privateFilteringDisabledModule.assertions
+    privateFilteringDisabledModule.ownedAssertionsPass
+    && privateFilteringDisabledModule.nativeAssertionsPass
     && privateFilteringDisabledEffective.filtering.filtering_enabled
     && privateFilteringDisabledEffective.filtering.rewrites_enabled
     && !privateFilteringDisabledEffective.filtering.protection_enabled
@@ -1079,14 +1126,17 @@ let
     && templateOverrideRejected
     && builtins.all (value: value) settingOverrideResults
     && builtins.all (value: value) packageOverrideResults
-    && builtins.all (value: value) dnsproxyOverrideResults;
+    && builtins.all (value: value) dnsproxyOverrideResults
+    && builtins.all (value: value) startupOverrideResults;
   timeoutResults = {
     defaults =
       (evalSettings baseSettings).dns.upstreamTimeoutSeconds == 16
       && (evalSettings baseSettings).dns.fallbackTimeoutSeconds == 3
       && (evalSettings baseSettings).dns.silentFailureBudgetSeconds == 65;
     alternateAccepted =
-      (assertionFor timeoutAssertionMessage alternateTimeoutSettings placeholderConfig).assertion
+      alternateTimeoutModule.ownedAssertionsPass
+      && alternateTimeoutModule.nativeAssertionsPass
+      && (assertionFor timeoutAssertionMessage alternateTimeoutSettings { })
       && alternateTimeoutEffective.dns.upstream_timeout == "11s"
       && alternateTimeoutModule.services.dnsproxy.settings.timeout == "2s";
     cascadeRejected = rejectsSetting timeoutAssertionMessage (
@@ -1113,7 +1163,7 @@ let
         };
       }
     );
-    boundaryAccepted = (assertionFor timeoutAssertionMessage baseSettings placeholderConfig).assertion;
+    boundaryAccepted = assertionFor timeoutAssertionMessage baseSettings { };
   };
   timeoutContract = builtins.all (value: value) (builtins.attrValues timeoutResults);
   contract =

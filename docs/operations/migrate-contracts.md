@@ -1,191 +1,119 @@
 # Adopt the revised integration contracts
 
-This procedure covers provider schema 2 and the separated publication/exposure contracts.
-Use only the module IDs and protocols listed in the current [contracts](../contracts.md);
-remove consumer instances and profile selections outside that catalog before evaluation.
-Publishing a release, editing a consumer and deploying it remain separate
-authorized operations. Repository evaluation does not adopt the change anywhere.
+This release changes provider schema 3, native AnyTLS, native Network/NaiveProxy
+composition, publisher integration schema 2 and asset-path aliases. Use only
+public attributes from [contracts](../contracts.md). Release publication,
+consumer input adoption and deployment remain separately authorized operations.
 
-## Provider and rendering API
+## Provider schema 3
 
-- Upgrade provider exports to `schemaVersion = 2`. Old versions are rejected.
-- Set `clientPrivateKeySecretName` for every AWG peer to the existing consumer
-  SOPS binding. No credential rotation or renaming is required by the new API.
-  Client private-key bindings must be distinct from each other and from the
-  gateway private-key and header-protection-key bindings.
-- Read AWG public keys from `transportMetadata.peers`; `peerPublicKeys` is removed.
-- Replace `lib.clientProfiles` usage with the publisher role and its typed NixOS
-  integration output. Do not import internal renderer files.
+Upgrade all six providers and the publisher together. Schema 2 is rejected;
+there is no compatibility adapter. Preserve the nine stable module IDs,
+consumer SOPS bindings, per-device accounts, explicit path-token secrets and
+publication URLs.
 
-## AdGuard composition
-
-Remove `ui.domain`, `ingress.*` and `acme.certName` from role settings. Supply
-`tls.certificateFile` and `tls.privateKeyFile` as runtime bindings. The consumer
-must provide file permissions to the AdGuard service and connect certificate
-renewal to the exported `reloadUnits`.
-
-Read `config.clanwright.dns.adguardhome.integration` for `uiBackend` and
-`dohBackend`. Declare Caddy sites, public/private listeners, TLS validation of
-the DoH backend, firewall exposure and any Tailscale ordering in the consumer.
-The repository's [consumer fixture](../../checks/fixtures/example-clan.nix)
-demonstrates composition with Network. It is evaluation data, not an operator
-entrypoint or a module to import into production.
-
-Move conditional private upstream entries and native AdGuard rewrite settings
-into `dns.privateZones` and `dns.rewrites`. Preserve the consumer's actual names,
-addresses and friendly CNAME targets only in the consumer. A minimal fictional
-shape is:
+Replace each provider ref's `protocol` and `profileNames` with an explicit map:
 
 ```nix
-dns.privateZones = [
-  {
-    domains = [ "admin.example.invalid" "internal.example.invalid" ];
-    upstreams = [ { address = "10.20.0.53"; port = 53; } ];
-  }
-];
-dns.rewrites = [
-  {
-    domain = "admin.example.invalid";
-    answer = "node.internal.example.invalid";
-  }
-];
+providerRefs = [{
+  machine = "gateway-a";
+  instanceId = "vpn";
+  clients = { laptop = "device-a"; phone = "device-b"; };
+  display = { label = "A"; };
+}];
 ```
 
-Remove rules using `dnsrewrite`, `badfilter` or `important` modifiers from
-`filtering.userRules` when private zones are enabled; keep ordinary consumer
-allow/deny rules there. Move supported exact DNS aliases into typed
-`dns.rewrites`; native rewrites retain priority over the generated zone
-exemptions.
+Keys are declared publisher profiles; values are existing provider accounts.
+Enumerate intended profiles explicitly, including identity mappings where needed.
+Empty maps, unknown names, shared account assignments and duplicate refs fail.
+External subscription `profileNames` remain unchanged.
 
-Review enabled remote filter feeds for more-specific important blocks of direct
-private names. The module-owned exceptions prevent consumer rules from canceling
-the closure, but cannot assert the current content of downloaded feeds. A feed
-conflict affects the answer, not the private-only forwarding route.
-Replace any imperative protection toggle with `filtering.enable`. Do not migrate
-an imperative `filtering_enabled = false` state: disabling the engine also
-disables rewrites and is outside this contract.
+Each export contains `schemaVersion = 3` and one native `connection.<tag>`.
+`endpoint.domain` becomes `endpoint.hostname`; Mieru retains IPv4/port only.
+Provider IPv4 is mandatory. Credential maps become `clients.<account>` bindings;
+VLESS short IDs, REALITY client policy and DoH hints remain explicit. XHTTP
+exports only its path; `auto` is fixed renderer policy. AWG exports client
+addresses/private-key bindings, server public key and header-key binding;
+server peer public keys remain provider settings. Preserve nullable keepalive.
+Do not rotate credentials for this shape change. The
+[payload table](../contracts.md#exports-and-helpers) is authoritative.
 
-Before adoption, ensure every private resolver handles the protected suffixes
-without forwarding them to public DNS. Confirm consumer-owned listeners,
-firewall, client DNS routes, and HTTPS names and certificates separately. A
-repository evaluation cannot inspect the external resolver or prove runtime
-failure routing.
+## Native AnyTLS
 
-## Profile publication
+AnyTLS occupies native `services.sing-box`, `sing-box.service` and its Unix
+identity with the exact stock package. Remove competing settings/inbounds and
+namespace definitions before adoption; merged conflicts are rejected. Preserve
+consumer certificate and password bindings, TLS 1.3/UoT policy and public own-DoH
+endpoint. Source guards and consumer acceptance scenarios are documented in the
+[AnyTLS module](../../clanServices/anytls/README.md) and [runbook](anytls.md).
 
-Set publisher `clientDnsEndpoints` to the complete list of own DoH endpoints;
-see the [publisher example](../../clanServices/vpn-client-profiles/README.md).
-Each entry needs a distinct domain and a numeric IPv4 address, with optional
-port and path. An explicit list replaces the old edge-domain endpoint; `null`
-or an omitted setting retains that single own endpoint. Empty lists are rejected.
-The generated sing-box profile no longer includes its former public encrypted
-or plaintext DNS reserve, including when retaining the single-endpoint default.
-Both formats require the consumer's own DNS to remain reachable.
-Keep filtering, private names and filter-list state equivalent on all endpoints.
-Address changes require regenerated profiles to reach clients. Consumer rollout
-and runtime failure checks remain separate from this repository's evaluation.
+## Publisher integration schema 2
 
-Client selection uses two groups, `Ручной` and `Авто`, in both formats.
-Optionally set `providerRefs[].display = { label; country; countryCode; }` and
-`externalSubscriptions.<sourceId>.label` to control connection names; without
-them, names fall back to machine names and source IDs. External labels must
-differ from provider labels. The `mihomo-full.yaml` variant is no longer
-published or matched by the publisher route: remove its links from client
-devices and use the client Global mode instead. `mihomo.yaml` and
-`profile.json` keep their URLs. Because clients store the selected connection
-by name, each client loses its saved selection once after the renamed profile
-is downloaded.
+Use `config.clanwright.vpn.publishers.<instance>` for the complete read-only
+integration output. Attach `logConfig` at site level with `lib.mkBefore`, before
+native alias responses at order 1000. Its unconditional `log_skip` covers
+canonical and configured alias requests. Attach complete `routeConfig` with
+`lib.mkAfter` at order 1500 before terminal fallback 2000. Preserve Nix string
+context and artifact dependencies; do not parse, unwrap or rerender fragments.
+The route has a matcherless outer block and canonical host/path guards inside.
+There is no schema 1 compatibility output.
 
-Remove publisher `caddyBindIPv4`, `tailnetIPv4`, `acmeCertName` and links-page
-`tailnetOnly` settings. These are consumer exposure decisions. Client-facing
-`configGatewayDomain`, `publicIPv4` and `edgeDomain` remain renderer inputs.
-Choose a distinct `localMachineName` runtime label for each active publisher
-instance on a machine; duplicate roots or unit names are rejected during evaluation.
-Use a distinct `configGatewayDomain` and Caddy virtual host for each publisher.
-The exported route configurations use the same URL layout and cannot share one
-host; duplicate gateway domains are rejected without regard to letter case.
+Preserve the existing two tokenized endpoints, private links, reader group,
+distinct publisher runtime labels/gateway hosts and exposure policy. Caddy
+remains independent of publisher readiness and profile-secret restarts. Existing
+profile settings, explicit token bindings, DNS policy, manual/conditional Auto
+selection and client Rule/Global modes retain their
+[current contract](../../clanServices/vpn-client-profiles/README.md). This release
+does not require a group rename or another profile/token migration.
 
-Use `config.clanwright.vpn.publishers.<instance>` for static route configuration,
-runtime roots, reader group, unit names and public-asset status. Grant Caddy the
-reader group. Bind the public profile site and private links page explicitly.
-Keep the supplied log suppression: secret path tokens must not enter access logs.
-Do not use runtime Caddy imports, add a Caddy requirement on the publisher, or
-reload/restart Caddy on profile-secret changes.
+## Native NaiveProxy and certificates
 
-The publisher adds only its publication unit to secret restart targets. A shared
-binding may still have a separate provider-owned restart target, for example a
-NaiveProxy server password; that is independent of profile publication.
+Replace `selectedPublicSiteClaim` and `selectedPublicSiteEndpoint` with required
+`domain`, advertised `publicIPv4` and actual `bindIPv4`. Select the existing
+native vhost by canonical `domain`, retain its base owner, aliases and physical
+certificate ID, and declare exactly `[ bindIPv4 ]` on TCP `443`. The addon sets
+the unique `forwardProxy = true` extension without repeating ownership. Native
+Caddy uses `httpsPort = 443`; arbitrary-port support is outside this contract.
 
-Secret publication is withdrawn before regeneration and becomes visible only
-after the complete generation succeeds. A failure makes the profile endpoint
-unavailable, including the links page; unrelated sites continue to operate.
-Already downloaded profiles on clients are not revoked by removing their
-publication. Credential revocation at provider gateways remains consumer-owned.
+The complete read-only `clanwright.vpn.naiveproxy.connectRoute` attaches once
+automatically to the selected root catch-all. Do not add a second root copy.
+Attach the same fragment inside every named canonical/alias native Host route
+on the selected public listener that can shadow an allowed target:
 
-Public rule assets use persistent state, while profiles and tokens stay under
-`/run`. First publication waits for required assets and retries automatically.
-Existing accepted public assets remain available during refresh failures without
-a hard expiration. Wire the nonsecret status to consumer monitoring; stale lists
-may omit new routing entries. Do not treat public cache retention as permission
-to retain revoked credentials.
+```nix
+services.caddy.virtualHosts."cover.example.invalid".extraConfig =
+  lib.mkBefore config.clanwright.vpn.naiveproxy.connectRoute;
+```
 
-## Removed probe and links-integration surfaces
+Preserve native Host wrappers, aliases, base owners, hostName, certificates,
+listeners and ordinary GET routes. Ordinary sites do not set `forwardProxy`.
+Native merging retains the complete authentication, ACL, probe-resistance policy,
+runtime import and string context. Outer terminal Host precedence is separate
+from inner CONNECT order 500. Exact local bind/443 guards preserve private,
+mixed and disjoint listeners. Destination authority port is independent of local
+listener port; `{http.request.local.port} == 443` compares numerically. This is
+listener-wide authentication, not a TLS SNI allowlist. No scanner, registry,
+new listener or firewall opening is introduced.
 
-The domain has no dedicated probe identity, probe profile kind or publisher
-export. Apply these consumer edits before evaluating the new revision:
+Network owns native Caddy/ACME, the specialized Caddy package and producer
+publication. Preserve stable physical certificate IDs, native reader targets
+and ACME/Lego authority. Adopt a published compatible producer input, including
+consumer nested edges, through a separately authorized change. Established
+[AdGuard/DNS bindings](../contracts.md#consumer-bindings) remain unchanged.
 
-- Remove `vpnPublisher` from consumer `exportInterfaces`; declare only
-  `vpnProvider`. The publisher role produces no exports.
-- Remove references to `lib.vpnExports` (including `selectVpnProvider` and
-  `selectVpnPublisher`) and `lib.awgValidation`. `lib.exportInterfaces` remains.
-- Remove NaiveProxy `probeUserName`. Every `passwordSecretNames` identity is now
-  a device identity in the provider's `profileNames`; delete the former probe
-  identity and its secret binding unless it should become an ordinary device.
-- Replace `kind = "probe"` in publisher `profiles` with `mobile` or `router`,
-  or remove the profile. VLESS/XHTTP gateway profiles no longer accept `kind`;
-  see the next section.
-- Remove publisher `excludedProfileNames`. Publication includes exactly the
-  declared `profiles`; omit any profile that must not be published.
+## Asset-path alias retirement
 
-The `/config-links/` page, stable module IDs and `packages` are unchanged.
-`profileLinks` no longer carries the path-token secret; see
-[publisher path-token secrets](#publisher-path-token-secrets).
-
-## VLESS/XHTTP gateway profile settings
-
-Gateway `profiles` of `@clanwright/vpn-mihomo-vless-xhttp` accept only `name`,
-`vlessUuidSecretName` and `realityShortId`. Delete `kind` and
-`publishProfileJson` from those entries: they had no effect, and evaluation
-now rejects them. Generated Xray configuration and the `vpnProvider` export
-are unchanged. Publisher `profiles[].kind` and `publishProfileJson` in
-`@clanwright/vpn-client-profiles` keep their meaning.
-
-## Publisher path-token secrets
-
-Each publisher profile names its own path-token secret in
-`profiles[].pathTokenSecretName`. The renderer and the links page both use
-that name as given; the module no longer derives it. Apply these edits:
-
-- Add `pathTokenSecretName` to every publisher profile. To keep the existing
-  secret and published URLs, set it to the former derived name
-  `mihomo-client-<secretPrefix>-<profile>-path-token`; otherwise supply any
-  valid consumer-owned SOPS name and move the token value to it.
-- Remove publisher `secretPrefix`.
-- Remove `pathTokenSecretName` from `profileLinks` entries; a link uses the
-  path token of its profile.
-
-Every profile needs a distinct path-token secret, and it must differ from
-credential and external subscription URL secrets: the token becomes a public URL
-segment. Token format and publication behaviour are unchanged.
+[ADR-0001](../adr/0001-retire-asset-path-aliases.md) retires exactly 11 historical
+catalog aliases. After adoption, old profiles using those paths may lose asset
+refresh; unknown external use and that consequence are accepted. Preserve all
+15 canonical asset/hash paths, both tokenized endpoints, private links and native
+host aliases. The decision does not authorize adoption or deployment.
 
 ## Verification and delivery
 
-Evaluate the consumer composition against the exact intended revision and run
-the complete [repository gate](verify.md). Preserve its artifacts and review the
-final diff. Evaluate certificate permissions, static routing, log suppression,
-private links access and absence of Caddy/publisher lifecycle coupling.
-
-These checks do not prove startup, parser acceptance or network behavior. Do not
-perform runtime tests, builds, VM tests or deployed-machine probes as repository
-verification. Historical access logs and any token-rotation response are separate
-consumer operations, not part of this source migration.
+Run the complete [repository gate and synthetic harness](verify.md), retain
+artifacts and obtain review of the final source. Evaluate intended consumer
+composition, native package authority, certificate permissions, static routing,
+log suppression and private-links exposure. Runtime evidence follows the
+single [PREDEPLOY boundary](verify.md#evidence-and-runtime-acceptance); source
+checks do not establish startup, parser acceptance or network behavior.

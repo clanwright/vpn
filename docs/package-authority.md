@@ -5,25 +5,32 @@ checks. Consumers cannot substitute packages through overlays or internal
 imports. The package selection is defined in [flake.nix](../flake.nix), with
 exact input revisions in [flake.lock](../flake.lock).
 
+AWG, Mieru, TrustTunnel and AnyTLS use explicit fixed application output paths and
+version checks. Independent host `pkgs` aliases may differ without changing VPN
+runtime. No VPN global package overlay or host-alias equality guard is required.
+AWG directly adds its two required
+stock packages to `environment.systemPackages`; Mieru and TrustTunnel guard
+the effective `ExecStart` against their fixed package commands. AWG checks
+inspect generated exact paths; they do not assert a new merged command guard.
+AnyTLS explicitly selects native `services.sing-box.package` as stock 1.14.1;
+its effective package, command, vendor provenance and security guards remain
+mandatory. Independent host `pkgs.sing-box` is only a native option default,
+not the AnyTLS runtime authority.
+
 ## Application inputs
 
-| Input | Revision | Selected packages |
+| Input | Revision | Selection |
 | --- | --- | --- |
-| `apps-nixpkgs` | `8d5d270900d3fc75655ea2d9d248b234f6631439` | Mihomo, Xray, AdGuard Home, dnsproxy, Unbound |
-| `modern-apps-nixpkgs` | `8d5d270900d3fc75655ea2d9d248b234f6631439` | sing-box, AmneziaWG Go and tools, Mieru |
-| `trusttunnel-nixpkgs` | `8d5d270900d3fc75655ea2d9d248b234f6631439` | TrustTunnel endpoint |
+| `nixpkgs` | `8d5d270900d3fc75655ea2d9d248b234f6631439` | Platform modules, developer tools and all ten stock applications |
 
-`nixpkgs` supplies platform modules and developer tools. Selecting an application
-from a separate input does not modify its derivation.
+All ten applications and the native platform use this single input. Exact
+Clan, SOPS and Network revisions, including Network-owned nested package
+inputs, are recorded in [flake.lock](../flake.lock). This keeps package
+authority at its owning input rather than duplicating dependency pins in prose.
 
-The root platform `nixpkgs` input also resolves to
-`8d5d270900d3fc75655ea2d9d248b234f6631439`. The root `clan-core` input
-is `c612dac4b2bfb5278b7c366f250044ddb5401bcb` and root `sops-nix` is
-`5efb5a6f4f5ab192817d28557dd4d650fa14d866`. The Network v4.0.0 input
-resolves to `2981962f1f590fae66c05c50a3d793825281de9e`; its own nested
-input graph retains the revisions required for Network's exact Caddy package.
-Network v4 requires the native NixOS ACME module's Lego 5 command and Lego 4
-account-migration support, which the selected platform revision provides.
+The pinned Clan API requires a callable `data-mesher` service export. The local
+empty NixOS module export satisfies that interface without activating a mesh, manufacturing
+a service enable flag or selecting a runtime package.
 
 ## Runtime package set
 
@@ -43,42 +50,28 @@ The public `packages.x86_64-linux` set contains ten applications:
 | `trusttunnel-endpoint` | 1.1.0 | Stock `trusttunnel-endpoint` |
 
 These outputs must come from the NixOS cache; local overrides and custom binary
-wrappers are prohibited. On 2026-09-27 all ten exact `x86_64-linux` outputs at
-this revision returned HTTP 200 from the NixOS cache; the path and status record
-is retained in `.work/dependency-update/candidate-cache.tsv`. Cache availability
-is an external property, not a result of the repository's pure evaluation gate.
+wrappers are prohibited. Cache availability is an external qualification, not
+a result of pure evaluation. Retain exact-output cache evidence with release
+artifacts as described in [release](operations/release.md).
 
-The package authority contract checks the complete ten-application output
-set against its stock source selections and exact versions. Service contracts
-also reject substitution of those packages in the evaluated configuration.
-
-Mieru 3.36.0 was explicitly accepted for initial support on 2026-09-12. The
-selected revision still packages 3.36.0; upstream has released 3.38.0, but it
-is not yet merged into the selected stock nixpkgs package. The 2026-09-27 cache
-check confirmed the selected 3.36.0 output. Updating Mieru requires a reviewed
-stock nixpkgs package and a cached exact output; no local build or override is
-authorized. Native destination filtering remains incomplete, so the module
-provides service-scoped network guards.
-
-TrustTunnel 1.1.0 uses the same selected stock revision as the other applications.
-Its exact output returned HTTP 200 from the NixOS cache on 2026-09-27. Upstream
-1.1.0 fixes UDP idle-timeout socket cleanup and global
-IPv6 classification; it does not establish that the open memory/panic and
-reconnect reports are resolved. See [runtime acceptance](operations/trusttunnel.md).
-
-As of 2026-09-27, upstream sing-box 1.14.2 and dnsproxy 0.85.0 are absent from
-the selected nixpkgs revision; upstream Mieru 3.38.0 is not yet merged as a
-stock package. Unbound 1.26.1 is available in nixpkgs staging, but its exact
-outputs from staging and staging-26.05 returned HTTP 404 from the NixOS cache,
-so this update retains 1.26.0. Xray 26.9.9 is marked prerelease upstream and is
-the selected stock nixpkgs version.
+The package authority contract checks the complete ten-application output set
+against stock selections and exact versions. Effective service contracts reject
+substitution of those runtime packages. Package changes require a reviewed stock
+nixpkgs revision and cached exact output; they do not prove runtime compatibility.
+Mieru’s service-scoped network guards complement its incomplete native
+destination filtering. TrustTunnel’s memory, cleanup and reconnect acceptance is
+defined in [its operations guide](operations/trusttunnel.md).
 
 ## Caddy integration
 
-NaiveProxy uses the consumer's Network-owned Caddy with forwardproxy and
-ratelimit. The pinned Network input supplies the integration fixture; VPN does
-not export a Caddy package. This is the sole allowed non-stock application
-package. Stock Caddy lacks the required forwardproxy plugin.
+NaiveProxy uses Network-owned Caddy with forwardproxy and ratelimit. VPN does
+not export a Caddy package. Native Caddy/ACME composition uses the public
+Network API. Network remains the
+sole specialized Caddy constructor; native host ACME and stock host Lego retain
+authority. Dependency compatibility is qualified in
+[verification](operations/verify.md#evidence-and-runtime-acceptance). This is the sole allowed non-stock application package. Stock
+Caddy
+lacks the required forwardproxy plugin.
 
 The exception does not authorize a VPN-local override, a build or cache
 publication. See [NaiveProxy operations](operations/naiveproxy.md) for integration

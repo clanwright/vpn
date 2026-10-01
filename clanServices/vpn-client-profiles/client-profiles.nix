@@ -6,7 +6,7 @@
 }:
 let
   profileTypes = import ./types.nix { inherit lib; };
-  manifestLib = import ./artifact-manifest.nix { inherit lib; };
+  protocolPolicy = import ../../modules/contracts/protocol-policy.nix;
   displayNames = import ./display-names.nix { inherit lib; };
   inherit (displayNames) manualGroup autoGroup;
   inherit (settings) localMachineName;
@@ -17,7 +17,11 @@ let
     serviceDomains.configGateway = settings.configGatewayDomain;
   };
   inherit (settings) profiles;
-  providersFor = protocol: builtins.filter (provider: provider.protocol == protocol) providers;
+  connectionTag = provider: builtins.head (builtins.attrNames provider.connection);
+  connectionFor = provider: provider.connection.${connectionTag provider};
+  clientFor =
+    profileName: provider: (connectionFor provider).clients.${provider.profileClients.${profileName}};
+  providersFor = protocol: builtins.filter (provider: connectionTag provider == protocol) providers;
   vlessProviders = providersFor "vless-xhttp";
   amneziawgProviders = providersFor "amneziawg";
   naiveProviders = providersFor "naiveproxy";
@@ -25,8 +29,8 @@ let
   anytlsProviders = providersFor "anytls";
   trusttunnelProviders = providersFor "trusttunnel";
   providerId = profileTypes.providerNamespace;
-  profilePolicy = profileName: provider: builtins.elem profileName provider.profileNames;
-  displayKey = provider: "${provider.protocol}/${providerId provider}";
+  profilePolicy = profileName: provider: builtins.hasAttr profileName provider.profileClients;
+  displayKey = provider: "${connectionTag provider}/${providerId provider}";
   # Names are resolved across every provider of a profile, so Mihomo and
   # sing-box show the same name for the same connection.
   displayNamesFor =
@@ -35,7 +39,7 @@ let
       map (provider: {
         key = displayKey provider;
         base = displayNames.providerBaseName provider;
-        kind = displayNames.protocolLabels.${provider.protocol};
+        kind = displayNames.protocolLabels.${connectionTag provider};
       }) (builtins.filter (profilePolicy profileName) providers)
     );
   displayNameFor = profileName: provider: (displayNamesFor profileName).${displayKey provider};
@@ -63,11 +67,6 @@ let
   ruleSetMirrorMrsPublicPath = tag: opaqueAssetPublicPath "mihomo-${tag}" "mrs";
   ruleSetMirrorTxtPublicPath = tag: opaqueAssetPublicPath "mihomo-${tag}" "txt";
   secureDnsDomainsTxtPublicPath = opaqueAssetPublicPath "secure-dns-domains" "txt";
-  legacySecureDnsRuleSetPublicPath = "/assets/v1/catalog/filters.srs";
-  legacyPersonalProxyDomainsTxtPublicPath = "/assets/v1/catalog/segments.txt";
-  legacyRuleSetMirrorPublicPath = tag: "/assets/v1/catalog/${tag}.srs";
-  legacyRuleSetMirrorMrsPublicPath = tag: "/assets/v1/catalog/${tag}.mrs";
-  legacySecureDnsDomainsTxtPublicPath = "/assets/v1/catalog/secure-dns.txt";
   personalProxyDomainLines = settings.personalProxyDomains or [ ];
   personalProxyDomainRegex = "^[A-Za-z0-9]([A-Za-z0-9-]*[A-Za-z0-9])?(\\.[A-Za-z0-9]([A-Za-z0-9-]*[A-Za-z0-9])?)+$";
   invalidPersonalProxyDomains = builtins.filter (
@@ -190,12 +189,10 @@ let
     {
       tag = "ai_domains";
       url = "https://raw.githubusercontent.com/MetaCubeX/meta-rules-dat/sing/geo/geosite/category-ai-!cn.srs";
-      legacyPublicPaths = [ ];
     }
     {
       tag = "github_domains";
       url = "https://raw.githubusercontent.com/MetaCubeX/meta-rules-dat/sing/geo/geosite/github.srs";
-      legacyPublicPaths = [ ];
     }
   ];
 
@@ -244,8 +241,6 @@ let
       id = "secure-dns-domains";
       filename = "secure-dns.txt";
       publicPath = secureDnsDomainsTxtPublicPath;
-      legacyPublicPaths = [ legacySecureDnsDomainsTxtPublicPath ];
-      routePriority = 30;
       contentType = "text/plain; charset=utf-8";
       validator = "nonempty";
       source = {
@@ -257,8 +252,6 @@ let
       id = "personal-proxy-domains";
       filename = "segments.txt";
       publicPath = personalProxyDomainsTxtPublicPath;
-      legacyPublicPaths = [ legacyPersonalProxyDomainsTxtPublicPath ];
-      routePriority = 1;
       contentType = "text/plain; charset=utf-8";
       validator = "nonempty";
       source = {
@@ -270,8 +263,6 @@ let
       id = "secure-dns-filter";
       filename = "filters.srs";
       publicPath = secureDnsRuleSetPublicPath;
-      legacyPublicPaths = [ legacySecureDnsRuleSetPublicPath ];
-      routePriority = 0;
       contentType = "application/octet-stream";
       validator = "srs";
       source = {
@@ -281,14 +272,12 @@ let
     };
   }
   // builtins.listToAttrs (
-    lib.imap0 (index: ruleSet: {
+    map (ruleSet: {
       name = "sing-box-${ruleSet.tag}";
       value = {
         id = "sing-box-${ruleSet.tag}";
         filename = "${ruleSet.tag}.srs";
         publicPath = ruleSetMirrorPublicPath ruleSet.tag;
-        legacyPublicPaths = ruleSet.legacyPublicPaths or [ (legacyRuleSetMirrorPublicPath ruleSet.tag) ];
-        routePriority = 10 + index;
         contentType = "application/octet-stream";
         validator = "srs";
         source = {
@@ -299,14 +288,12 @@ let
     }) upstreamRuleSets
   )
   // builtins.listToAttrs (
-    lib.imap0 (index: ruleSet: {
+    map (ruleSet: {
       name = "mihomo-${ruleSet.tag}";
       value = {
         id = "mihomo-${ruleSet.tag}";
         filename = "${ruleSet.tag}.mrs";
         publicPath = ruleSetMirrorMrsPublicPath ruleSet.tag;
-        legacyPublicPaths = [ (legacyRuleSetMirrorMrsPublicPath ruleSet.tag) ];
-        routePriority = 20 + index;
         contentType = "application/octet-stream";
         validator = "mrs-${ruleSet.behavior}";
         source = {
@@ -317,14 +304,12 @@ let
     }) mihomoMrsUpstream
   )
   // builtins.listToAttrs (
-    lib.imap0 (index: ruleSet: {
+    map (ruleSet: {
       name = "mihomo-${ruleSet.tag}";
       value = {
         id = "mihomo-${ruleSet.tag}";
         filename = "${ruleSet.tag}.txt";
         publicPath = ruleSetMirrorTxtPublicPath ruleSet.tag;
-        legacyPublicPaths = [ ];
-        routePriority = 24 + index;
         contentType = "text/plain; charset=utf-8";
         validator = "nonempty";
         source = {
@@ -390,142 +375,123 @@ let
   ]
   ++ lib.optional (personalProxyDomains != [ ]) "RULE-SET,personal_proxy_domains,PROXY";
 
-  findAmneziawgPeer =
-    profileName: provider:
-    let
-      matches = builtins.filter (peer: peer.name == profileName) provider.transportMetadata.peers;
-    in
-    if builtins.length matches != 1 then
-      throw "Expected exactly one AmneziaWG peer named ${profileName} for provider ${providerId provider}"
-    else
-      builtins.head matches;
-
-  firstAddress = cidr: builtins.head (lib.splitString "/" cidr);
-
   mkVlessCredential =
     profileName: provider:
     let
-      metadata = provider.transportMetadata;
+      connection = connectionFor provider;
+      client = clientFor profileName provider;
       machineName = providerId provider;
     in
     {
       inherit machineName;
-      vlessUuidSecretName =
-        provider.secretNames.vlessUuid.${profileName}
-          or (throw "VLESS UUID secret name is required for ${machineName}/${profileName}");
+      vlessUuidSecretName = client.uuidSecret;
       vlessTag = displayNameFor profileName provider;
-      edgeDomain = provider.endpoint.domain;
-      port = provider.endpoint.port;
-      edgeIPv4 = provider.endpoint.ipv4;
-      inherit (metadata) reality xhttp;
-      dohDomain = metadata.doh.domain;
-      dohIPv4 = metadata.doh.ipv4;
-      clientFingerprint = metadata.fingerprint;
+      edgeDomain = connection.endpoint.hostname;
+      port = connection.endpoint.port;
+      edgeIPv4 = connection.endpoint.ipv4;
+      inherit (connection) reality xhttp;
+      inherit (client) shortId;
+      dohDomain = connection.doh.hostname;
+      dohIPv4 = connection.doh.ipv4;
+      clientFingerprint = connection.reality.fingerprint;
     };
 
   mkAmneziawgCredential =
     profileName: provider:
     let
-      peer = findAmneziawgPeer profileName provider;
-      metadata = provider.transportMetadata;
+      connection = connectionFor provider;
+      client = clientFor profileName provider;
       machineName = providerId provider;
     in
     {
       inherit machineName;
-      inherit (metadata) serverPublicKey;
-      headerProtectionKeySecretName = provider.secretNames.headerProtectionKey;
-      clientPublicKey = peer.publicKey;
-      endpointDomain = provider.endpoint.domain;
-      listenPort = provider.endpoint.port;
-      mtu = metadata.mtu or null;
-      clientPersistentKeepalive = peer.clientPersistentKeepalive or 25;
+      inherit (connection) serverPublicKey;
+      headerProtectionKeySecretName = connection.headerProtectionKeySecret;
+      endpointDomain = connection.endpoint.hostname;
+      listenPort = connection.endpoint.port;
+      mtu = protocolPolicy.awgMtu;
+      clientPersistentKeepalive = client.keepaliveSeconds;
       amneziawgTag = displayNameFor profileName provider;
-      endpointIPv4 = provider.endpoint.ipv4;
-      clientAddress = firstAddress (builtins.head peer.allowedIPs);
-      clientPrivateKeySecretName =
-        provider.secretNames.clientPrivateKey.${profileName}
-          or (throw "AmneziaWG private-key secret name is required for ${machineName}/${profileName}");
-      inherit (metadata) generation profile;
+      endpointIPv4 = connection.endpoint.ipv4;
+      clientAddress = client.ipv4;
+      clientPrivateKeySecretName = client.privateKeySecret;
+      generation = protocolPolicy.awgGeneration;
+      profile = protocolPolicy.awgProfile;
     };
 
   mkNaiveCredential =
     profileName: provider:
     let
       machineName = providerId provider;
-      passwordSecretName =
-        provider.secretNames.password.${profileName}
-          or (throw "NaiveProxy password secret name is required for ${machineName}/${profileName}");
+      connection = connectionFor provider;
+      client = clientFor profileName provider;
     in
     {
       inherit machineName;
-      domain = provider.endpoint.domain;
-      endpointIPv4 = provider.endpoint.ipv4 or settings.publicIPv4;
-      port = provider.transportMetadata.port or provider.endpoint.port;
-      username = profileName;
-      tlsServerName = provider.transportMetadata.tlsServerName or provider.endpoint.domain;
+      domain = connection.endpoint.hostname;
+      endpointIPv4 = connection.endpoint.ipv4;
+      port = connection.endpoint.port;
+      username = provider.profileClients.${profileName};
+      tlsServerName = connection.endpoint.hostname;
       tag = displayNameFor profileName provider;
-      inherit passwordSecretName;
+      passwordSecretName = client.passwordSecret;
     };
 
   mkMieruCredential =
     profileName: provider:
     let
       machineName = providerId provider;
+      connection = connectionFor provider;
+      client = clientFor profileName provider;
     in
     {
       inherit machineName profileName;
-      endpointIPv4 = provider.endpoint.ipv4;
-      port = provider.endpoint.port;
+      endpointIPv4 = connection.endpoint.ipv4;
+      port = connection.endpoint.port;
+      username = provider.profileClients.${profileName};
       tag = displayNameFor profileName provider;
-      passwordSecretName =
-        provider.secretNames.users.${profileName}
-          or (throw "Mieru password secret name is required for ${machineName}/${profileName}");
+      passwordSecretName = client.passwordSecret;
     };
 
   mkAnytlsCredential =
     profileName: provider:
     let
-      metadata = provider.transportMetadata;
+      connection = connectionFor provider;
+      client = clientFor profileName provider;
       machineName = providerId provider;
     in
     {
       inherit machineName profileName;
-      endpointDomain = provider.endpoint.domain;
-      endpointIPv4 = provider.endpoint.ipv4;
-      port = provider.endpoint.port;
-      inherit (metadata)
-        tlsServerName
-        tlsVerify
-        tlsMinVersion
-        credentialEncoding
-        ;
+      endpointDomain = connection.endpoint.hostname;
+      endpointIPv4 = connection.endpoint.ipv4;
+      port = connection.endpoint.port;
+      tlsServerName = connection.endpoint.hostname;
+      tlsVerify = true;
+      tlsMinVersion = "1.3";
+      credentialEncoding = "base64url";
       tag = displayNameFor profileName provider;
-      passwordSecretName =
-        provider.secretNames.users.${profileName}
-          or (throw "AnyTLS password secret name is required for ${machineName}/${profileName}");
+      passwordSecretName = client.passwordSecret;
     };
 
   mkTrustTunnelCredential =
     profileName: provider:
     let
-      metadata = provider.transportMetadata;
+      connection = connectionFor provider;
+      client = clientFor profileName provider;
       machineName = providerId provider;
     in
     {
       inherit machineName profileName;
-      endpointDomain = provider.endpoint.domain;
-      endpointIPv4 = provider.endpoint.ipv4;
-      port = provider.endpoint.port;
-      inherit (metadata)
-        tlsServerName
-        tlsVerify
-        credentialEncoding
-        upstreamProtocol
-        ;
+      endpointDomain = connection.endpoint.hostname;
+      endpointIPv4 = connection.endpoint.ipv4;
+      port = connection.endpoint.port;
+      username = provider.profileClients.${profileName};
+      tlsServerName = connection.endpoint.hostname;
+      tlsVerify = true;
+      credentialEncoding = "base64url";
+      upstreamProtocol = "http2";
       tag = displayNameFor profileName provider;
-      passwordSecretName =
-        provider.secretNames.users.${profileName}
-          or (throw "TrustTunnel password secret name is required for ${machineName}/${profileName}");
+      passwordSecretName = client.passwordSecret;
     };
 
   mkProfile =
@@ -578,9 +544,9 @@ let
         "client-fingerprint" = cred.clientFingerprint;
         "reality-opts" = {
           "public-key" = cred.reality.publicKey;
-          "short-id" = cred.reality.shortIdsByProfile.${profile.name};
+          "short-id" = cred.shortId;
         }
-        // lib.optionalAttrs (cred.reality.supportX25519MLKEM768 or false) {
+        // lib.optionalAttrs cred.reality.supportX25519MLKEM768 {
           "support-x25519mlkem768" = true;
         };
         alpn = [ "h2" ];
@@ -607,7 +573,7 @@ let
           "allowed-ips" = [ "0.0.0.0/0" ];
           udp = true;
           "persistent-keepalive" =
-            if autoProtocolEnabled "amneziawg" then cred.clientPersistentKeepalive or 25 else 0;
+            if autoProtocolEnabled "amneziawg" then cred.clientPersistentKeepalive else 0;
           "amnezia-wg-option" = {
             version = cred.generation;
             inherit (cred.profile)
@@ -637,7 +603,7 @@ let
         type = "mieru";
         server = cred.endpointIPv4;
         inherit (cred) port;
-        username = cred.profileName;
+        inherit (cred) username;
         password = "__MIHOMO_MIERU_PASSWORD_${cred.machineName}_${cred.profileName}__";
         transport = "TCP";
         multiplexing = "MULTIPLEXING_LOW";
@@ -661,7 +627,7 @@ let
         type = "trusttunnel";
         server = cred.endpointIPv4;
         inherit (cred) port;
-        username = cred.profileName;
+        inherit (cred) username;
         password = "__MIHOMO_TRUSTTUNNEL_PASSWORD_${cred.machineName}_${cred.profileName}__";
         sni = cred.tlsServerName;
         "skip-cert-verify" = !cred.tlsVerify;
@@ -1288,57 +1254,20 @@ let
         );
     in
     {
-      inherit
-        basename
-        pathTokenSecret
-        upstreamCredentials
-        amneziawgCredentials
-        naiveCredentials
-        mieruCredentials
-        anytlsCredentials
-        trusttunnelCredentials
-        ;
       inherit (profile) name;
-      inherit publishProfileJson;
-      templatePath = selectiveTemplatePath;
-      inherit artifacts mihomoSelectiveTemplate;
-      profileJsonTemplate = if publishProfileJson then profileJsonTemplate else null;
-      inherit profileJsonTemplatePath;
+      inherit artifacts;
+      pathTokenBinding = {
+        secretName = pathTokenSecret;
+        decoding = "path-token";
+      };
     };
 
-  generatedProfiles = map mkProfile profiles;
   manifest = {
     schemaVersion = 1;
     inherit assetCatalog;
-    profiles = map (profile: {
-      inherit (profile) name artifacts;
-      pathTokenBinding = {
-        secretName = profile.pathTokenSecret;
-        decoding = "path-token";
-      };
-    }) generatedProfiles;
-    publicationPhases = manifestLib.expectedPublicationPhases;
+    profiles = map mkProfile profiles;
   };
 in
 {
-  renderedProfiles = map (profile: {
-    inherit (profile)
-      name
-      publishProfileJson
-      mihomoSelectiveTemplate
-      profileJsonTemplate
-      ;
-  }) generatedProfiles;
-  inherit
-    manifest
-    generatedProfiles
-    upstreamRuleSets
-    mihomoMrsUpstream
-    personalProxyDomainsTxt
-    secureDnsRuleSetPublicPath
-    personalProxyDomainsTxtPublicPath
-    secureDnsDomainsTxtPublicPath
-    ruleSetMirrorPublicPath
-    ruleSetMirrorMrsPublicPath
-    ;
+  inherit manifest;
 }

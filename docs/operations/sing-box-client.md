@@ -115,13 +115,10 @@ Those properties require client-side acceptance on the intended Apple device.
 
 ## Naive startup IPv6 reachability probe
 
-[Issue #4](https://github.com/clanwright/vpn/issues/4) records three startup
-`open UDP connection ... no route to host` errors with SFM 1.14.1 and Naive
-150.0.7871.63. The operator confirmed their destination was
-`[2001:4860:4860::8888]:443`. This is a public constant in Chromium's IPv6
-reachability check, not a consumer endpoint or an address supplied by the profile.
-
-The source trace matches that version:
+[Issue #4](https://github.com/clanwright/vpn/issues/4) tracks Naive/Cronet startup
+IPv6 reachability errors. Chromium uses public `[2001:4860:4860::8888]:443`
+for its internal probe; the address does not come from the generated profile.
+The source provenance for sing-box 1.14.1 and Naive 150.0.7871.63 is:
 
 - sing-box [v1.14.1 dependencies](https://github.com/SagerNet/sing-box/blob/v1.14.1/go.mod)
   select Cronet Go wrapper `0d28acc44093` and platform libraries `c10c03c318db`.
@@ -142,7 +139,7 @@ This identifies the matching internal probe and explains why `quic: false`,
 `udp_over_tcp: false`, an IPv4 proxy endpoint and DNS `ipv4_only` do not prevent
 the socket attempt. The routed external-IPv6 reject rule governs captured
 application traffic; it is not a filter on every socket created internally by
-Cronet. The three failed attempts do not establish successful IPv6 packets,
+Cronet. A failed probe does not establish successful IPv6 packets,
 a DNS leak, authentication failure or a site outage. Source inspection does
 not replace packet-level evidence on an IPv6-capable network.
 
@@ -153,37 +150,20 @@ IPv6, replace stock packages, or suppress all ERROR logs to hide this result.
 Eliminating the attempt or changing its diagnostic treatment belongs to the
 upstream client; no supported profile-only fix is established here.
 
-An [earlier upstream report](https://github.com/SagerNet/sing-box/issues/4107)
-contains the same destination and error. Its reporter closed it with
-"Resolved" without a fix or version, so that closure is not evidence of a
-shipped correction. Any follow-up should provide only the client/core/Naive
-versions, this public probe destination, relative timestamps and counts, the
-relevant nonsecret option values, and whether ordinary traffic succeeds on
-IPv4-only and IPv6-capable networks. Keep raw logs, profile URLs, credentials
-and private interface/address metadata out of the report. External publication
-and client tests require their own authorization.
+For client follow-up, retain exact client/core/Naive versions, relative error
+timestamps/counts and whether ordinary traffic succeeds on IPv4-only and
+IPv6-capable networks. Keep raw logs, profile URLs, credentials and private
+interface/address metadata out of shared reports. Client tests and external
+publication require their own authorization.
 
 ## SFM, Tailscale and LAN routing acceptance
 
 Tracked in [issue #2](https://github.com/clanwright/vpn/issues/2).
 The current generator omits both `route_address` and `route_exclude_address`,
 while retaining `auto_route`, `strict_route` and `route.auto_detect_interface`.
-It matches the omission variant in the
-[September 26 operator A/B report](https://github.com/clanwright/vpn/issues/2#issuecomment-5845378043).
-With VPN v0.9.4 (`e05e9c6`), SFM 1.14.1 on macOS and Tailscale enabled,
-the original 47 IPv4 and 134 IPv6 included routes lost the default interface.
-Removing only `route_address` restored websites and all five rule downloads;
-`missing default interface` fell from 2 to 0 and
-`no available network interface` from 120 to 0. The route to Tailscale DNS
-remained in its tunnel. Clash TUN was disabled in both variants.
-
-This is evidence for one local workaround, not completed client acceptance.
-LAN, application access to tailnet, sustained transfer, restart and network
-switching still need the checks below. The macOS cause and any minimal failing
-prefix remain unknown. Three residual startup Naive IPv6 UDP errors belong to
-[issue #4](https://github.com/clanwright/vpn/issues/4); they do not establish a
-leak or recurrence of the default-interface failure. Shutdown `aborted`
-messages in the report were grouped at the operator's tunnel stop.
+The rationale is retained in [issue #2](https://github.com/clanwright/vpn/issues/2).
+A connected status does not establish LAN, application tailnet access, sustained
+transfer or reconnect/network-switch behavior.
 
 The inspected Apple implementation starts `NWPathMonitor` and reports an
 empty interface with index `-1` when the path is unsatisfied or has no available
@@ -191,62 +171,32 @@ interface. Turning off sing-box's `auto_detect_interface` does not disable
 this monitor. See the [Apple monitor implementation](https://github.com/SagerNet/sing-box-for-apple/blob/59540eb0e1812bb76a481a9dc3dec6a788f4196f/Library/Network/ExtensionPlatformInterface.swift#L285-L318).
 This explains the reported failure mechanism, not why macOS supplied that path.
 
-Run the following comparison only in the consumer's client acceptance
-environment. It is not part of the repository gate. Retain a known-working
-profile and client settings for rollback; do not publish experimental profiles
-or include credentials, subscription URLs, full profiles or unredacted logs in
+Run consumer acceptance on each intended client/OS/Tailscale combination.
+Retain a known-working profile and client settings for recovery. Keep credentials,
+subscription URLs, full profiles and private address/interface metadata out of
 shared evidence.
 
-1. Record the SFM app and embedded core versions, macOS and Tailscale versions,
-   active physical interface, Tailscale exit-node/subnet-router state, and SFM
+1. Record client/core, macOS and Tailscale versions and SFM
    `includeAllNetworks`, `excludeDefaultRoute` and `excludeAPNs` settings.
-   Keep those settings and the underlying network constant for the comparison.
-2. With SFM stopped and Tailscale connected, record the route interface for a
-   consumer-selected numeric tailnet IPv4, tailnet IPv6 and LAN destination.
-   Establish successful connections to those destinations independently of
-   private DNS. Also check the consumer's private names separately.
-3. If repeating the historical A/B comparison, use the retained v0.9.4 profile
-   as variant A (47 IPv4 and 134 IPv6 included routes). The current generator
-   already emits variant B. Record the same route selections and new connections,
-   plus a new public proxy connection and a sustained transfer. Capture only
-   redacted interface transition timestamps and error counts.
-4. Stop SFM. In a disposable local copy of A, remove only the TUN inbound's
-   `route_address` key (variant B). Do not replace it with explicit default
-   prefixes: that was not the successful experiment. Compare the remaining
-   JSON fields for equality before running the controlled comparison.
-   Do not add `route_exclude_address` or change `auto_detect_interface`, DNS,
-   selectors or SFM settings. Start B and repeat the same observations.
-5. Repeat an ordinary stop/start for each variant. A connected indicator,
-   cached URL-test result or existing connection is insufficient. Confirm new
-   traffic, tailnet/LAN reachability and expected public IPv6 rejection after
-   reconnect. Repeat after switching between the intended physical networks,
-   recording interface transitions and new connections. Stop the trial and
-   restore the retained known-working setup if B loses required access;
-   the failing historical A is not a working fallback.
+2. With SFM stopped and Tailscale connected, establish numeric and named
+   tailnet/LAN connectivity and identify the consumer-selected routes.
+3. Start the current generated profile. Confirm fresh public application traffic,
+   sustained transfer and new numeric/named LAN and tailnet connections. A
+   cached URL-test or existing connection is insufficient.
+4. Confirm a fresh FakeIP answer in `198.18.0.0/15` reaches the intended public
+   destination. On an IPv6-capable physical network, confirm external IPv6
+   literals are rejected while intended local/tailnet IPv6 remains reachable.
+5. Repeat stop/start, reconnect and switches between intended physical networks.
+   Retain redacted transition timings and separate counts for `missing default
+   interface`, `no available network interface` and `missing fakeip record`.
+   Restore the known-working setup if required access is lost.
 
-The omission is the generator contract; broad client compatibility remains
-pending acceptance. More-specific OS/Tailscale routes may keep local traffic outside the
-TUN, but their precedence under simultaneous Network Extensions must be
-observed. If local traffic enters sing-box, a `DIRECT` rule does not guarantee
-Tailscale egress: automatic interface binding can select the physical NIC.
-Adding the old excluded routes would test a different hypothesis and may send
-that traffic to the primary physical interface.
+More-specific OS/Tailscale routes may keep local traffic outside the TUN; their
+precedence under simultaneous Network Extensions requires observation. If
+local traffic enters sing-box, `DIRECT` does not guarantee Tailscale egress:
+automatic interface binding can select the physical NIC. Adding excluded
+routes changes the contract and requires a separate decision.
 
-| Observation | Interpretation / next step |
-| --- | --- |
-| B has new public traffic, tailnet/LAN, sustained transfer, reconnect and network-switch success; A reproducibly loses its path | Accept this combination after confirming FakeIP capture and external IPv6 rejection; retain route/interface observations before generalizing to other clients. |
-| B starts but loses tailnet or LAN | Reject B as a fix; public connectivity alone fails the requirement. |
-| Both lose the default interface | Route-list replacement is insufficient; inspect SFM settings and path transitions without bundling more changes into B. |
-| Both pass | The original failure is not reproduced; do not claim its cause or resolution. |
-
-Record per-variant start/reconnect outcomes, numeric and named destination
-results, selected interfaces, transfer results and the three error counts
-(`missing default interface`, `no available network interface`,
-`missing fakeip record`). Keep FakeIP errors separate from path availability.
-Confirm that a fresh FakeIP answer in `198.18.0.0/15` reaches the intended
-public destination through the tunnel. On an IPv6-capable physical network,
-check that an external IPv6 literal is rejected while the intended local and
-tailnet IPv6 destinations remain reachable. Failure on an IPv4-only physical
-network cannot by itself prove the profile's IPv6 rejection policy.
-No universal client compatibility is established by the pure Nix gate or the
-single reported A/B result.
+These are consumer scenarios under the shared
+[evidence boundary](verify.md#evidence-and-runtime-acceptance), not repository
+tests or universal compatibility claims.

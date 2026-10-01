@@ -42,124 +42,53 @@ let
       ];
     }).config;
   schemaAccepts = value: (builtins.tryEval (builtins.deepSeq (evalSettings value) true)).success;
-  unwrap =
-    value:
-    if builtins.isAttrs value && (value._type or null) == "if" then
-      if value.condition then unwrap value.content else null
-    else if builtins.isAttrs value && (value._type or null) == "order" then
-      unwrap value.content
-    else if builtins.isAttrs value && (value._type or null) == "override" then
-      unwrap value.content
-    else
-      value;
-  packagePkgs = pkgs // {
-    trusttunnel-endpoint = trustTunnelPackage;
-  };
-  baseConfigFor =
-    settings: activeInstances:
-    let
-      names = map (user: user.passwordSecretName) settings.users;
-    in
-    {
-      clanwright.vpn.trusttunnel = { inherit activeInstances; };
-      networking = {
-        nameservers = settings.dnsResolverIPv4s;
-        firewall = {
-          enable = true;
-          backend = "nftables";
-          extraInputRules = "";
-        };
-        nftables.enable = true;
-      };
-      security.acme.certs.${settings.acmeCertName}.reloadServices = [ ];
-      sops = {
-        useSystemdActivation = true;
-        placeholder = lib.genAttrs names (name: "<SOPS:${name}:PLACEHOLDER>");
-        secrets = lib.genAttrs names (name: {
-          path = "/run/secrets/${name}";
-          restartUnits = [ "profile-publisher.service" ];
-        });
-        templates."trusttunnel.toml" = {
-          path = "/run/secrets-rendered/trusttunnel.toml";
-          restartUnits = [ "profile-publisher.service" ];
-        };
-      };
-    };
+  nativeEvaluate = import ./lib/provider-evaluation.nix { inherit inputs; };
   evaluateWith =
     {
       rawSettings,
       activeInstances ? [ "fixture--trusttunnel" ],
-      targetPkgs ? packagePkgs,
-      mutateEffectiveConfig ? (value: value),
+      targetSystem ? "x86_64-linux",
+      extraModule ? { },
     }:
     let
       settings = evalSettings rawSettings;
       instance = service.roles.gateway.perInstance {
         inherit settings;
         instanceName = "fixture--trusttunnel";
-        machine.name = "fixture";
       };
-      baseConfig = baseConfigFor settings activeInstances;
-      bootstrap = instance.nixosModule {
-        config = baseConfig;
-        pkgs = targetPkgs;
-      };
-      bootstrapModule = bootstrap.config;
-      mergeSecret =
-        name:
-        baseConfig.sops.secrets.${name}
-        // (unwrap bootstrapModule.sops.secrets.${name})
-        // {
-          restartUnits =
-            baseConfig.sops.secrets.${name}.restartUnits
-            ++ (unwrap bootstrapModule.sops.secrets.${name}).restartUnits;
+      result = nativeEvaluate {
+        inherit instance settings;
+        prefix = "trusttunnel";
+        system = targetSystem;
+        baseModule = {
+          security.acme = {
+            acceptTerms = true;
+            defaults.email = "fixture@example.invalid";
+            certs.${settings.acmeCertName} = {
+              inherit (settings) domain;
+              webroot = "/var/lib/acme/acme-challenge";
+            };
+          };
+          sops.secrets = lib.genAttrs (map (user: user.passwordSecretName) settings.users) (_: {
+            restartUnits = [ "profile-publisher.service" ];
+          });
+          sops.templates."trusttunnel.toml".restartUnits = [ "profile-publisher.service" ];
         };
-      effectiveConfig = mutateEffectiveConfig (
-        baseConfig
-        // {
-          networking = baseConfig.networking // {
-            firewall = baseConfig.networking.firewall // {
-              extraInputRules = unwrap bootstrapModule.networking.firewall.extraInputRules;
-            };
-            nftables = baseConfig.networking.nftables // {
-              tables.vpn_trusttunnel_egress = unwrap bootstrapModule.networking.nftables.tables.vpn_trusttunnel_egress;
-            };
-          };
-          security.acme.certs.${settings.acmeCertName}.reloadServices =
-            unwrap
-              bootstrapModule.security.acme.certs.${settings.acmeCertName}.reloadServices;
-          sops = baseConfig.sops // {
-            secrets = lib.genAttrs (map (user: user.passwordSecretName) settings.users) mergeSecret;
-            templates."trusttunnel.toml" =
-              baseConfig.sops.templates."trusttunnel.toml"
-              // (unwrap bootstrapModule.sops.templates."trusttunnel.toml")
-              // {
-                restartUnits =
-                  baseConfig.sops.templates."trusttunnel.toml".restartUnits
-                  ++ (unwrap bootstrapModule.sops.templates."trusttunnel.toml").restartUnits;
-              };
-          };
-          systemd.services.trusttunnel = unwrap bootstrapModule.systemd.services.trusttunnel;
-        }
-      );
-      definition = instance.nixosModule {
-        config = effectiveConfig;
-        pkgs = targetPkgs;
+
+        extraModule = {
+          imports = [ extraModule ];
+          clanwright.vpn.trusttunnel.activeInstances = lib.mkForce activeInstances;
+        };
       };
-      module = definition.config;
+      inherit (result) module;
+      template = module.sops.templates."trusttunnel.toml" or null;
     in
-    {
-      inherit
-        definition
-        effectiveConfig
-        instance
-        module
-        settings
-        ;
-      assertionsPass = builtins.all (entry: entry.assertion) module.assertions;
-      table = unwrap (module.networking.nftables.tables.vpn_trusttunnel_egress or null);
-      template = unwrap (module.sops.templates."trusttunnel.toml" or null);
-      unit = unwrap module.systemd.services.trusttunnel;
+    result
+    // {
+      inherit instance settings template;
+      table = module.networking.nftables.tables.vpn_trusttunnel_egress or null;
+      unit = module.systemd.services.trusttunnel or null;
+
     };
   enabled = evaluateWith { rawSettings = baseSettings; };
   disabled = evaluateWith {
@@ -217,120 +146,110 @@ let
   };
   wrongNameservers = evaluateWith {
     rawSettings = baseSettings;
-    mutateEffectiveConfig =
-      config: lib.recursiveUpdate config { networking.nameservers = [ "1.1.1.1" ]; };
+    extraModule = {
+      networking.nameservers = lib.mkForce [ "1.1.1.1" ];
+    };
   };
   weakenedGuard = evaluateWith {
     rawSettings = baseSettings;
-    mutateEffectiveConfig =
-      config:
-      lib.recursiveUpdate config {
-        networking.nftables.tables.vpn_trusttunnel_egress.content =
-          "chain output { type filter hook output priority filter; policy accept; }";
-      };
+    extraModule = {
+      networking.nftables.tables.vpn_trusttunnel_egress.content =
+        lib.mkForce "chain output { type filter hook output priority filter; policy accept; }";
+    };
   };
   disabledGuard = evaluateWith {
     rawSettings = baseSettings;
-    mutateEffectiveConfig =
-      config:
-      lib.recursiveUpdate config { networking.nftables.tables.vpn_trusttunnel_egress.enable = false; };
+    extraModule = {
+      networking.nftables.tables.vpn_trusttunnel_egress.enable = lib.mkForce false;
+    };
   };
   weakenedIngress = evaluateWith {
     rawSettings = baseSettings;
-    mutateEffectiveConfig =
-      config: lib.recursiveUpdate config { networking.firewall.extraInputRules = ""; };
+    extraModule = {
+      networking.firewall.extraInputRules = lib.mkForce "";
+    };
   };
   wrongIdentity = evaluateWith {
     rawSettings = baseSettings;
-    mutateEffectiveConfig =
-      config: lib.recursiveUpdate config { systemd.services.trusttunnel.serviceConfig.User = "root"; };
+    extraModule = {
+      systemd.services.trusttunnel.serviceConfig.User = lib.mkForce "root";
+    };
   };
   dynamicIdentity = evaluateWith {
     rawSettings = baseSettings;
-    mutateEffectiveConfig =
-      config:
-      lib.recursiveUpdate config { systemd.services.trusttunnel.serviceConfig.DynamicUser = true; };
+    extraModule = {
+      systemd.services.trusttunnel.serviceConfig.DynamicUser = lib.mkForce true;
+    };
   };
   wrongCommand = evaluateWith {
     rawSettings = baseSettings;
-    mutateEffectiveConfig =
-      config:
-      lib.recursiveUpdate config { systemd.services.trusttunnel.serviceConfig.ExecStart = "/bin/false"; };
+    extraModule = {
+      systemd.services.trusttunnel.serviceConfig.ExecStart = lib.mkForce "/bin/false";
+    };
   };
   wrongCredentials = evaluateWith {
     rawSettings = baseSettings;
-    mutateEffectiveConfig =
-      config:
-      lib.recursiveUpdate config { systemd.services.trusttunnel.serviceConfig.LoadCredential = [ ]; };
+    extraModule = {
+      systemd.services.trusttunnel.serviceConfig.LoadCredential = lib.mkForce [ ];
+    };
   };
   staleCredentialReload = evaluateWith {
     rawSettings = baseSettings;
-    mutateEffectiveConfig =
-      config:
-      lib.recursiveUpdate config {
-        systemd.services.trusttunnel.serviceConfig.ExecReload = "/bin/kill -HUP $MAINPID";
-      };
+    extraModule = {
+      systemd.services.trusttunnel.serviceConfig.ExecReload = lib.mkForce "/bin/kill -HUP $MAINPID";
+    };
   };
   wrongCapabilities = evaluateWith {
     rawSettings = baseSettings;
-    mutateEffectiveConfig =
-      config:
-      lib.recursiveUpdate config {
-        systemd.services.trusttunnel.serviceConfig.CapabilityBoundingSet = [ "CAP_NET_RAW" ];
-      };
+    extraModule = {
+      systemd.services.trusttunnel.serviceConfig.CapabilityBoundingSet = lib.mkForce [ "CAP_NET_RAW" ];
+    };
   };
   enabledIPv6 = evaluateWith {
     rawSettings = baseSettings;
-    mutateEffectiveConfig =
-      config:
-      lib.recursiveUpdate config {
-        systemd.services.trusttunnel.serviceConfig.RestrictAddressFamilies = [
-          "AF_INET"
-          "AF_INET6"
-          "AF_UNIX"
-        ];
-      };
+    extraModule = {
+      systemd.services.trusttunnel.serviceConfig.RestrictAddressFamilies = lib.mkForce [
+        "AF_INET"
+        "AF_INET6"
+        "AF_UNIX"
+      ];
+    };
   };
   unboundFirewallLifecycle = evaluateWith {
     rawSettings = baseSettings;
-    mutateEffectiveConfig =
-      config: lib.recursiveUpdate config { systemd.services.trusttunnel.bindsTo = [ ]; };
+    extraModule = {
+      systemd.services.trusttunnel.bindsTo = lib.mkForce [ ];
+    };
   };
   wrongTemplate = evaluateWith {
     rawSettings = baseSettings;
-    mutateEffectiveConfig =
-      config: lib.recursiveUpdate config { sops.templates."trusttunnel.toml".content = ""; };
+    extraModule = {
+      sops.templates."trusttunnel.toml".content = lib.mkForce "";
+    };
   };
   missingSecretRestart = evaluateWith {
     rawSettings = baseSettings;
-    mutateEffectiveConfig =
-      config:
-      lib.recursiveUpdate config {
-        sops.secrets."fixture/trusttunnel-phone-password".restartUnits = [ "profile-publisher.service" ];
-      };
+    extraModule = {
+      sops.secrets."fixture/trusttunnel-phone-password".restartUnits = lib.mkForce [
+        "profile-publisher.service"
+      ];
+    };
   };
   missingAcmeRestart = evaluateWith {
     rawSettings = baseSettings;
-    mutateEffectiveConfig =
-      config:
-      lib.recursiveUpdate config { security.acme.certs.trusttunnel-example.reloadServices = [ ]; };
-  };
-  wrongPackage = evaluateWith {
-    rawSettings = baseSettings;
-    targetPkgs = packagePkgs // {
-      trusttunnel-endpoint = pkgs.hello;
+    extraModule = {
+      security.acme.certs.trusttunnel-example.reloadServices = lib.mkForce [ ];
     };
   };
-  armPkgs = packagePkgs // {
-    stdenv = packagePkgs.stdenv // {
-      hostPlatform = packagePkgs.stdenv.hostPlatform // {
-        system = "aarch64-linux";
-      };
+  foreignHostAlias = evaluateWith {
+    rawSettings = baseSettings;
+    extraModule = {
+      nixpkgs.overlays = [ (_final: _prev: { trusttunnel-endpoint = pkgs.hello; }) ];
     };
   };
   unsupportedPlatform = evaluateWith {
     rawSettings = baseSettings;
-    targetPkgs = armPkgs;
+    targetSystem = "aarch64-linux";
   };
   highPort = evaluateWith {
     rawSettings = baseSettings // {
@@ -343,21 +262,38 @@ let
   source = builtins.readFile ../clanServices/trusttunnel/default.nix;
   disabledResults = {
     exports = disabled.instance.exports == { };
-    assertions = disabled.module.assertions == [ ];
-    users = disabled.module.users.groups == { } && disabled.module.users.users == { };
+    assertions = disabled.assertions == [ ];
+    users =
+      !(disabled.module.users.groups ? trusttunnel) && !(disabled.module.users.users ? trusttunnel);
     secrets = disabled.module.sops.secrets == { };
     templates = disabled.module.sops.templates == { };
-    tables = disabled.module.networking.nftables.tables == { };
-    services = disabled.module.systemd.services == { };
+    tables = !(disabled.module.networking.nftables.tables ? vpn_trusttunnel_egress);
+    services = !(disabled.module.systemd.services ? trusttunnel);
     acme = disabled.module.security.acme.certs == { };
     overlays = disabled.module.nixpkgs.overlays == [ ];
   };
-  disabledContract = builtins.all (value: value) (builtins.attrValues disabledResults);
+  disabledContract =
+    disabled.nativeAssertionsPass && builtins.all (value: value) (builtins.attrValues disabledResults);
   schemaContract =
     schemaAccepts baseSettings
+    && schemaAccepts (
+      baseSettings
+      // {
+        acmeCertName = "${lib.concatStrings (lib.replicate 63 "a")}.example.invalid";
+      }
+    )
+    && !(schemaAccepts (baseSettings // { acmeCertName = "*.example.invalid"; }))
     && !(schemaAccepts (baseSettings // { bindIPv4 = "0.0.0.0"; }))
     && !(schemaAccepts (baseSettings // { bindIPv4 = "192.0.2.999"; }))
     && !(schemaAccepts (baseSettings // { domain = "localhost"; }))
+    && schemaAccepts (baseSettings // { domain = "TrustTunnel.Example.INVALID"; })
+    && builtins.all (domain: !(schemaAccepts (baseSettings // { inherit domain; }))) [
+      "a..b"
+      "a.-b"
+      "a.b-"
+      "${lib.concatStrings (lib.replicate 64 "a")}.example"
+      (lib.concatStringsSep "." (lib.replicate 4 (lib.concatStrings (lib.replicate 63 "a"))))
+    ]
     && !(schemaAccepts (baseSettings // { dnsResolverIPv4s = [ "2001:db8::53" ]; }))
     && !(schemaAccepts (baseSettings // { quic = false; }))
     && !(schemaAccepts (
@@ -371,58 +307,40 @@ let
         ];
       }
     ))
-    && !duplicateUsers.assertionsPass
-    && !duplicateSecrets.assertionsPass
-    && !noUsers.assertionsPass
-    && !noResolvers.assertionsPass
-    && !duplicateResolvers.assertionsPass
-    && !duplicateInstances.assertionsPass
-    && !noInstanceClaim.assertionsPass
-    && !wrongNameservers.assertionsPass
-    && !unsupportedPlatform.assertionsPass;
+    && duplicateUsers.rejects "users and their SOPS password secrets must be nonempty and unique."
+    && duplicateSecrets.rejects "users and their SOPS password secrets must be nonempty and unique."
+    && noUsers.rejects "users and their SOPS password secrets must be nonempty and unique."
+    && noResolvers.rejects "consumer resolver IPv4 addresses must be nonempty and unique."
+    && duplicateResolvers.rejects "consumer resolver IPv4 addresses must be nonempty and unique."
+    && duplicateInstances.rejects "only one active instance may claim the singleton runtime per machine."
+    && noInstanceClaim.rejects "only one active instance may claim the singleton runtime per machine."
+    && wrongNameservers.rejects "networking.nameservers must exactly match dnsResolverIPv4s."
+    && unsupportedPlatform.rejects "runtime support is restricted to x86_64-linux.";
   exportContract =
     provider == {
-      schemaVersion = 2;
-      instanceId = "fixture--trusttunnel";
-      machine = "fixture";
-      role = "gateway";
-      protocol = "trusttunnel";
-      enabled = true;
-      endpoint = {
-        domain = "trusttunnel.example.invalid";
-        ipv4 = "192.0.2.15";
-        port = 443;
-        transport = "tcp";
-      };
-      transportMetadata = {
-        protocol = "trusttunnel";
-        userNames = [
-          "phone"
-          "laptop"
-        ];
-        tlsServerName = "trusttunnel.example.invalid";
-        tlsVerify = true;
-        credentialEncoding = "base64url";
-        upstreamProtocol = "http2";
-      };
-      profileNames = [
-        "phone"
-        "laptop"
-      ];
-      secretNames.users = {
-        phone = "fixture/trusttunnel-phone-password";
-        laptop = "fixture/trusttunnel-laptop-password";
+      schemaVersion = 3;
+      connection.trusttunnel = {
+        endpoint = {
+          hostname = "trusttunnel.example.invalid";
+          ipv4 = "192.0.2.15";
+          port = 443;
+        };
+        clients = {
+          phone.passwordSecret = "fixture/trusttunnel-phone-password";
+          laptop.passwordSecret = "fixture/trusttunnel-laptop-password";
+        };
       };
     };
   configContract =
     enabled.assertionsPass
+    && enabled.nativeAssertionsPass
     && lib.hasInfix "credentials_file = \"\${credentialsConfigPath}\"" source
     && lib.hasInfix "ipv6_available = false" source
     && lib.hasInfix "allow_private_network_connections = false" source
     && lib.hasInfix "auth_failure_status_code = 404" source
     && lib.hasInfix "non_connect_auth_failure_status_code = 404" source
     && lib.hasInfix "[listen_protocols.http2]" source
-    && lib.hasInfix ''password = "<SOPS:fixture/trusttunnel-phone-password:PLACEHOLDER>"'' templateContent
+    && lib.hasInfix ''password = "${enabled.module.sops.placeholder."fixture/trusttunnel-phone-password"}"'' templateContent
     && !(lib.hasInfix "max_http2_conns" templateContent)
     && !(lib.hasInfix "listen_protocols.http1" source)
     && !(lib.hasInfix "listen_protocols.quic" source)
@@ -439,12 +357,28 @@ let
     && lib.hasInfix "100.64.0.0/10" tableContent
     && lib.hasInfix "169.254.0.0/16" tableContent
     && lib.hasInfix ''meta skuid "trusttunnel" ip6 daddr ::/0 drop'' tableContent
-    && lib.hasInfix "ip daddr 192.0.2.15 tcp dport 443 accept" enabled.effectiveConfig.networking.firewall.extraInputRules
-    && !weakenedGuard.assertionsPass
-    && !disabledGuard.assertionsPass
-    && !weakenedIngress.assertionsPass;
+    && lib.hasInfix "ip daddr 192.0.2.15 tcp dport 443 accept" enabled.module.networking.firewall.extraInputRules
+    && weakenedGuard.rejects "ingress and process egress guards must not be removed or weakened."
+    && disabledGuard.rejects "ingress and process egress guards must not be removed or weakened."
+    && weakenedIngress.rejects "ingress and process egress guards must not be removed or weakened.";
+  hostAliasResults = {
+    aliasActuallyDiffers =
+      foreignHostAlias.pkgs.trusttunnel-endpoint == pkgs.hello
+      && foreignHostAlias.pkgs.trusttunnel-endpoint != trustTunnelPackage;
+    inherit (foreignHostAlias) assertionsPass nativeAssertionsPass;
+    fixedExecStart = lib.hasPrefix "${trustTunnelPackage}/bin/trusttunnel_endpoint --loglvl info " foreignHostAlias.unit.serviceConfig.ExecStart;
+    unchangedExecStart =
+      foreignHostAlias.unit.serviceConfig.ExecStart == enabled.unit.serviceConfig.ExecStart;
+    fixedRestartTrigger = foreignHostAlias.unit.restartTriggers == [ trustTunnelPackage ];
+    noOwnedOverlay = enabled.module.nixpkgs.overlays == [ ];
+  };
+  hostAliasContract = builtins.deepSeq hostAliasResults (
+    builtins.all (value: value) (builtins.attrValues hostAliasResults)
+  );
   runtimeContract =
-    enabled.unit.serviceConfig.Type == "exec"
+    highPort.assertionsPass
+    && highPort.nativeAssertionsPass
+    && enabled.unit.serviceConfig.Type == "exec"
     && enabled.unit.serviceConfig.User == "trusttunnel"
     && enabled.unit.serviceConfig.Group == "trusttunnel"
     && !(enabled.unit.serviceConfig ? DynamicUser)
@@ -474,20 +408,19 @@ let
     && enabled.unit.partOf == [ "nftables.service" ]
     && lib.hasInfix "/proc/\"$MAINPID\"/net/tcp" enabled.unit.postStart
     && lib.hasInfix ''"socket:[$inode]"'' enabled.unit.postStart
-    && !wrongIdentity.assertionsPass
-    && !dynamicIdentity.assertionsPass
-    && !wrongCommand.assertionsPass
-    && !wrongCredentials.assertionsPass
-    && !staleCredentialReload.assertionsPass
-    && !wrongCapabilities.assertionsPass
-    && !enabledIPv6.assertionsPass
-    && !unboundFirewallLifecycle.assertionsPass
-    && !wrongTemplate.assertionsPass
-    && !missingSecretRestart.assertionsPass
-    && !missingAcmeRestart.assertionsPass
-    && !wrongPackage.assertionsPass
+    && wrongIdentity.rejects "service lifecycle, command, credentials, capabilities, and IPv4-only sandbox must remain guarded."
+    && dynamicIdentity.rejects "service lifecycle, command, credentials, capabilities, and IPv4-only sandbox must remain guarded."
+    && wrongCommand.rejects "service lifecycle, command, credentials, capabilities, and IPv4-only sandbox must remain guarded."
+    && wrongCredentials.rejects "service lifecycle, command, credentials, capabilities, and IPv4-only sandbox must remain guarded."
+    && staleCredentialReload.rejects "service lifecycle, command, credentials, capabilities, and IPv4-only sandbox must remain guarded."
+    && wrongCapabilities.rejects "service lifecycle, command, credentials, capabilities, and IPv4-only sandbox must remain guarded."
+    && enabledIPv6.rejects "service lifecycle, command, credentials, capabilities, and IPv4-only sandbox must remain guarded."
+    && unboundFirewallLifecycle.rejects "service lifecycle, command, credentials, capabilities, and IPv4-only sandbox must remain guarded."
+    && wrongTemplate.rejects "credential template, permissions, and restart binding must remain guarded."
+    && missingSecretRestart.rejects "password secret permissions and restart bindings must remain guarded."
+    && missingAcmeRestart.rejects "ACME renewal must restart the service so LoadCredential copies are refreshed."
     && lib.getVersion trustTunnelPackage == "1.1.0";
-  passwordGuardContract =
+  passwordValidatorSourceHygiene =
     lib.hasInfix "byte_count" source
     && lib.hasInfix "base64url_byte_count" source
     && lib.hasInfix ''"$byte_count" -gt 64'' source
@@ -499,8 +432,9 @@ let
     && exportContract
     && configContract
     && guardContract
+    && hostAliasContract
     && runtimeContract
-    && passwordGuardContract
+    && passwordValidatorSourceHygiene
     && disabledContract;
 in
 if !contract then
@@ -511,7 +445,9 @@ if !contract then
         disabledContract
         exportContract
         guardContract
-        passwordGuardContract
+        hostAliasContract
+        hostAliasResults
+        passwordValidatorSourceHygiene
         runtimeContract
         schemaContract
         ;
@@ -525,7 +461,9 @@ else
       disabledContract
       exportContract
       guardContract
-      passwordGuardContract
+      hostAliasContract
+      hostAliasResults
+      passwordValidatorSourceHygiene
       runtimeContract
       schemaContract
       ;

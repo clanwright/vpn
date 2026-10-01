@@ -2,14 +2,11 @@
   description = "Clanwright VPN and DNS domain services";
 
   inputs = {
-    # Separate platform and reviewed stock application revisions.
+    # One reviewed revision owns platform and unmodified application packages.
     nixpkgs.url = "github:NixOS/nixpkgs/8d5d270900d3fc75655ea2d9d248b234f6631439";
-    apps-nixpkgs.url = "github:NixOS/nixpkgs/8d5d270900d3fc75655ea2d9d248b234f6631439";
-    modern-apps-nixpkgs.url = "github:NixOS/nixpkgs/8d5d270900d3fc75655ea2d9d248b234f6631439";
-    trusttunnel-nixpkgs.url = "github:NixOS/nixpkgs/8d5d270900d3fc75655ea2d9d248b234f6631439";
     # Test/integration dependency only; VPN does not re-export or enable it.
-    # Network v4.0.0.
-    network.url = "github:clanwright/network/2981962f1f590fae66c05c50a3d793825281de9e";
+    # Published Network v1.0.0, pinned to its verified peeled commit.
+    network.url = "github:clanwright/network/9421c102c9536a4345446a74aaaeb603cb6a23e3";
     data-mesher.url = "path:./stubs/data-mesher";
     clan-core = {
       url = "github:clan-lol/clan-core/c612dac4b2bfb5278b7c366f250044ddb5401bcb";
@@ -27,11 +24,8 @@
   outputs =
     inputs@{
       self,
-      apps-nixpkgs,
       clan-core,
-      modern-apps-nixpkgs,
       nixpkgs,
-      trusttunnel-nixpkgs,
       ...
     }:
     let
@@ -42,29 +36,28 @@
         "aarch64-darwin"
       ];
       forAllSystems = lib.genAttrs systems;
-      appsPkgsFor = system: import apps-nixpkgs { inherit system; };
-      modernAppsPkgsFor = system: import modern-apps-nixpkgs { inherit system; };
-      trustTunnelPkgsFor = system: import trusttunnel-nixpkgs { inherit system; };
       service = path: args: lib.modules.importApply path args;
       packageSet =
         system:
         let
-          appsPkgs = appsPkgsFor system;
-          modernAppsPkgs = modernAppsPkgsFor system;
+          pkgs = nixpkgs.legacyPackages.${system};
         in
         {
-          inherit (appsPkgs) mihomo;
-          inherit (modernAppsPkgs) sing-box;
+          inherit (pkgs) mihomo sing-box;
         }
         // lib.optionalAttrs (system == "x86_64-linux") {
-          inherit (appsPkgs)
+          inherit (pkgs)
             adguardhome
             dnsproxy
             xray
             ;
-          inherit (modernAppsPkgs) amneziawg-go amneziawg-tools mieru;
-          inherit (trustTunnelPkgsFor system) trusttunnel-endpoint;
-          unbound = appsPkgs.unbound-with-systemd;
+          inherit (pkgs)
+            amneziawg-go
+            amneziawg-tools
+            mieru
+            trusttunnel-endpoint
+            ;
+          unbound = pkgs.unbound-with-systemd;
         };
       exportInterfaces =
         { lib }:
@@ -75,7 +68,7 @@
     {
       clan = {
         modules = {
-          "@clanwright/vpn-mihomo-vless-xhttp" = service ./clanServices/mihomo-vless-xhttp/default.nix {
+          "@clanwright/vpn-mihomo-vless-xhttp" = service ./clanServices/vless-xhttp/default.nix {
             inherit lib;
             xrayPackageFor = system: self.packages.${system}.xray;
           };

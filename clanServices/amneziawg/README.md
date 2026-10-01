@@ -29,13 +29,12 @@ Jc/I1–I5 и пользовательские timer ranges сервер не з
 
 ## Exports and packages
 
-`vpnProvider` версии схемы 2 содержит UDP endpoint, `transportMetadata.generation = 3`, typed
-public `profile`, интерфейс, адрес, MTU и несекретную peer metadata. Имя
-HeaderProtectionKey находится отдельно в
-`secretNames.headerProtectionKey`; значение секрета в export отсутствует.
-Клиентские private-key bindings находятся в `secretNames.clientPrivateKey`.
-Public keys экспортируются только в `transportMetadata.peers`; отдельной
-дублирующей карты `peerPublicKeys` нет.
+`vpnProvider` schema 3 содержит `connection.amneziawg`: endpoint
+`{ hostname; ipv4; port; }`, `serverPublicKey`, `headerProtectionKeySecret` и
+`clients.<peer> = { ipv4; privateKeySecret; keepaliveSeconds; }`. Значения secrets
+в export отсутствуют. Peer public keys и серверные поля остаются в gateway
+settings; fixed generation 3 / MTU 1280 / AWG profile — внутренняя policy.
+Nullable `keepaliveSeconds` сохраняет прежнюю клиентскую семантику.
 
 Роль использует stock packages из application package set и требует семейство
 3.1 для `amneziawg-go` и `amneziawg-tools`. Foreground

@@ -1,7 +1,7 @@
 # AnyTLS operations
 
-The `@clanwright/vpn-anytls` gateway runs a separate stock sing-box 1.14.1
-process on one consumer-owned IPv4 TCP endpoint. The consumer owns the address,
+The `@clanwright/vpn-anytls` gateway uses native NixOS sing-box 1.14.1
+service on one consumer-owned IPv4 TCP endpoint. The consumer owns the address,
 hostname, ACME certificate, firewall availability, public AdGuard DoH endpoint,
 secret values and deployment. Do not put passwords or live profile URLs in
 commands, tickets, logs or repository files.
@@ -20,9 +20,12 @@ commands, tickets, logs or repository files.
   base64url bytes, without a trailing newline.
 
 The module loads `/var/lib/acme/<acmeCertName>/fullchain.pem` and `key.pem`
-through systemd credentials and registers `anytls.service` for ACME reloads.
-It renders secret values only into `/run/secrets-rendered/anytls.json`, owned by
-the `anytls` user with mode `0400`.
+through systemd credentials and registers `sing-box.service` for ACME reloads.
+Passwords use native `_secret` references. Native pre-start substitution writes
+`/run/sing-box/config.json` under the `sing-box` identity; runtime and state
+directories are private. The native settings, user, unit and configuration
+namespace are exclusively owned by this singleton. Do not add competing
+sing-box inbounds, settings or configuration files.
 
 ## Server inspection
 
@@ -30,13 +33,13 @@ After an approved deployment, inspect declarations without printing the
 rendered configuration:
 
 ```console
-systemctl status anytls.service --no-pager
-systemctl show anytls.service -p User -p Group -p MainPID -p LoadCredential
-journalctl -u anytls.service --since -15m --no-pager
+systemctl status sing-box.service --no-pager
+systemctl show sing-box.service -p User -p Group -p MainPID -p LoadCredential
+journalctl -u sing-box.service --since -15m --no-pager
 nft list table inet vpn_anytls_egress
 ```
 
-The unit must run as `anytls`, load both TLS credentials, and own the configured
+The unit must run as `sing-box`, load both TLS credentials, and own the configured
 IPv4 TCP listener. The nftables output chain must preserve replies from that
 exact listener, reject private and metadata IPv4 destinations, and reject IPv6
 egress. It has no DNS port or destination exception. For every AnyTLS request,
@@ -87,3 +90,6 @@ per-datagram names.
 Passing these checks on one network does not prove availability on another
 operator or region, and successful TLS/authentication alone does not prove
 sustained TCP or UoT traffic.
+
+Retain these consumer observations under the shared
+[PREDEPLOY evidence boundary](verify.md#evidence-and-runtime-acceptance).

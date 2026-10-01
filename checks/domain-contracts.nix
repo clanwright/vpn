@@ -10,6 +10,14 @@ let
   fixture = import ./fixtures/example-clan.nix;
   consume = import ./lib/consumer.nix { inherit inputs root self; };
   vpnExports = import ../modules/contracts/vpn-exports.nix { inherit lib; };
+  publisherCompiler = import ../clanServices/vpn-client-profiles/publisher.nix { inherit lib; };
+  compilePublisher =
+    settings: exports:
+    publisherCompiler.compile {
+      inherit pkgs settings exports;
+      instanceName = "vpn-client-profiles";
+      selectExports = inputs.clan-core.lib.selectExports;
+    };
   awgValidation = import ../clanServices/amneziawg/validation.nix { inherit lib; };
   serviceSpecs = {
     vpn-mihomo-vless-xhttp.role = "gateway";
@@ -92,15 +100,27 @@ let
     vpnExports.selectVpnProvider {
       providerInstanceId = name;
       providerMachine = "vpn-fixture";
-      inherit (spec) protocol;
+      # Exercise the selector against real native identity metadata.
       consumerInstanceId = "version-contract-check";
-      selectExports = _predicate: exports: exports;
+      selectExports =
+        predicate: exports:
+        if
+          predicate {
+            serviceName = "@clanwright/${name}";
+            roleName = spec.role;
+            machineName = "vpn-fixture";
+            instanceName = name;
+          }
+        then
+          exports
+        else
+          { };
       exports.only.vpnProvider = raw;
     };
   providerVersionResults = lib.mapAttrs (name: raw: {
-    currentAccepted = raw.schemaVersion == 2 && builtins.deepSeq (selectProvider name raw) true;
+    currentAccepted = raw.schemaVersion == 3 && builtins.deepSeq (selectProvider name raw) true;
     legacyRejected =
-      !(builtins.tryEval (builtins.deepSeq (selectProvider name (raw // { schemaVersion = 1; })) true))
+      !(builtins.tryEval (builtins.deepSeq (selectProvider name (raw // { schemaVersion = 2; })) true))
       .success;
     missingRejected =
       !(builtins.tryEval (
@@ -117,155 +137,90 @@ let
     mkExports = value: value;
   };
   awgProvider = awgInstance.exports.vpnProvider;
-  selectAwgProvider =
-    raw:
-    vpnExports.selectVpnProvider {
-      providerInstanceId = "vpn-amneziawg";
-      providerMachine = "vpn-fixture";
-      protocol = "amneziawg";
-      consumerInstanceId = "contract-check";
-      selectExports = _predicate: exports: exports;
-      exports.only.vpnProvider = raw;
-    };
+  selectAwgProvider = raw: selectProvider "vpn-amneziawg" raw;
+  awgPayload = awgProvider.connection.amneziawg;
   awgTransportContract =
-    awgProvider.schemaVersion == 2
+    awgProvider.schemaVersion == 3
     && builtins.deepSeq (selectAwgProvider awgProvider) true
-    && !(builtins.tryEval (
-      builtins.deepSeq (selectAwgProvider (awgProvider // { schemaVersion = 1; })) true
-    )).success
-    && !(builtins.tryEval (
-      builtins.deepSeq (selectAwgProvider (builtins.removeAttrs awgProvider [ "schemaVersion" ])) true
-    )).success
+    && awgPayload.endpoint.port == 443
     && !(builtins.tryEval (
       builtins.deepSeq (selectAwgProvider (
-        lib.recursiveUpdate awgProvider { endpoint.transport = "tcp"; }
+        lib.recursiveUpdate awgProvider { connection.amneziawg.endpoint.transport = "tcp"; }
       )) true
     )).success;
   mieruProvider = providerExports.vpn-mieru;
+  mieruPayload = mieruProvider.connection.mieru;
   selectMieruProvider = raw: selectProvider "vpn-mieru" raw;
+  rejectsMieru = raw: !(builtins.tryEval (builtins.deepSeq (selectMieruProvider raw) true)).success;
   mieruEndpointContract =
-    mieruProvider.endpoint.domain == null
-    && mieruProvider.endpoint.ipv4 == "192.0.2.13"
-    && mieruProvider.endpoint.port == 8443
-    && mieruProvider.endpoint.transport == "tcp"
+    builtins.attrNames mieruPayload.endpoint == [
+      "ipv4"
+      "port"
+    ]
+    && mieruPayload.endpoint.ipv4 == "192.0.2.13"
+    && mieruPayload.endpoint.port == 8443
     && builtins.deepSeq (selectMieruProvider mieruProvider) true
-    && !(builtins.tryEval (
-      builtins.deepSeq (selectMieruProvider (
-        lib.recursiveUpdate mieruProvider { endpoint.domain = "mieru.example.invalid"; }
-      )) true
-    )).success
-    && !(builtins.tryEval (
-      builtins.deepSeq (selectMieruProvider (
-        mieruProvider
-        // {
-          endpoint = builtins.removeAttrs mieruProvider.endpoint [ "ipv4" ];
-        }
-      )) true
-    )).success
-    && !(builtins.tryEval (
-      builtins.deepSeq (selectMieruProvider (
-        lib.recursiveUpdate mieruProvider { endpoint.unexpected = true; }
-      )) true
-    )).success
-    && !(builtins.tryEval (
-      builtins.deepSeq (selectMieruProvider (
-        lib.recursiveUpdate mieruProvider { endpoint.ipv4 = "192.0.2.999"; }
-      )) true
-    )).success
+    && rejectsMieru (
+      lib.recursiveUpdate mieruProvider { connection.mieru.endpoint.hostname = "mieru.example.invalid"; }
+    )
+    && rejectsMieru (
+      mieruProvider
+      // {
+        connection.mieru = mieruPayload // {
+          endpoint = builtins.removeAttrs mieruPayload.endpoint [ "ipv4" ];
+        };
+      }
+    )
+    && rejectsMieru (lib.recursiveUpdate mieruProvider { connection.mieru.endpoint.unexpected = true; })
+    && rejectsMieru (
+      lib.recursiveUpdate mieruProvider { connection.mieru.endpoint.ipv4 = "192.0.2.999"; }
+    )
     && !(builtins.tryEval (
       builtins.deepSeq (selectProvider "vpn-mihomo-vless-xhttp" (
-        lib.recursiveUpdate providerExports.vpn-mihomo-vless-xhttp { endpoint.domain = null; }
+        lib.recursiveUpdate providerExports.vpn-mihomo-vless-xhttp {
+          connection.vless-xhttp.endpoint.hostname = null;
+        }
       )) true
     )).success;
   trustTunnelProvider = providerExports.vpn-trusttunnel;
-  selectTrustTunnelProvider = raw: selectProvider "vpn-trusttunnel" raw;
+  trustTunnelPayload = trustTunnelProvider.connection.trusttunnel;
   trustTunnelEndpointContract =
-    trustTunnelProvider.endpoint.domain == "trusttunnel.example.invalid"
-    && trustTunnelProvider.endpoint.ipv4 == "192.0.2.15"
-    && trustTunnelProvider.endpoint.port == 10443
-    && trustTunnelProvider.endpoint.transport == "tcp"
-    && trustTunnelProvider.transportMetadata.protocol == "trusttunnel"
-    && trustTunnelProvider.transportMetadata.userNames == [ "cHJvYmU" ]
-    && trustTunnelProvider.transportMetadata.tlsServerName == "trusttunnel.example.invalid"
-    && trustTunnelProvider.transportMetadata.tlsVerify
-    && trustTunnelProvider.transportMetadata.credentialEncoding == "base64url"
-    && trustTunnelProvider.transportMetadata.upstreamProtocol == "http2"
-    && trustTunnelProvider.secretNames.users.cHJvYmU == "fixture-trusttunnel-password"
-    && builtins.deepSeq (selectTrustTunnelProvider trustTunnelProvider) true;
-  naiveSettings =
-    (lib.evalModules {
-      modules = [
-        (services.vpn-naiveproxy.roles.addon.interface { inherit lib; })
-        { config = settingsFor "vpn-naiveproxy" "addon"; }
-      ];
-    }).config;
-  naiveInstance = services.vpn-naiveproxy.roles.addon.perInstance {
-    settings = naiveSettings;
-    instanceName = "vpn-naiveproxy";
-    machine.name = "vpn-fixture";
-    mkExports = value: value;
-  };
-  naiveProvider = naiveInstance.exports.vpnProvider;
-  selectNaiveProvider =
-    raw:
-    vpnExports.selectVpnProvider {
-      providerInstanceId = "vpn-naiveproxy";
-      providerMachine = "vpn-fixture";
-      protocol = "naiveproxy";
-      consumerInstanceId = "contract-check";
-      selectExports = _predicate: exports: exports;
-      exports.only.vpnProvider = raw;
-    };
+    trustTunnelPayload.endpoint == {
+      hostname = "trusttunnel.example.invalid";
+      ipv4 = "192.0.2.15";
+      port = 10443;
+    }
+    && trustTunnelPayload.clients.cHJvYmU.passwordSecret == "fixture-trusttunnel-password"
+    && builtins.deepSeq (selectProvider "vpn-trusttunnel" trustTunnelProvider) true;
+  naiveProvider = providerExports.vpn-naiveproxy;
+  selectNaiveProvider = raw: selectProvider "vpn-naiveproxy" raw;
+  rejectsNaive = raw: !(builtins.tryEval (builtins.deepSeq (selectNaiveProvider raw) true)).success;
   naiveProviderResults = {
     actual =
-      naiveProvider.schemaVersion == 2 && builtins.deepSeq (selectNaiveProvider naiveProvider) true;
-    legacyVersionRejected =
-      !(builtins.tryEval (
-        builtins.deepSeq (selectNaiveProvider (naiveProvider // { schemaVersion = 1; })) true
-      )).success;
-    missingVersionRejected =
-      !(builtins.tryEval (
-        builtins.deepSeq (selectNaiveProvider (builtins.removeAttrs naiveProvider [ "schemaVersion" ])) true
-      )).success;
-    unknownProfileRejected =
-      !(builtins.tryEval (
-        builtins.deepSeq (selectNaiveProvider (
-          naiveProvider
-          // {
-            profileNames = naiveProvider.profileNames ++ [ "unknown-profile" ];
-          }
-        )) true
-      )).success;
-    missingPasswordRejected =
-      !(builtins.tryEval (
-        builtins.deepSeq (selectNaiveProvider (
-          naiveProvider
-          // {
-            secretNames = naiveProvider.secretNames // {
-              password = builtins.removeAttrs naiveProvider.secretNames.password [
-                (builtins.head naiveProvider.profileNames)
-              ];
-            };
-          }
-        )) true
-      )).success;
-    extraPasswordRejected =
-      !(builtins.tryEval (
-        builtins.deepSeq (selectNaiveProvider (
-          lib.recursiveUpdate naiveProvider {
-            secretNames.password.unexpected = "fixture-unexpected-secret";
-          }
-        )) true
-      )).success;
-    userOutsideProfilesRejected =
-      !(builtins.tryEval (
-        builtins.deepSeq (selectNaiveProvider (
-          lib.recursiveUpdate naiveProvider {
-            transportMetadata.userNames = naiveProvider.transportMetadata.userNames ++ [ "unlisted-user" ];
-            secretNames.password.unlisted-user = "fixture-unlisted-secret";
-          }
-        )) true
-      )).success;
+      naiveProvider.schemaVersion == 3 && builtins.deepSeq (selectNaiveProvider naiveProvider) true;
+    legacyVersionRejected = rejectsNaive (naiveProvider // { schemaVersion = 2; });
+    missingVersionRejected = rejectsNaive (builtins.removeAttrs naiveProvider [ "schemaVersion" ]);
+    unsafeAccountRejected = rejectsNaive (
+      lib.recursiveUpdate naiveProvider {
+        connection.naiveproxy.clients."../account".passwordSecret = "fixture-invalid";
+      }
+    );
+    missingPasswordRejected = rejectsNaive (
+      naiveProvider
+      // {
+        connection.naiveproxy = naiveProvider.connection.naiveproxy // {
+          clients.cHJvYmU = { };
+        };
+      }
+    );
+    nullPasswordRejected = rejectsNaive (
+      lib.recursiveUpdate naiveProvider { connection.naiveproxy.clients.cHJvYmU.passwordSecret = null; }
+    );
+    unknownClientFieldRejected = rejectsNaive (
+      lib.recursiveUpdate naiveProvider {
+        connection.naiveproxy.clients.cHJvYmU.username = "unlisted-user";
+      }
+    );
   };
   naiveProviderContract = builtins.all (value: value) (builtins.attrValues naiveProviderResults);
   schemaResult =
@@ -412,7 +367,7 @@ let
         && machine.systemd.services ? xray
         && !((machine.networkCore.mihomo or { }) ? vlessXhttp);
       vpn-mieru = machine.systemd.services ? mita && machine.sops.templates ? "mita.json";
-      vpn-anytls = machine.systemd.services ? anytls && machine.sops.templates ? "anytls.json";
+      vpn-anytls = machine.services.sing-box.enable && machine.systemd.services ? sing-box;
       vpn-trusttunnel =
         machine.systemd.services ? trusttunnel && machine.sops.templates ? "trusttunnel.toml";
       vpn-amneziawg =
@@ -444,7 +399,6 @@ let
             };
           };
       supportNames = lib.optionals includeNetwork [
-        "edge-wildcard-certificate"
         "network-caddy"
         "network-certificates"
       ];
@@ -452,16 +406,16 @@ let
         instanceNames = [ name ];
         inherit extraModule includeNetwork;
       };
-      caddyFragments = lib.attrByPath [ "networkCore" "caddy" "effectiveFragments" ] { } consumer.machine;
+      caddySites = consumer.machine.services.caddy.virtualHosts;
     in
     builtins.attrNames consumer.config.inventory.instances
     == lib.sort builtins.lessThan (supportNames ++ [ name ])
     &&
       builtins.length (builtins.attrNames consumer.config._services.allServices)
       == builtins.length supportNames + 1
-    && (!includeNetwork || ((caddyFragments ? dns-adguardhome-ui) == (name == "dns-adguardhome")))
-    && (!includeNetwork || ((caddyFragments ? dns-adguardhome-doh) == (name == "dns-adguardhome")))
-    && (!includeNetwork || !(caddyFragments ? vpn-client-profiles))
+    && (!includeNetwork || ((caddySites ? "adguard.example.invalid") == (name == "dns-adguardhome")))
+    && (!includeNetwork || ((caddySites ? "dns.example.invalid") == (name == "dns-adguardhome")))
+    && (!includeNetwork || !(caddySites ? "profiles.example.invalid"))
     && placementBehavior name consumer.machine
   );
   independentPlacements = builtins.all (value: value) (
@@ -477,7 +431,9 @@ let
     fixtureName = "vpn-consumer-disabled-publisher-fixture";
   };
   minimalPublisherSettings = publisherSettings // {
-    providerRefs = builtins.filter (ref: ref.protocol == "vless-xhttp") publisherSettings.providerRefs;
+    providerRefs = builtins.filter (
+      ref: ref.instanceId == "vpn-mihomo-vless-xhttp"
+    ) publisherSettings.providerRefs;
   };
   minimalPublisher = consume {
     instanceNames = [
@@ -512,9 +468,21 @@ let
       minimalPublisherUnits ? vpn-client-profiles-publish-fixture
       && minimalPublisherUnits ? vpn-client-profiles-public-assets-fixture;
     minimalIntegrationPresent =
+      let
+        inherit (compilePublisher minimalPublisherSettings minimalPublisher.config.exports) manifest;
+      in
       minimalPublisherIntegration.publicationUnit == "vpn-client-profiles-publish-fixture.service"
       && minimalPublisherIntegration.refreshUnit == "vpn-client-profiles-public-assets-fixture.service"
-      && minimalPublisher.machine.clanwright.vpn.publisherRenders ? vpn-client-profiles;
+      && map (profile: profile.name) manifest.profiles == [ "cHJvYmU" ]
+      &&
+        map (artifact: artifact.outputName) (builtins.head manifest.profiles).artifacts == [ "mihomo.yaml" ]
+      && builtins.all (
+        profile:
+        builtins.all (
+          artifact:
+          lib.hasInfix (builtins.unsafeDiscardStringContext (toString artifact.templatePath)) minimalPublisherUnits.vpn-client-profiles-publish-fixture.script
+        ) profile.artifacts
+      ) manifest.profiles;
     minimalProviderPresent =
       minimalPublisher.machine.services.xray.enable && minimalPublisherUnits ? xray;
     minimalHasNoUnrelatedServices =
@@ -535,6 +503,7 @@ let
   inherit (combined) machine;
   combinedClanFixture = import ./combined-clan-fixture.nix {
     inherit combined fixture lib;
+    publisherManifest = (compilePublisher publisherSettings combined.config.exports).manifest;
   };
   overrideAttempt = consume {
     instanceNames = [
@@ -550,35 +519,56 @@ let
       };
     };
   };
-  awgOverrideRejected =
-    !(builtins.tryEval (
-      builtins.deepSeq
-        (consume {
-          instanceNames = [ "vpn-amneziawg" ];
-          extraModule.nixpkgs.overlays = [
-            (_final: _prev: {
-              amneziawg-go = pkgs.hello;
-              amneziawg-tools = pkgs.hello;
-            })
-          ];
-        }).machine.system.build.toplevel.drvPath
-        true
-    )).success;
-  awgOverlays = builtins.filter (
-    overlay:
+  stockPkgs = inputs.nixpkgs.legacyPackages.${system};
+  awgUnit = machine.systemd.services.wireguard-awg-fixture;
+  awgToolCommands = [
+    "set awg-fixture"
+    "show interfaces"
+    "show awg-fixture listen-port"
+    "show awg-fixture peers"
+    "show awg-fixture allowed-ips"
+  ];
+  awgRuntimeUsesStock =
+    evaluatedMachine:
     let
-      result = overlay pkgs pkgs;
+      unit = evaluatedMachine.systemd.services.wireguard-awg-fixture;
     in
-    result ? amneziawg-go && result ? amneziawg-tools
-  ) machine.nixpkgs.overlays;
-  awgOverlay = builtins.head awgOverlays;
+    unit.serviceConfig.ExecStart == "${stockPkgs.amneziawg-go}/bin/amneziawg-go -f awg-fixture"
+    && builtins.all (
+      command:
+      lib.hasInfix (builtins.unsafeDiscardStringContext "${stockPkgs.amneziawg-tools}/bin/awg ${command}") unit.postStart
+    ) awgToolCommands
+    && builtins.elem stockPkgs.amneziawg-go evaluatedMachine.environment.systemPackages
+    && builtins.elem stockPkgs.amneziawg-tools evaluatedMachine.environment.systemPackages;
+  foreignHostAliases = consume {
+    instanceNames = [ "vpn-amneziawg" ];
+    fixtureName = "vpn-consumer-awg-foreign-host-aliases-fixture";
+    extraModule.nixpkgs.overlays = [
+      (_final: _prev: {
+        amneziawg-go = pkgs.hello;
+        amneziawg-tools = pkgs.hello;
+      })
+    ];
+  };
+  foreignHostPkgs = foreignHostAliases.config.nixosConfigurations.vpn-fixture.pkgs;
+  foreignAwgUnit = foreignHostAliases.machine.systemd.services.wireguard-awg-fixture;
   servicePackageAuthorityResults = {
     adguard = machine.services.adguardhome.package == self.packages.${system}.adguardhome;
     dnsproxy = machine.services.dnsproxy.package == self.packages.${system}.dnsproxy;
     unbound = machine.services.unbound.package == self.packages.${system}.unbound;
-    awgOverlayPresent = awgOverlays != [ ];
-    awgGo = (awgOverlay pkgs pkgs).amneziawg-go == self.packages.${system}.amneziawg-go;
-    awgTools = (awgOverlay pkgs pkgs).amneziawg-tools == self.packages.${system}.amneziawg-tools;
+    awgStockVersions =
+      stockPkgs.amneziawg-go.version == "3.1.20260828"
+      && stockPkgs.amneziawg-tools.version == "3.1.20260812";
+    awgStockOutputs =
+      self.packages.${system}.amneziawg-go == stockPkgs.amneziawg-go
+      && self.packages.${system}.amneziawg-tools == stockPkgs.amneziawg-tools;
+    awgActualRuntime = awgRuntimeUsesStock machine;
+    awgForeignHostAliasesPreserveRuntime =
+      foreignHostPkgs.amneziawg-go == pkgs.hello
+      && foreignHostPkgs.amneziawg-tools == pkgs.hello
+      && awgRuntimeUsesStock foreignHostAliases.machine
+      && foreignAwgUnit.serviceConfig.ExecStart == awgUnit.serviceConfig.ExecStart
+      && foreignAwgUnit.postStart == awgUnit.postStart;
     awgFamily = awgValidation.packageFamiliesValid {
       inherit (self.packages.${system}) amneziawg-go amneziawg-tools;
     };
@@ -588,7 +578,6 @@ let
       overrideAttempt.machine.services.dnsproxy.package == self.packages.${system}.dnsproxy;
     unboundOverride =
       overrideAttempt.machine.services.unbound.package == self.packages.${system}.unbound;
-    inherit awgOverrideRejected;
   };
   packageAuthorityResults = servicePackageAuthorityResults;
   packageAuthority = builtins.all (value: value) (builtins.attrValues packageAuthorityResults);
@@ -633,7 +622,6 @@ if !contract then
         trustTunnelEndpointContract
         naiveProviderContract
         naiveProviderResults
-        awgOverrideRejected
         dnsStatePreserved
         dnsStateResults
         independentPlacementResults

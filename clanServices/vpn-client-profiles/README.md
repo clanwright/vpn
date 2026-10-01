@@ -16,7 +16,9 @@ typed non-secret metadata VPN providers, генерирует профили и 
 `configGatewayDomain`, `publicIPv4`, `edgeDomain`, `clientDnsEndpoints`,
 `tailnetAdminDomains`, `personalProxyDomains`, `profiles`,
 `providerRefs`, `externalSubscriptions`, `profileLinks` и `linksPage`. Provider refs
-содержат machine, instance, canonical protocol и optional `display`. Publisher profiles содержат
+содержат `machine`, `instanceId`, непустую карту `clients` и optional `display`.
+Карта явно связывает объявленный publisher profile с существующим provider account;
+повторное назначение account нескольким профилям отклоняется. Publisher profiles содержат
 `name`, `pathTokenSecretName`, `kind` (`mobile` или `router`), optional `publishProfileJson` и
 `autoProtocols`. `pathTokenSecretName` — consumer-owned SOPS secret с path token профиля;
 модуль использует имя как задано и не строит имена secrets из префиксов или имён машин.
@@ -48,9 +50,7 @@ externalSubscriptions.skala = {
 «Ручной». Эта настройка независима от `autoProtocols` собственных providers:
 внешний VLESS TCP не выдаётся за собственный `vless-xhttp`.
 
-Начальный формат — JSON-массив Xray-профилей, как в локальном игнорируемом
-референсе Skala `.work/references/skala-vpn.json`, который не распространяется
-в Git. Поддерживаются две комбинации:
+Формат — JSON-массив Xray-профилей. Поддерживаются две комбинации:
 
 | Внешнее подключение | Mihomo | Sing-box |
 | --- | --- | --- |
@@ -95,7 +95,7 @@ HTTP 401/403, невалидный ответ и ошибки проверки T
 чтобы ожидание источника не оставляло просроченные узлы в публикации.
 Приостановка процесса или машины не даёт гарантий точного времени отзыва;
 перед публикацией свежесть проверяется повторно. Без внешних источников
-сохраняется прежний `oneshot` режим.
+используется `oneshot` режим.
 
 Для внешних VLESS в Sing-box имя сервера разрешается через первый собственный
 DoH (`own-doh-0`) с `ipv4_only`; чужие DNS не добавляются. Это отдельное
@@ -104,10 +104,11 @@ DoH (`own-doh-0`) с `ipv4_only`; чужие DNS не добавляются. Э
 `mihomo`, `sing-box`, `skipped` (пропущенные прокси-узлы) и `service`
 (служебные outbounds `freedom`, `blackhole`, `dns`, `loopback`). Каждый
 пропущенный узел даёт отдельную строку `result=skipped` с индексом профиля в
-ответе, очищенным remark, целью (`all` или `sing-box`) и фиксированным кодом
+ответе, целью (`all` или `sing-box`) и фиксированным кодом
 причины, например `insecure-tls`, `unsupported-protocol`, `duplicate` или
 `unsupported-xhttp` для XHTTP-узла, недоступного в Sing-box. Сырой ответ
-подписки, адреса, URL и credentials в журнал не выводятся.
+подписки, remote remarks, адреса, URL и credentials в журнал не выводятся.
+Remarks сохраняются только в пользовательских именах подключений.
 
 ## Defaults
 
@@ -123,18 +124,28 @@ Role не объявляет собственных exports и выбирает 
 exports и `clanLib.selectExports`: `naiveproxy` требует addon, а
 `vless-xhttp`, `amneziawg`, `mieru`, `anytls`, `trusttunnel` — gateway. Отсутствующий,
 выключенный, неоднозначный или несоответствующий provider блокирует
-генерацию. Renderer принимает выбранные typed `vpnProvider` exports напрямую;
-`providerRefs.profileNames` сужает их `profileNames` без промежуточных
-protocol-specific adapter shapes.
+генерацию. Закрытый schema 3 export содержит ровно один `connection.<tag>`;
+service/role identity берётся из native Clan scope. Карта `providerRefs.clients`
+выбирает account для каждого профиля, сохраняя его реальную auth identity и
+secret binding. `protocol` и `profileNames` в provider refs не принимаются;
+пустого режима «все accounts» нет. External subscription `profileNames` сохранён.
 
-Каждый renderer формирует внутренний manifest конкретных артефактов. Артефакт
+Приватный compiler `publisher.nix` задаёт единую схему настроек, нормализацию
+и выбор native provider exports для production и checks. Его `compile` возвращает
+проверенные settings и manifest; renderer возвращает только manifest конкретных
+артефактов. Артефакт
 содержит non-secret template, формат и имя выходного файла, ссылки на явный
 каталог public assets и typed secret bindings. Binding задаёт только secret
 name, одно из закрытых правил чтения (`literal`, `wireguard-private-key`,
 `base64url`), точный структурный путь и placeholder. Manifest проверяет, что
 каждый placeholder связан ровно один раз, target существует, а asset reference
 есть в каталоге. Publication применяет этот manifest без protocol branches и
-без знания полей конкретного client format.
+без знания полей конкретного client format. Manifest schema 1 содержит только
+`schemaVersion`, `assetCatalog` и `profiles`; publication sequence задан
+непосредственно в shell, без phase graph или NixOS projections. Checks читают
+canonical manifest через собственный
+`manifest-view`, не добавляя промежуточные options в production. Compiler,
+manifest и check view остаются приватными implementation interfaces.
 
 Mieru экспортируется только в Mihomo YAML: `transport = TCP`,
 `udp = true` (UDP relay внутри TCP), `MULTIPLEXING_LOW` и `HANDSHAKE_STANDARD`.
@@ -142,7 +153,8 @@ Custom traffic pattern и TLS/SNI-параметры не добавляются
 provider refs; выбранный Mieru доступен вручную и участвует в «Авто», если
 `autoProtocols` содержит `mieru`. Sing-box Mieru не поддерживает.
 
-Mieru credentials выбираются по имени device profile из `secretNames.users`.
+Mieru credentials выбираются картой `providerRefs.clients` из
+`connection.mieru.clients.<account>.passwordSecret`; username равен account.
 Пароль — 1–64 ASCII-байта из `A-Za-z0-9_-`, без padding, пробелов, NUL и
 переводов строк. Publisher проверяет raw bytes до подстановки, не обрезая их;
 невалидный пароль блокирует публикацию. Это совпадает с серверным контрактом.
@@ -152,16 +164,16 @@ AnyTLS экспортируется в оба формата. Mihomo 1.19.31 п�
 core не имеет полей ограничения версии TLS для AnyTLS. Sing-box 1.14.1 также
 использует встроенный UoT v2, проверяет сертификат и явно ограничивает TLS
 значениями `min_version = "1.3"` и `max_version = "1.3"`. Пароль устройства
-берётся из точного `secretNames.users` map и подставляется через generic manifest
+берётся из `connection.anytls.clients.<account>.passwordSecret` и подставляется через generic manifest
 binding с `base64url`. Custom padding, session metadata, idle-session overrides,
 ciphers, ALPN, TFO и client fingerprint не добавляются.
 
 TrustTunnel экспортируется только в Mihomo YAML. Для точного
 Mihomo 1.19.31 renderer использует числовой IPv4 endpoint, `type = trusttunnel`,
-имя device profile как `username`, проверяемый SNI, `skip-cert-verify = false`,
+выбранный provider account как `username`, проверяемый SNI, `skip-cert-verify = false`,
 `client-fingerprint = chrome`, `quic = false` и `udp = true`. Это H2-профиль:
 H3/QUIC, ClientRandom, health checks и pool tuning не добавляются. Пароль берётся
-из точного `secretNames.users` map и остаётся runtime-only через manifest binding
+из `connection.trusttunnel.clients.<account>.passwordSecret` и остаётся runtime-only через manifest binding
 с `base64url`. Sing-box TrustTunnel outbound и официальный client export не
 публикуются.
 
@@ -197,7 +209,7 @@ providerRefs = [
   {
     machine = "gateway-a";
     instanceId = "vpn-mihomo-vless-xhttp";
-    protocol = "vless-xhttp";
+    clients = { laptop = "device-a"; phone = "device-b"; };
     display = { label = "A"; country = "Литва"; countryCode = "LT"; };
   }
 ];
@@ -226,11 +238,12 @@ sing-box показывают одно имя. Внешние имена выч�
 Смена имён сбрасывает сохранённый в клиенте выбор один раз: `store-selected`
 хранит выбор по имени подключения.
 
-`vpnProvider` использует версию схемы 2. Read-only NixOS
-output `clanwright.vpn.publishers.<instance>` содержит `schemaVersion = 1`,
-`configGatewayDomain`, `profileRoot`, `assetRoot`, `linksRoot`, `routeConfig`, `readerGroup`,
+`vpnProvider` использует версию схемы 3. Read-only NixOS
+output `clanwright.vpn.publishers.<instance>` содержит `schemaVersion = 2`,
+`configGatewayDomain`, `profileRoot`, `assetRoot`, `linksRoot`, `logConfig`,
+`routeConfig`, `readerGroup`,
 `publicationUnit`, `refreshUnit` и `statusPath`. Consumer использует эти
-данные для собственного Caddy site claim и private links route. Публичного
+данные для собственного native Caddy vhost и private links route. Публичного
 helper `lib.clientProfiles` нет; внутренние renderer-файлы не являются API.
 
 У active publisher-инстансов на одной машине должны быть разные
@@ -241,8 +254,8 @@ helper `lib.clientProfiles` нет; внутренние renderer-файлы н�
 два набора token routes и `/assets/v1/catalog/` нельзя объединять в одном site.
 Повторяющиеся gateway domains на одной машине также отклоняются.
 
-Mihomo поступает из `apps-nixpkgs`, а Sing-box — из
-`modern-apps-nixpkgs`; точные revisions и package outputs описаны в
+Mihomo и Sing-box поступают из единого root `nixpkgs`;
+точная revision и package outputs описаны в
 [package authority](../../docs/package-authority.md). Роль получает выбранные
 пакеты через flake dependency injection и не собирает клиенты локально.
 
@@ -256,15 +269,16 @@ Native `Rule` и `Global` режимы используют одну групп�
 не переключается автоматически, а отключение VPN остаётся явным действием
 пользователя в клиенте.
 
-Если для публикуемого Sing-box профиля нет eligible Naive или AnyTLS provider, renderer
-не публикует `profile.json` и не добавляет ссылку на него. Mihomo-файл с
+Если для публикуемого Sing-box профиля нет ни eligible Naive/AnyTLS provider,
+ни выбранного external source, renderer не публикует `profile.json` и не добавляет ссылку на него. Mihomo-файл с
 eligible providers других протоколов продолжает публиковаться. При наличии
 только Naive публикуется sing-box, а несовместимый Mihomo-файл и ссылка на него
 не создаются.
 
 `profiles[].autoProtocols` — список canonical protocol IDs, разрешённых для автоматического
 выбора и фоновых URL-проб. Default включает все поддерживаемые протоколы;
-`[]` оставляет «Ручной» без группы «Авто». Например, consumer может задать
+`[]` исключает собственные providers из «Авто»; внешние источники отдельно
+выбираются через `auto`. Без любых кандидатов остаётся только «Ручной». Например, consumer может задать
 для каждого профиля
 `[ "vless-xhttp" "naiveproxy" "mieru" "anytls" "trusttunnel" ]`, сохранив AWG вручную.
 Для исключённого AWG отключается также persistent keepalive. При отсутствии
@@ -275,6 +289,7 @@ selectors не добавляется. В полностью ручном реж
 ```nix
 profiles = map (name: {
   inherit name;
+  pathTokenSecretName = "vpn/profile-tokens/${name}";
   autoProtocols = [ "vless-xhttp" "naiveproxy" "mieru" "anytls" "trusttunnel" ];
 }) [ "device-a" "device-b" ];
 ```
@@ -306,7 +321,7 @@ Sing-box TUN использует `auto_route` и `strict_route` без `route_a
 `excludeDefaultRoute` и `excludeAPNs`; отсутствие исключений в JSON не отменяет
 эти настройки приложения.
 
-Профиль сохраняет FakeIP `198.18.0.0/15`, локальные правила `DIRECT` и явный
+Профиль сохраняет настройки диапазона FakeIP `198.18.0.0/15`, локальные правила `DIRECT` и явный
 запрет внешнего IPv6. Захват FakeIP и внешнего IPv6, наличие системных маршрутов
 LAN/Tailscale и сосуществование VPN-клиентов проверяет consumer на устройстве.
 Если локальный трафик попадёт в TUN, правило `DIRECT` само по себе не гарантирует
@@ -314,14 +329,10 @@ LAN/Tailscale и сосуществование VPN-клиентов прове�
 физическому интерфейсу. Отключение `auto_detect_interface` не отключает монитор
 доступности сети SFM.
 
-В [операторском A/B-тесте 26 сентября](https://github.com/clanwright/vpn/issues/2#issuecomment-5845378043)
-на SFM 1.14.1/macOS с включённым Tailscale исходный профиль VPN v0.9.4
-терял доступный интерфейс. Удаление только `route_address` устранило
-`missing default interface` и `no available network interface`, восстановило
-сайты и загрузку пяти наборов правил; маршрут к DNS Tailscale сохранился.
-Генератор теперь соответствует этому варианту. Механизм сбоя macOS и минимальный
-проблемный префикс не установлены. Проверка LAN, прикладного доступа к tailnet,
-длительной передачи, повторного запуска и смены сети остаётся незавершённой.
+Омиссия TUN route lists сохраняет клиентский выбор системных маршрутов.
+Основание решения и открытая совместимость отслеживаются в
+[issue #2](https://github.com/clanwright/vpn/issues/2); конкретная reported
+комбинация не устанавливает совместимость всех SFM/macOS/Tailscale версий.
 
 Чистые проверки подтверждают поля генератора и порядок правил, но не выбор
 маршрута операционной системой и не совместимость всех клиентов.
@@ -329,6 +340,10 @@ LAN/Tailscale и сосуществование VPN-клиентов прове�
 [клиентской приёмке](../../docs/operations/sing-box-client.md).
 Рабочая совместимая схема отслеживается в [#2](https://github.com/clanwright/vpn/issues/2).
 DNS-домены подписок и их исправление остаются отдельной задачей consumer.
+
+Mihomo не задаёт `dns.enhanced-mode`: core сохраняет штатный redir-host,
+а GUI может выбрать другой режим. Наличие диапазона FakeIP само по себе не
+включает FakeIP.
 
 Sing-box сохраняет FakeIP: `experimental.cache_file` содержит `enabled: true`
 и `store_fakeip: true`. Генератор не меняет путь или идентификатор кеша при
@@ -348,9 +363,13 @@ Naive/Cronet также выполняет внутреннюю UDP-провер
 описаны в [разборе Naive](../../docs/operations/sing-box-client.md#naive-startup-ipv6-reachability-probe).
 
 Публичные URL правил и локальные пути Mihomo cache содержат стабильные
-обезличенные идентификаторы. Прежние `/assets/v1/catalog/<имя>` остаются
-алиасами тех же файлов, поэтому ранее выданные профили сохраняют доступ к
-правилам. Это изменение путей, а не шифрование содержания публичных списков.
+обезличенные идентификаторы. Ровно 11 исторических `/assets/v1/catalog/<имя>`
+aliases выводятся из контракта по принятому
+[ADR-0001](../../docs/adr/0001-retire-asset-path-aliases.md). После будущей consumer
+adoption старые профили могут потерять asset refresh; external client usage
+неизвестно, последствие принято. Все 15 canonical assets и opaque/hash paths,
+оба token endpoints, private links и native host aliases сохраняются.
+Содержание публичных списков не шифруется.
 
 Selective policy использует blocked/geoblocked и dependency rule sets.
 В защищённую TCP/UDP policy также входят MetaCubeX `category-ai-!cn` и `github`
@@ -422,13 +441,12 @@ Consumer отвечает за доступность каждого DoH с кл
 Семантика upstream: [Mihomo DNS](https://wiki.metacubex.one/en/config/dns/),
 [Sing-box DNS actions](https://sing-box.sagernet.org/configuration/dns/rule_action/).
 
-Исходный HTTP bootstrap сверен с sing-box 1.14.0; выбранный пакет сейчас 1.14.1:
-[HTTP client](https://sing-box.sagernet.org/configuration/shared/http-client/),
+HTTP bootstrap использует [HTTP client](https://sing-box.sagernet.org/configuration/shared/http-client/),
 [hosts transport](https://sing-box.sagernet.org/configuration/dns/server/hosts/).
 
-Naive credentials выбираются по именам профилей из provider export. Карта не
-ограничена встроенными device names; профиль получает Naive-подключение, только
-если consumer явно включает его в `profiles` и допускает в `providerRefs`.
+Naive credentials выбираются через явную карту `providerRefs.clients` из
+`connection.naiveproxy.clients.<account>.passwordSecret`. Publisher profile
+и provider account могут иметь разные имена; встроенного списка устройств нет.
 
 ## State and secrets
 
@@ -503,18 +521,23 @@ consumer; чистая Nix evaluation её не заменяет.
 
 ## Network exposure
 
-Consumer объявляет Caddy config gateway, bind/certificate claims и private
-links page, а также добавляет `readerGroup` к supplementary groups Caddy.
-`routeConfig` статичен, не содержит токенов, host/bind/TLS и подавляет access
-logging. Caddy не импортирует runtime fragments, не зависит от publication unit
+Consumer объявляет native Caddy config gateway, явные listeners, stable physical
+certificate ID и private links page; `readerGroup` добавляется к supplementary
+groups Caddy. Schema 2 разделяет site-level `logConfig` и `routeConfig`.
+`logConfig` содержит unconditional `log_skip`, присоединяется перед alias
+responses order 1000 и покрывает canonical host и configured aliases.
+`routeConfig` — полный matcherless outer `route` с canonical-host/path guards
+внутри, на order 1500 перед terminal fallback 2000. Он статичен, не содержит
+значений токенов, bind или TLS. Consumer соединяет context-bearing fragments
+без unwrap, parsing или re-render; URLs и правила token matching сохранены. Caddy не импортирует runtime fragments, не зависит от publication unit
 и не перезапускается при обновлении профилей. Ошибка publisher делает недоступной
 только публикацию. Mirror timers обновляют публичные assets без нового listener.
 
 ## Verification
 
-`checks/domain-contracts.nix` и `checks/client-render-smoke.nix` проверяют
+`checks/domain-contracts.nix` и `checks/client-render-contracts.nix` проверяют
 protocol-role mapping, единственность export для provider ref, generated runtime
-paths, Caddy tailnet policy и исключённые profiles. DNS checks проверяют
+paths, consumer-owned Caddy composition и явный набор profiles. DNS checks проверяют
 типизированный список, bootstrap-привязки, включение собственных endpoint,
 отсутствие публичного резерва и DIRECT/DNS routing. Проверки не подтверждают
 работу клиентов, сетевую доступность или содержимое runtime credentials.

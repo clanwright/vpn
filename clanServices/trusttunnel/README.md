@@ -44,8 +44,10 @@ exclude resolver sources added by DHCP, systemd-resolved, or other consumer
 configuration. The consumer verifies the effective resolver and fallback
 behavior at runtime.
 
-The provider export uses schema 2, protocol `trusttunnel`, transport `tcp`,
-verified TLS, base64url credentials and `http2` upstream protocol. TrustTunnel
+The schema 3 provider export contains `connection.trusttunnel`,
+`endpoint = { hostname; ipv4; port; }` and `clients.<username>.passwordSecret`.
+Keys are actual authentication usernames. Verified TLS, base64url credentials
+and HTTP/2 remain fixed protocol policy. TrustTunnel
 is exported for Mihomo profiles only; the official sing-box client renderer has
 no TrustTunnel outbound.
 

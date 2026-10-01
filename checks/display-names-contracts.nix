@@ -1,13 +1,13 @@
 {
   inputs,
-  root,
   self,
   pkgs,
   ...
 }:
 let
+  manifestLib = import ../clanServices/vpn-client-profiles/artifact-manifest.nix { inherit lib; };
+  manifestView = import ./lib/manifest-view.nix { inherit lib; };
   inherit (inputs.nixpkgs) lib;
-  providerEnvelope = import ../modules/contracts/provider-envelope.nix { inherit lib; };
   service = builtins.head self.clan.modules."@clanwright/vpn-client-profiles".imports;
   evalSettings =
     settings:
@@ -28,7 +28,7 @@ let
   };
   baseA = "🇱🇹 Литва · A";
 
-  # One synthetic provider with only the fields the renderer reads.
+  # Explicit selected connection records, with safe synthetic bindings.
   mkProvider =
     {
       machine,
@@ -37,89 +37,55 @@ let
       display ? null,
     }:
     let
-      profileNames = [ "alice" ];
-      domain = "${instanceId}.example.invalid";
+      endpoint = {
+        hostname = "${instanceId}.example.invalid";
+        ipv4 = "192.0.2.21";
+        port = 443;
+      };
       secretPrefix = "fixture-${machine}-${instanceId}";
-      protocolData = {
+      payloads = {
         naiveproxy = {
-          transportMetadata = {
-            tlsServerName = domain;
-            userNames = profileNames;
-            port = 443;
-          };
-          secretNames.password.alice = "${secretPrefix}-naive";
+          inherit endpoint;
+          clients.alice.passwordSecret = "${secretPrefix}-naive";
         };
         vless-xhttp = {
-          transportMetadata = {
-            reality = {
-              serverName = "donor.example.invalid";
-              serverNames = [ "donor.example.invalid" ];
-              target = "donor.example.invalid:443";
-              publicKey = "BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB";
-              shortIdsByProfile.alice = "0123456789abcdef";
-            };
-            xhttp = {
-              path = "/fixture";
-              mode = "auto";
-            };
-            fingerprint = "firefox";
-            doh = {
-              domain = "dns-a.example.invalid";
-              ipv4 = "192.0.2.53";
-            };
+          inherit endpoint;
+          clients.alice = {
+            uuidSecret = "${secretPrefix}-vless";
+            shortId = "0123456789abcdef";
           };
-          secretNames = {
-            realityPrivateKey = "${secretPrefix}-reality";
-            vlessUuid.alice = "${secretPrefix}-vless";
+          reality = {
+            serverName = "donor.example.invalid";
+            publicKey = "BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB";
+            fingerprint = "firefox";
+            supportX25519MLKEM768 = false;
+          };
+          xhttp.path = "/fixture";
+          doh = {
+            hostname = "dns-a.example.invalid";
+            ipv4 = "192.0.2.53";
           };
         };
         amneziawg = {
-          transportMetadata = {
-            serverPublicKey = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=";
-            interfaceName = "awg-fixture";
-            address = "10.77.0.1/24";
-            mtu = 1280;
-            peers = [
-              {
-                name = "alice";
-                publicKey = "CCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCA=";
-                allowedIPs = [ "10.77.0.2/32" ];
-                clientPersistentKeepalive = 25;
-              }
-            ];
-          };
-          secretNames = {
-            clientPrivateKey.alice = "${secretPrefix}-awg";
-            headerProtectionKey = "${secretPrefix}-awg-header";
+          inherit endpoint;
+          serverPublicKey = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=";
+          headerProtectionKeySecret = "${secretPrefix}-awg-header";
+          clients.alice = {
+            ipv4 = "10.77.0.2";
+            privateKeySecret = "${secretPrefix}-awg";
+            keepaliveSeconds = 25;
           };
         };
         anytls = {
-          transportMetadata = {
-            tlsServerName = domain;
-            userNames = profileNames;
-          };
-          secretNames.users.alice = "${secretPrefix}-anytls";
+          inherit endpoint;
+          clients.alice.passwordSecret = "${secretPrefix}-anytls";
         };
       };
     in
-    providerEnvelope.mkProvider (
-      {
-        inherit
-          protocol
-          machine
-          instanceId
-          profileNames
-          ;
-        endpoint = {
-          inherit domain;
-          ipv4 = "192.0.2.21";
-          port = 443;
-        };
-      }
-      // protocolData.${protocol}
-    )
-    // {
-      inherit display;
+    {
+      inherit machine instanceId display;
+      connection.${protocol} = payloads.${protocol};
+      profileClients.alice = "alice";
     };
 
   settings = {
@@ -153,12 +119,13 @@ let
   ];
   render =
     providers:
-    import ../clanServices/vpn-client-profiles/client-profiles.nix {
-      inherit lib pkgs providers;
-      settings = settings // {
-        profiles = [ (aliceProfile allProtocols) ];
-      };
-    };
+    manifestView
+      (import ../clanServices/vpn-client-profiles/client-profiles.nix {
+        inherit lib pkgs providers;
+        settings = settings // {
+          profiles = [ (aliceProfile allProtocols) ];
+        };
+      }).manifest;
   renderedOf = providers: builtins.head (render providers).renderedProfiles;
 
   mihomoNames =
@@ -412,18 +379,20 @@ let
           protocol = "anytls";
         })
       ];
-      noAuto = import ../clanServices/vpn-client-profiles/client-profiles.nix {
-        inherit lib pkgs;
-        providers = [
-          (provider {
-            instanceId = "vless-a";
-            protocol = "vless-xhttp";
-          })
-        ];
-        settings = settings // {
-          profiles = [ (aliceProfile [ ]) ];
-        };
-      };
+      noAuto =
+        manifestView
+          (import ../clanServices/vpn-client-profiles/client-profiles.nix {
+            inherit lib pkgs;
+            providers = [
+              (provider {
+                instanceId = "vless-a";
+                protocol = "vless-xhttp";
+              })
+            ];
+            settings = settings // {
+              profiles = [ (aliceProfile [ ]) ];
+            };
+          }).manifest;
       groupNames =
         candidate:
         map (group: group.name)
@@ -507,8 +476,7 @@ let
       {
         instanceId = "anytls-a";
         machine = "edge-a";
-        protocol = "anytls";
-        profileNames = [ "alice" ];
+        clients.alice = "alice";
         inherit display;
       }
     ];
@@ -550,47 +518,50 @@ let
   # A duplicate label between an external subscription and an own provider is
   # rejected at evaluation; the identifier fallback counts as a label.
   fixture = import ./fixtures/example-clan.nix;
-  consume = import ./lib/consumer.nix { inherit inputs root self; };
-  instanceNames = builtins.filter (
-    name: !(lib.hasPrefix "network-" name) && name != "edge-wildcard-certificate"
-  ) (builtins.attrNames fixture.instances);
+  publisherCompiler = import ../clanServices/vpn-client-profiles/publisher.nix { inherit lib; };
+  nativeExports = (import ./lib/provider-exports.nix { inherit inputs self; }) fixture.instances;
   externalSource = {
     urlSecretName = "fixture/subscription-url";
     profileNames = [ "cHJvYmU" ];
   };
-  consumerWithExternal =
-    name: externalSubscriptions:
-    consume {
-      inherit instanceNames;
-      includeNetwork = true;
-      fixtureName = "vpn-display-names-${name}-fixture";
-      instanceOverrides.vpn-client-profiles.roles.publisher.machines.vpn-fixture.settings = {
+  compiledWithExternal =
+    externalSubscriptions:
+    publisherCompiler.compile {
+      inherit pkgs;
+      instanceName = "vpn-client-profiles";
+      exports = nativeExports;
+      selectExports = inputs.clan-core.lib.selectExports;
+      settings = fixture.instances.vpn-client-profiles.roles.publisher.machines.vpn-fixture.settings // {
         inherit externalSubscriptions;
       };
     };
   evaluates =
     candidate:
-    (builtins.tryEval (builtins.deepSeq candidate.machine.system.build.toplevel.drvPath true)).success;
+    let
+      attempt = builtins.tryEval (
+        builtins.deepSeq candidate.settings (manifestLib.validateManifest candidate.manifest)
+      );
+    in
+    attempt.success && attempt.value;
   externalLabelResults = {
     ownLabelRejected =
-      !(evaluates (
-        consumerWithExternal "same-label" {
-          fixture = externalSource // {
-            label = "A";
-          };
-        }
-      ));
-    identifierFallbackRejected = !(evaluates (consumerWithExternal "same-id" { A = externalSource; }));
-    distinctLabelAccepted = evaluates (
-      consumerWithExternal "distinct-label" {
+      !(evaluates (compiledWithExternal {
         fixture = externalSource // {
-          label = "Skala";
+          label = "A";
         };
-      }
-    );
-    distinctIdentifierAccepted = evaluates (
-      consumerWithExternal "distinct-id" { fixture = externalSource; }
-    );
+      }));
+    identifierFallbackRejected =
+      !(evaluates (compiledWithExternal {
+        A = externalSource;
+      }));
+    distinctLabelAccepted = evaluates (compiledWithExternal {
+      fixture = externalSource // {
+        label = "Skala";
+      };
+    });
+    distinctIdentifierAccepted = evaluates (compiledWithExternal {
+      fixture = externalSource;
+    });
   };
 
   results = {

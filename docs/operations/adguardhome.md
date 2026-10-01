@@ -16,7 +16,7 @@ consumer requires separate authorization.
 From the repository root, force the complete AdGuard result:
 
 ```bash
-nix shell --offline --inputs-from . --max-jobs 0 --builders '' nixpkgs#deadnix nixpkgs#gitleaks nixpkgs#nixfmt nixpkgs#statix --command scripts/verify.sh adguardhome-contracts
+nix shell --offline --inputs-from . --max-jobs 0 --builders '' --option allow-import-from-derivation false nixpkgs#deadnix nixpkgs#gitleaks nixpkgs#nixfmt nixpkgs#statix --command scripts/verify.sh adguardhome-contracts
 ```
 
 The result must contain true values for:
@@ -26,7 +26,7 @@ The result must contain true values for:
   listeners, primary/fallback paths, TLS, cache, filters and retention;
 - `cascadeContract`: dnsproxy uses the three static-address DoH stamps in
   parallel, then the three plaintext addresses, with no bootstrap or cache;
-- `privateSchemaContract`: the new option types are closed;
+- `privateSchemaContract`: the option types are closed;
 - `privateAssertionContract`: invalid private zones, endpoints, rewrites and
   conflicting user rules are rejected;
 - `privateDnsContract`: conditional lines occur in both AdGuard upstream lists,
@@ -49,7 +49,7 @@ assertion instead of aborting JSON parsing.
 
 The stamp checks decode the configured base64url payloads and check their
 length-prefixed fields and complete consumption. They also reject the malformed
-Quad9 hostname length that previously escaped string-equality checks. These
+Quad9 hostname length. These
 checks do not execute dnsproxy or establish fallback availability at runtime.
 
 ## Complete repository gate
@@ -57,7 +57,7 @@ checks do not execute dnsproxy or establish fallback availability at runtime.
 Before any release work, run the common gate:
 
 ```bash
-nix shell --offline --inputs-from . --max-jobs 0 --builders '' nixpkgs#deadnix nixpkgs#gitleaks nixpkgs#nixfmt nixpkgs#statix --command scripts/verify.sh
+nix shell --offline --inputs-from . --max-jobs 0 --builders '' --option allow-import-from-derivation false nixpkgs#deadnix nixpkgs#gitleaks nixpkgs#nixfmt nixpkgs#statix --command scripts/verify.sh
 ```
 
 The gate is defined in [verify.md](verify.md). It performs static hygiene and

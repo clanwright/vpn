@@ -3,14 +3,14 @@
   pkgs,
 }:
 let
-  providerEnvelope = import ../modules/contracts/provider-envelope.nix { inherit lib; };
+  manifestView = import ./lib/manifest-view.nix { inherit lib; };
+  protocolPolicy = import ../modules/contracts/protocol-policy.nix;
   profileTypes = import ../clanServices/vpn-client-profiles/types.nix { inherit lib; };
   users = [
     "alice"
     "bob"
     "carol"
   ];
-  secretMap = prefix: names: lib.genAttrs names (name: "fixture-${prefix}-${name}");
   allowedUsers =
     machine:
     if machine == "edge-a" then
@@ -62,97 +62,83 @@ let
   mkProvider =
     machine: protocol:
     let
-      profileNames = allowedUsers machine;
-      domain = endpointDomain machine protocol;
-      common = {
-        inherit protocol machine profileNames;
-        instanceId = "${protocol}-${machine}";
-        endpoint = {
-          inherit domain;
-          ipv4 = endpointIPv4 machine;
-          port = if protocol == "mieru" then 8443 else 443;
-        };
+      names = allowedUsers machine;
+      hostname = endpointDomain machine protocol;
+      endpoint = {
+        inherit hostname;
+        ipv4 = endpointIPv4 machine;
+        port = if protocol == "mieru" then 8443 else 443;
       };
-      protocolData = {
+      passwordClients =
+        prefix:
+        lib.genAttrs names (name: {
+          passwordSecret = "fixture-${prefix}-${machine}-${name}";
+        });
+      payloads = {
         naiveproxy = {
-          transportMetadata = {
-            tlsServerName = domain;
-            userNames = profileNames;
-            port = 443;
-          };
-          secretNames.password = secretMap "naive-${machine}" profileNames;
+          inherit endpoint;
+          clients = passwordClients "naive";
         };
         vless-xhttp = {
-          transportMetadata = {
-            reality = {
-              serverName = "donor.example.invalid";
-              serverNames = [ "donor.example.invalid" ];
-              target = "donor.example.invalid:443";
-              publicKey = "BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB";
-              shortIdsByProfile = lib.genAttrs profileNames (_: "0123456789abcdef");
-            };
-            xhttp = {
-              path = "/fixture";
-              mode = "auto";
-            };
+          inherit endpoint;
+          clients = lib.genAttrs names (name: {
+            uuidSecret = "fixture-vless-${machine}-${name}";
+            shortId = "0123456789abcdef";
+          });
+          reality = {
+            serverName = "donor.example.invalid";
+            publicKey = "BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB";
             fingerprint = "firefox";
-            doh = {
-              domain = "dns-a.example.invalid";
-              ipv4 = "192.0.2.53";
-            };
+            supportX25519MLKEM768 = false;
           };
-          secretNames = {
-            realityPrivateKey = "fixture-reality-${machine}";
-            vlessUuid = secretMap "vless-${machine}" profileNames;
+          xhttp.path = "/fixture";
+          doh = {
+            hostname = "dns-a.example.invalid";
+            ipv4 = "192.0.2.53";
           };
         };
         amneziawg = {
-          transportMetadata = {
-            serverPublicKey = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=";
-            interfaceName = "awg-${machine}";
-            address = "10.77.0.1/24";
-            mtu = 1280;
-            peers = lib.imap0 (index: name: {
-              inherit name;
-              publicKey = "CCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCA=";
-              allowedIPs = [ "10.77.0.${toString (index + 2)}/32" ];
-              clientPersistentKeepalive = 25;
-            }) profileNames;
-          };
-          secretNames = {
-            clientPrivateKey = secretMap "awg-private-${machine}" profileNames;
-            headerProtectionKey = "fixture-awg-header-${machine}";
-          };
+          inherit endpoint;
+          serverPublicKey = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=";
+          headerProtectionKeySecret = "fixture-awg-header-${machine}";
+          clients = lib.listToAttrs (
+            lib.imap0 (
+              index: name:
+              lib.nameValuePair name {
+                ipv4 = "10.77.0.${toString (index + 2)}";
+                privateKeySecret = "fixture-awg-private-${machine}-${name}";
+                keepaliveSeconds = 25;
+              }
+            ) names
+          );
         };
         mieru = {
-          transportMetadata.userNames = profileNames;
-          secretNames.users = secretMap "mieru-${machine}" profileNames;
+          endpoint = builtins.removeAttrs endpoint [ "hostname" ];
+          clients = passwordClients "mieru";
         };
         anytls = {
-          transportMetadata = {
-            tlsServerName = domain;
-            userNames = profileNames;
-          };
-          secretNames.users = secretMap "anytls-${machine}" profileNames;
+          inherit endpoint;
+          clients = passwordClients "anytls";
         };
         trusttunnel = {
-          transportMetadata = {
-            tlsServerName = domain;
-            userNames = profileNames;
-          };
-          secretNames.users = secretMap "trusttunnel-${machine}" profileNames;
+          inherit endpoint;
+          clients = passwordClients "trusttunnel";
         };
       };
     in
-    providerEnvelope.mkProvider (common // protocolData.${protocol})
-    // {
+    {
+      inherit machine;
+      instanceId = "${protocol}-${machine}";
+      connection.${protocol} = payloads.${protocol};
+      profileClients = lib.genAttrs names (name: name);
       display = displayFor machine;
     };
-  protocols = builtins.attrNames providerEnvelope.protocols;
+  protocols = builtins.attrNames protocolPolicy.protocols;
   providers = lib.concatMap (machine: map (mkProvider machine) protocols) [
     "edge-a"
     "edge-b"
   ];
+  protocolOf = provider: builtins.head (builtins.attrNames provider.connection);
   publishers = {
     publisher-a = {
       localMachineName = "publisher-a";
@@ -203,11 +189,12 @@ let
     };
   render =
     publisher: selectedProviders: profiles:
-    import ../clanServices/vpn-client-profiles/client-profiles.nix {
-      inherit lib pkgs;
-      providers = selectedProviders;
-      settings = settingsFor publisher profiles;
-    };
+    manifestView
+      (import ../clanServices/vpn-client-profiles/client-profiles.nix {
+        inherit lib pkgs;
+        providers = selectedProviders;
+        settings = settingsFor publisher profiles;
+      }).manifest;
   profile = name: {
     inherit name;
     pathTokenSecretName = "fixture-${name}-path-token";
@@ -235,18 +222,19 @@ let
     user: provider:
     let
       sharingBase = builtins.filter (
-        candidate: builtins.elem user candidate.profileNames && candidate.machine == provider.machine
+        candidate: builtins.hasAttr user candidate.profileClients && candidate.machine == provider.machine
       ) providers;
       base = expectedBaseName provider.machine;
     in
     if builtins.length sharingBase > 1 then
-      "${base} · ${expectedKindLabel.${provider.protocol}}"
+      "${base} · ${expectedKindLabel.${protocolOf provider}}"
     else
       base;
   eligible =
     user: protocolSet:
     builtins.filter (
-      provider: builtins.elem user provider.profileNames && builtins.elem provider.protocol protocolSet
+      provider:
+      builtins.hasAttr user provider.profileClients && builtins.elem (protocolOf provider) protocolSet
     ) providers;
   sorted = lib.sort builtins.lessThan;
   mihomoTags =
@@ -790,15 +778,17 @@ let
   noAutoRender = render publishers.publisher-a providers [
     ((profile "alice") // { autoProtocols = [ ]; })
   ];
-  ruCollisionRender = import ../clanServices/vpn-client-profiles/client-profiles.nix {
-    inherit lib pkgs providers;
-    settings = (settingsFor publishers.publisher-a [ (profile "alice") ]) // {
-      personalProxyDomains = [
-        "github.fixture.ru"
-        "ai.fixture.ru"
-      ];
-    };
-  };
+  ruCollisionRender =
+    manifestView
+      (import ../clanServices/vpn-client-profiles/client-profiles.nix {
+        inherit lib pkgs providers;
+        settings = (settingsFor publishers.publisher-a [ (profile "alice") ]) // {
+          personalProxyDomains = [
+            "github.fixture.ru"
+            "ai.fixture.ru"
+          ];
+        };
+      }).manifest;
   ruCollisionProfile = builtins.head ruCollisionRender.renderedProfiles;
   ruCollisionResults = {
     mihomoSelective = mihomoDomainPolicy ruCollisionProfile.mihomoSelectiveTemplate;
@@ -876,6 +866,43 @@ let
       proxy: proxy.type != "wireguard" || proxy."persistent-keepalive" == 0
     ) noAutoProfile.mihomoSelectiveTemplate.proxies;
   };
+  # Preserve nullable semantics: Nix's `or` fallback does not replace null.
+  nullableAwg = lib.recursiveUpdate (mkProvider "edge-a" "amneziawg") {
+    connection.amneziawg.clients.alice.keepaliveSeconds = null;
+  };
+  nullableAwgProxy =
+    autoProtocols:
+    builtins.head
+      (builtins.head
+        (render publishers.publisher-a
+          [ nullableAwg ]
+          [
+            ((profile "alice") // { inherit autoProtocols; })
+          ]
+        ).renderedProfiles
+      ).mihomoSelectiveTemplate.proxies;
+  awgNullableResults = {
+    nullPreservedWhenAutomatic = (nullableAwgProxy [ "amneziawg" ])."persistent-keepalive" == null;
+    manualDisablesKeepalive = (nullableAwgProxy [ ])."persistent-keepalive" == 0;
+    exactClientPolicyPreserved =
+      (nullableAwgProxy [ "amneziawg" ])."amnezia-wg-option" == {
+        version = 3;
+        s1 = 12;
+        s2 = 12;
+        s3 = 12;
+        s4 = 12;
+        h1 = "1";
+        h2 = "2";
+        h3 = "3";
+        h4 = "4";
+        "content-padding-addition" = "2-10";
+        "random-trailers" = true;
+        "disable-cookies" = false;
+        "header-protection-key" =
+          "__MIHOMO_AMNEZIAWG_HEADER_PROTECTION_KEY_6-edge-a-16-amneziawg-edge-a_alice__";
+      }
+      && (nullableAwgProxy [ "amneziawg" ]).mtu == 1280;
+  };
   evalProfile =
     value:
     (lib.evalModules {
@@ -921,6 +948,7 @@ let
   results = {
     inherit
       autoProtocolsResults
+      awgNullableResults
       matrixResults
       noAutoResults
       protocolOnlyResults

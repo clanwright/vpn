@@ -34,6 +34,7 @@ rec {
     system.stateVersion = "26.11";
   };
 
+  # Consumer owns each native base once and composes complete native extensions.
   networkIntegrationModule =
     {
       config,
@@ -42,73 +43,91 @@ rec {
       ...
     }:
     let
-      adguardOptionPresent = lib.hasAttrByPath [ "clanwright" "dns" "adguardhome" "integration" ] options;
       adguardIntegration = lib.attrByPath [ "clanwright" "dns" "adguardhome" "integration" ] null config;
-      publisherOptionPresent = lib.hasAttrByPath [ "clanwright" "vpn" "publishers" ] options;
       publisherIntegrations = lib.attrByPath [ "clanwright" "vpn" "publishers" ] { } config;
       publisherIntegration = publisherIntegrations.vpn-client-profiles or null;
+      hasAdguard =
+        lib.hasAttrByPath [ "clanwright" "dns" "adguardhome" "integration" ] options
+        && adguardIntegration != null;
+      hasPublisher = publisherIntegration != null;
+      aliasRoute = matcher: alias: canonical: ''
+        # fixture-alias-route
+        route {
+          @${matcher} host ${alias}
+          redir @${matcher} https://${canonical}{uri} permanent
+        }
+      '';
     in
     {
       config = lib.mkMerge [
         {
-          networkCore.caddy.fragments.fixture-site = {
-            hostName = "site.example.invalid";
+          security.acme.certs.fixture = {
+            domain = "example.invalid";
+            extraDomainNames = [ "*.example.invalid" ];
+            dnsProvider = "timewebcloud";
+            group = "acme";
+          };
+          services.caddy.virtualHosts."site.example.invalid" = {
+            owner = "fixture:site";
             listenAddresses = [ "192.0.2.10" ];
+            serverAliases = [ "site-alias.example.invalid" ];
             useACMEHost = "fixture";
-            logFile = "/var/log/caddy/fixture-access.log";
-            publicSite = true;
-            siteOwners = [ "fixture" ];
-            capabilities = [ ];
-            extraConfig = ''respond "fixture"'';
+            extraConfig = lib.mkMerge [
+              (aliasRoute "fixture_site_alias" "site-alias.example.invalid" "site.example.invalid")
+              (lib.mkOrder 2000 ''
+                # fixture-terminal-fallback
+                route {
+                  @fixture_site host site.example.invalid
+                  respond @fixture_site "fixture"
+                }
+              '')
+            ];
           };
         }
-        (lib.mkIf (adguardOptionPresent && adguardIntegration != null) {
-          networkCore = {
-            acme.reloadServices.fixture = [
-              "caddy.service"
-            ]
-            ++ adguardIntegration.reloadUnits;
-            caddy.fragments = {
-              dns-adguardhome-ui = {
-                hostName = "adguard.example.invalid";
+        (lib.mkIf hasAdguard {
+          security.acme.certs.fixture.reloadServices = adguardIntegration.reloadUnits;
+          services.caddy.virtualHosts = {
+            "adguard.example.invalid" = lib.mkMerge [
+              {
+                owner = "fixture:adguard-ui";
                 listenAddresses = [ "100.64.0.10" ];
                 useACMEHost = "fixture";
-                logFile = "/var/log/caddy/adguardhome-ui-access.log";
-                extraConfig = ''
-                  bind 100.64.0.10
-                  tls /var/lib/acme/fixture/fullchain.pem /var/lib/acme/fixture/key.pem
-                  @wrong_listener expression `{http.request.local.host} != "100.64.0.10" || {http.request.local.port} != "443"`
+                extraConfig = lib.mkOrder 2000 ''
                   route {
-                    respond @wrong_listener 404
+                    @adguard_ui_wrong_listener expression `{http.request.local.host} != "100.64.0.10" || {http.request.local.port} != 443`
+                    respond @adguard_ui_wrong_listener 404
                     reverse_proxy ${adguardIntegration.uiBackend.host}:${toString adguardIntegration.uiBackend.port}
                   }
                 '';
-              };
-              dns-adguardhome-doh = {
-                hostName = "dns.example.invalid";
+              }
+            ];
+            "dns.example.invalid" = lib.mkMerge [
+              {
+                owner = "fixture:adguard-doh";
                 listenAddresses = [ "192.0.2.10" ];
                 useACMEHost = "fixture";
-                logFile = "/var/log/caddy/adguardhome-doh-access.log";
-                extraConfig = ''
-                  bind 192.0.2.10
-                  tls /var/lib/acme/fixture/fullchain.pem /var/lib/acme/fixture/key.pem
-                  @wrong_listener expression `{http.request.local.host} != "192.0.2.10" || {http.request.local.port} != "443"`
-                  respond @wrong_listener 404
-                  handle /dns-query {
-                    reverse_proxy https://${adguardIntegration.dohBackend.host}:${toString adguardIntegration.dohBackend.port} {
-                      header_up Host ${adguardIntegration.dohBackend.serverName}
-                      transport http {
-                        tls
-                        tls_server_name ${adguardIntegration.dohBackend.serverName}
+                extraConfig = lib.mkOrder 2000 ''
+                  route {
+                    @adguard_doh_wrong_listener expression `{http.request.local.host} != "192.0.2.10" || {http.request.local.port} != 443`
+                    respond @adguard_doh_wrong_listener 404
+                    handle /dns-query {
+                      reverse_proxy https://${adguardIntegration.dohBackend.host}:${toString adguardIntegration.dohBackend.port} {
+                        header_up Host ${adguardIntegration.dohBackend.serverName}
+                        transport http {
+                          tls
+                          tls_server_name ${adguardIntegration.dohBackend.serverName}
+                        }
                       }
                     }
-                  }
-                  handle {
-                    respond 404
+                    handle { respond 404 }
                   }
                 '';
-              };
-            };
+              }
+              # Explicit public Host callsite; retain the exported local-listener guard.
+              (lib.mkIf (lib.hasAttrByPath [ "clanwright" "vpn" "naiveproxy" "connectRoute" ] options) {
+                extraConfig = lib.mkBefore config.clanwright.vpn.naiveproxy.connectRoute;
+              })
+            ];
           };
           networking.firewall.interfaces.tailscale0 = {
             allowedTCPPorts = [
@@ -119,35 +138,59 @@ rec {
           };
           systemd.services.adguardhome.serviceConfig.SupplementaryGroups = [ "acme" ];
         })
-        (lib.mkIf (publisherOptionPresent && publisherIntegration != null) {
-          networkCore.caddy.fragments.vpn-client-profiles = {
-            hostName = publisherIntegration.configGatewayDomain;
-            listenAddresses = [
-              "192.0.2.10"
-              "100.64.0.10"
-            ];
-            useACMEHost = "fixture";
-            logFile = "/var/log/caddy/vpn-client-profiles-access.log";
-            publicSite = true;
-            siteOwners = [ "vpn-client-profiles" ];
-            capabilities = [ ];
-            extraConfig = ''
-              bind 192.0.2.10 100.64.0.10
-              tls /var/lib/acme/fixture/fullchain.pem /var/lib/acme/fixture/key.pem
-              @links_wrong_listener {
-                path /config-links/*
-                expression `{http.request.local.host} != "100.64.0.10" || {http.request.local.port} != "443"`
+        (lib.mkIf hasPublisher {
+          services.caddy.virtualHosts.${publisherIntegration.configGatewayDomain} = lib.mkMerge [
+            # A same-canonical fixture extends the existing base without an owner.
+            (lib.mkIf (publisherIntegration.configGatewayDomain != "site.example.invalid") {
+              owner = "fixture:publisher";
+              listenAddresses = [
+                "192.0.2.10"
+                "100.64.0.10"
+              ];
+              serverAliases = [ "profiles-alias.example.invalid" ];
+              useACMEHost = "fixture";
+              extraConfig = lib.mkMerge [
+                (aliasRoute "fixture_publisher_alias" "profiles-alias.example.invalid"
+                  publisherIntegration.configGatewayDomain
+                )
+                (lib.mkOrder 2000 ''
+                  # fixture-terminal-fallback
+                  route { respond 404 }
+                '')
+              ];
+            })
+            # Explicit mixed-listener Host callsite; same-canonical catchall already owns one attachment.
+            (lib.mkIf
+              (
+                publisherIntegration.configGatewayDomain != "site.example.invalid"
+                && lib.hasAttrByPath [ "clanwright" "vpn" "naiveproxy" "connectRoute" ] options
+              )
+              {
+                extraConfig = lib.mkBefore config.clanwright.vpn.naiveproxy.connectRoute;
               }
-              respond @links_wrong_listener 404
-              handle /config-links/* {
-                root * ${publisherIntegration.linksRoot}
-                rewrite * /index.html
-                header Cache-Control "no-store"
-                file_server
-              }
-              ${publisherIntegration.routeConfig}
-            '';
-          };
+            )
+            {
+              extraConfig = lib.mkMerge [
+                (lib.mkBefore publisherIntegration.logConfig)
+                (lib.mkAfter ''
+                  route {
+                    @links_wrong_listener {
+                      path /config-links/*
+                      expression `{http.request.local.host} != "100.64.0.10" || {http.request.local.port} != 443`
+                    }
+                    respond @links_wrong_listener 404
+                    handle /config-links/* {
+                      root * ${publisherIntegration.linksRoot}
+                      rewrite * /index.html
+                      header Cache-Control "no-store"
+                      file_server
+                    }
+                  }
+                  ${publisherIntegration.routeConfig}
+                '')
+              ];
+            }
+          ];
           systemd.services.caddy.serviceConfig.SupplementaryGroups = [ publisherIntegration.readerGroup ];
         })
       ];
@@ -158,11 +201,6 @@ rec {
     network-certificates = networkInstance "network-certificates" "server" {
       email = "operator@example.invalid";
       secretName = "fixture-dns-api-token";
-    };
-    edge-wildcard-certificate = networkInstance "edge-wildcard-certificate" "certificate" {
-      certName = "fixture";
-      domain = "example.invalid";
-      extraDomainNames = [ "*.example.invalid" ];
     };
 
     vpn-mihomo-vless-xhttp = vpnInstance "vpn-mihomo-vless-xhttp" "gateway" {
@@ -261,12 +299,9 @@ rec {
 
     vpn-naiveproxy = vpnInstance "vpn-naiveproxy" "addon" {
       enable = true;
-      selectedPublicSiteClaim = "fixture-site";
-      selectedPublicSiteEndpoint = {
-        domain = "site.example.invalid";
-        publicIPv4 = "192.0.2.10";
-        caddyBindIPv4 = "192.0.2.10";
-      };
+      domain = "site.example.invalid";
+      publicIPv4 = "192.0.2.10";
+      bindIPv4 = "192.0.2.10";
       passwordSecretNames = {
         ibelyasov = "fixture-naive-first-password";
         bsv = "fixture-naive-second-password";
@@ -316,8 +351,7 @@ rec {
         {
           instanceId = "vpn-mihomo-vless-xhttp";
           machine = machineName;
-          protocol = "vless-xhttp";
-          profileNames = [ "cHJvYmU" ];
+          clients.cHJvYmU = "cHJvYmU";
           display = {
             label = "A";
             country = "Литва";
@@ -327,8 +361,7 @@ rec {
         {
           instanceId = "vpn-mieru";
           machine = machineName;
-          protocol = "mieru";
-          profileNames = [ "cHJvYmU" ];
+          clients.cHJvYmU = "cHJvYmU";
           display = {
             label = "A";
             country = "Литва";
@@ -338,8 +371,7 @@ rec {
         {
           instanceId = "vpn-anytls";
           machine = machineName;
-          protocol = "anytls";
-          profileNames = [ "cHJvYmU" ];
+          clients.cHJvYmU = "cHJvYmU";
           display = {
             label = "A";
             country = "Литва";
@@ -349,8 +381,7 @@ rec {
         {
           instanceId = "vpn-trusttunnel";
           machine = machineName;
-          protocol = "trusttunnel";
-          profileNames = [ "cHJvYmU" ];
+          clients.cHJvYmU = "cHJvYmU";
           display = {
             label = "A";
             country = "Литва";
@@ -360,8 +391,7 @@ rec {
         {
           instanceId = "vpn-amneziawg";
           machine = machineName;
-          protocol = "amneziawg";
-          profileNames = [ "cHJvYmU" ];
+          clients.cHJvYmU = "cHJvYmU";
           display = {
             label = "A";
             country = "Литва";
@@ -371,8 +401,7 @@ rec {
         {
           instanceId = "vpn-naiveproxy";
           machine = machineName;
-          protocol = "naiveproxy";
-          profileNames = [ "cHJvYmU" ];
+          clients.cHJvYmU = "cHJvYmU";
           display = {
             label = "A";
             country = "Литва";

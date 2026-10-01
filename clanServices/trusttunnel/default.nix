@@ -7,25 +7,12 @@
 }:
 let
   identities = import ../../modules/contracts/identities.nix { inherit lib; };
-  providerEnvelope = import ../../modules/contracts/provider-envelope.nix { inherit lib; };
-  decimalPattern = "(0|[1-9][0-9]{0,2})";
-  validIPv4 =
-    value:
-    let
-      octets = lib.splitString "." value;
-      validOctet =
-        octet:
-        builtins.match decimalPattern octet != null
-        && builtins.fromJSON octet >= 0
-        && builtins.fromJSON octet <= 255;
-    in
-    lib.length octets == 4 && builtins.all validOctet octets;
+  inherit (import ../../modules/contracts/address-validation.nix { inherit lib; })
+    validHostname
+    validIPv4
+    ;
   validBindIPv4 = value: validIPv4 value && value != "0.0.0.0";
-  validDnsName =
-    value:
-    value != ""
-    && builtins.match "[A-Za-z0-9]([A-Za-z0-9.-]*[A-Za-z0-9])?" value != null
-    && lib.hasInfix "." value;
+  validDnsName = value: validHostname value && builtins.length (lib.splitString "." value) >= 2;
   deniedIPv4Networks = [
     "0.0.0.0/8"
     "10.0.0.0/8"
@@ -84,7 +71,7 @@ in
           };
 
           acmeCertName = lib.mkOption {
-            type = identities.safeIdentityType;
+            type = identities.certificateKeyType;
             description = "Consumer-owned ACME certificate name under /var/lib/acme.";
           };
 
@@ -117,47 +104,32 @@ in
     perInstance =
       {
         settings,
-        instanceName ? "trusttunnel",
-        machine ? {
-          name = null;
-        },
+        instanceName,
         mkExports ? (value: value),
         ...
       }:
       let
         active = settings.enable;
-        providerMachine =
-          if machine ? name && machine.name != null && machine.name != "" then
-            machine.name
-          else
-            builtins.head (lib.splitString "--" instanceName);
         profileNames = map (user: user.name) settings.users;
         userSecretNames = map (user: user.passwordSecretName) settings.users;
-        secretNames.users = lib.listToAttrs (
-          map (user: {
-            inherit (user) name;
-            value = user.passwordSecretName;
-          }) settings.users
-        );
       in
       {
         exports = lib.optionalAttrs active (mkExports {
-          vpnProvider = providerEnvelope.mkProvider {
-            machine = providerMachine;
-            protocol = "trusttunnel";
-            instanceId = instanceName;
-            endpoint = {
-              ipv4 = settings.bindIPv4;
-              inherit (settings) domain port;
+          vpnProvider = {
+            schemaVersion = 3;
+            connection.trusttunnel = {
+              endpoint = {
+                ipv4 = settings.bindIPv4;
+                hostname = settings.domain;
+                inherit (settings) port;
+              };
+              clients = lib.listToAttrs (
+                map (user: {
+                  inherit (user) name;
+                  value.passwordSecret = user.passwordSecretName;
+                }) settings.users
+              );
             };
-            transportMetadata = {
-              userNames = profileNames;
-              tlsServerName = settings.domain;
-              tlsVerify = true;
-              credentialEncoding = "base64url";
-              upstreamProtocol = "http2";
-            };
-            inherit profileNames secretNames;
           };
         });
 
@@ -293,10 +265,6 @@ in
                   message = "trusttunnel: the injected stock TrustTunnel endpoint package must be exactly version 1.1.0.";
                 }
                 {
-                  assertion = pkgs.trusttunnel-endpoint == trustTunnelPackage;
-                  message = "trusttunnel: pkgs.trusttunnel-endpoint must come from the injected VPN application pin.";
-                }
-                {
                   assertion = config.networking.firewall.enable && config.networking.firewall.backend == "nftables";
                   message = "trusttunnel: destination-scoped ingress requires the nftables firewall backend.";
                 }
@@ -378,12 +346,6 @@ in
                   message = "trusttunnel: service lifecycle, command, credentials, capabilities, and IPv4-only sandbox must remain guarded.";
                 }
               ];
-
-              nixpkgs.overlays = lib.optional active (
-                _final: _prev: {
-                  trusttunnel-endpoint = trustTunnelPackage;
-                }
-              );
 
               users.groups = lib.optionalAttrs active { ${serviceName} = { }; };
               users.users = lib.optionalAttrs active {

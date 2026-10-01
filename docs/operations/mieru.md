@@ -35,7 +35,7 @@ profile URLs must stay out of source, Nix store, commands, logs and review evide
 Maintain system time synchronization: Mieru authentication depends on clock time.
 
 Mihomo profiles expose Mieru in `Ручной` and, when allowed by `autoProtocols`, in `Авто`.
-Official sing-box profiles continue to require an eligible Naive provider.
+Official sing-box profiles require an eligible Naive or AnyTLS provider, or a selected compatible external subscription.
 The pinned Mihomo implementation supports Mieru TCP and UDP relay; this does not
 prove subscription import or operation of a particular GUI/core combination.
 

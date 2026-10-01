@@ -15,8 +15,8 @@ let
       ../clanServices/vpn-client-profiles/runtime-publication.nix
     else
       runtimeModuleOverride;
-  manifestLib = import ../clanServices/vpn-client-profiles/artifact-manifest.nix { inherit lib; };
-  baseTemplate = (import ./external-subscriptions-runtime-fixture.nix).singBox;
+  externalFixture = import ./external-subscriptions-runtime-fixture.nix;
+  baseTemplate = externalFixture.singBox;
   template =
     (
       if withExternal then
@@ -81,7 +81,6 @@ let
         ];
       }
     ];
-    publicationPhases = manifestLib.expectedPublicationPhases;
   };
   publication = import runtimeModule {
     config.sops.secrets = {
@@ -98,16 +97,10 @@ let
       runtimeBase
       ;
     mihomoPackage = pkgs.coreutils;
-    renderedProfiles = [ ];
     settings = {
       localMachineName = "runtime-fixture";
       profiles = [ { name = "fixture"; } ];
-      externalSubscriptions = lib.optionalAttrs withExternal {
-        fixture = {
-          urlSecretName = "fixture-url";
-          profileNames = [ "fixture" ];
-        };
-      };
+      externalSubscriptions = lib.optionalAttrs withExternal externalFixture.sources;
       linksPage = {
         enable = false;
         title = "Fixture";

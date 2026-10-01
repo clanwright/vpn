@@ -148,6 +148,14 @@ let
   providerNamespace =
     provider:
     "${toString (builtins.stringLength provider.machine)}-${provider.machine}-${toString (builtins.stringLength provider.instanceId)}-${provider.instanceId}";
+  validProfileClients =
+    clients:
+    builtins.isAttrs clients
+    && clients != { }
+    && builtins.all safeIdentityType.check (builtins.attrNames clients)
+    && builtins.all safeIdentityType.check (builtins.attrValues clients)
+    && builtins.attrValues clients == lib.unique (builtins.attrValues clients);
+  profileClientsType = lib.types.addCheck (lib.types.attrsOf safeIdentityType) validProfileClients;
   profileType = lib.types.submodule (_: {
     options = {
       name = lib.mkOption { type = safeIdentityType; };
@@ -184,13 +192,9 @@ let
         type = safeIdentityType;
         description = "Machine hosting the selected provider.";
       };
-      protocol = lib.mkOption {
-        type = lib.types.enum protocolValues;
-      };
-      profileNames = lib.mkOption {
-        type = lib.types.listOf safeIdentityType;
-        default = [ ];
-        description = "Profiles allowed to use the selected provider.";
+      clients = lib.mkOption {
+        type = profileClientsType;
+        description = "Non-empty injective map from declared publisher profiles to existing provider accounts.";
       };
       display = lib.mkOption {
         type = lib.types.nullOr displayNames.displayType;
@@ -273,6 +277,8 @@ in
     externalSubscriptionType
     externalSubscriptionsType
     providerNamespace
+    profileClientsType
+    validProfileClients
     protocolValues
     autoProtocolsType
     clientDnsEndpointType

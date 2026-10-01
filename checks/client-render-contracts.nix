@@ -8,6 +8,17 @@ let
   lib = inputs.nixpkgs.lib;
   pkgs = inputs.nixpkgs.legacyPackages.x86_64-linux;
   vpnExports = import ../modules/contracts/vpn-exports.nix { inherit lib; };
+  manifestLib = import ../clanServices/vpn-client-profiles/artifact-manifest.nix { inherit lib; };
+  publisherCompiler = import ../clanServices/vpn-client-profiles/publisher.nix { inherit lib; };
+  manifestView = import ./lib/manifest-view.nix { inherit lib; };
+  compilePublisher =
+    settings: exports:
+    publisherCompiler.compile {
+      inherit pkgs settings exports;
+      instanceName = "vpn-client-profiles";
+      selectExports = inputs.clan-core.lib.selectExports;
+    };
+  compileView = settings: exports: manifestView (compilePublisher settings exports).manifest;
   profileTypes = import ../clanServices/vpn-client-profiles/types.nix { inherit lib; };
   clientDnsResults = import ./client-dns-contracts.nix { inherit lib profileTypes; };
   clientPolicyResults = import ./client-policy-contracts.nix { inherit lib pkgs; };
@@ -24,7 +35,6 @@ let
   fixture = import ./fixtures/example-clan.nix;
   fixtureMachineName = fixture.machineName or "vpn-fixture";
   supportNames = [
-    "edge-wildcard-certificate"
     "network-caddy"
     "network-certificates"
   ];
@@ -37,10 +47,40 @@ let
     includeNetwork = true;
     fixtureName = "vpn-consumer-client-render-fixture";
   };
+  sameCanonicalConsumer = consume {
+    instanceNames = serviceNames;
+    includeNetwork = true;
+    fixtureName = "vpn-consumer-same-canonical-fixture";
+    instanceOverrides.vpn-client-profiles.roles.publisher.machines.vpn-fixture.settings = {
+      configGatewayDomain = "site.example.invalid";
+      profileLinks = [
+        {
+          name = "cHJvYmU";
+          label = "Fixture profile";
+          accountDomain = "site.example.invalid";
+        }
+      ];
+    };
+  };
+  sameCanonicalPublisherSettings =
+    (lib.evalModules {
+      modules = [
+        publisherCompiler.interface
+        sameCanonicalConsumer.config.inventory.instances.vpn-client-profiles.roles.publisher.machines.vpn-fixture.settings
+      ];
+    }).config;
+  sameCanonicalResults = import ./lib/native-composition.nix { inherit lib; } {
+    inherit (sameCanonicalConsumer) machine;
+    publisherManifest =
+      (compilePublisher sameCanonicalPublisherSettings sameCanonicalConsumer.config.exports).manifest;
+    domain = "site.example.invalid";
+    sameCanonical = true;
+  };
+  sameCanonicalContract = builtins.all (value: value) (builtins.attrValues sameCanonicalResults);
   zeroNaiveOverrides = {
     vpn-client-profiles = {
       roles.publisher.machines.vpn-fixture.settings.providerRefs = builtins.filter (
-        ref: ref.protocol != "naiveproxy"
+        ref: ref.instanceId != "vpn-naiveproxy"
       ) fixture.instances.vpn-client-profiles.roles.publisher.machines.vpn-fixture.settings.providerRefs;
     };
   };
@@ -66,29 +106,19 @@ let
       includeNetwork = true;
       fixtureName = "vpn-consumer-${name}-fixture";
     };
-  publisherWithExactSettings =
+  renderedWithSettings =
+    _name: settings: builtins.head (compileView settings consumer.config.exports).renderedProfiles;
+  rejectsCompilation =
     settings:
     let
-      instance = fixture.instances.vpn-client-profiles;
-      role = instance.roles.publisher;
-      machine = role.machines.${fixtureMachineName};
+      compiledCandidate = compilePublisher settings consumer.config.exports;
+      attempt = builtins.tryEval (
+        builtins.deepSeq compiledCandidate.settings (
+          manifestLib.validateManifest compiledCandidate.manifest
+        )
+      );
     in
-    fixture.instances
-    // {
-      vpn-client-profiles = instance // {
-        roles.publisher = role // {
-          machines.${fixtureMachineName} = machine // {
-            inherit settings;
-          };
-        };
-      };
-    };
-  renderedWithSettings =
-    name: settings:
-    let
-      candidate = evaluateInstances name (publisherWithExactSettings settings);
-    in
-    builtins.head candidate.machine.clanwright.vpn.publisherRenders.vpn-client-profiles;
+    !attempt.success || !attempt.value;
   rejectsInstances =
     name: instances:
     let
@@ -179,15 +209,20 @@ let
   disjointPublisherContract = builtins.all (value: value) (
     builtins.attrValues disjointPublisherResults
   );
-  unknownProfileRejected = rejectsInstances "unknown-profile" (
-    publisherWith (
-      publisherSettings
-      // {
-        providerRefs = [
-          ((builtins.head publisherSettings.providerRefs) // { profileNames = [ "unknown-profile" ]; })
-        ];
-      }
-    )
+  unknownProfileRejected = rejectsCompilation (
+    publisherSettings
+    // {
+      providerRefs = [
+        (
+          (builtins.head publisherSettings.providerRefs)
+          // {
+            clients = {
+              unknown-profile = "cHJvYmU";
+            };
+          }
+        )
+      ];
+    }
   );
   duplicateProfileRejected = rejectsInstances "duplicate-profile" (
     publisherWith (
@@ -252,123 +287,225 @@ let
     vpnExports.selectVpnProvider {
       providerInstanceId = "vpn-mieru";
       providerMachine = fixtureMachineName;
-      protocol = "mieru";
       consumerInstanceId = "vpn-client-profiles";
       exports.selected.vpnProvider = raw;
-      selectExports = _predicate: exports: exports;
+      selectExports =
+        predicate: exports:
+        if
+          predicate {
+            serviceName = "@clanwright/vpn-mieru";
+            roleName = "gateway";
+            machineName = fixtureMachineName;
+            instanceName = "vpn-mieru";
+          }
+        then
+          exports
+        else
+          { };
     };
   validMieruExport = {
-    schemaVersion = 2;
-    instanceId = "vpn-mieru";
-    machine = fixtureMachineName;
-    role = "gateway";
-    protocol = "mieru";
-    enabled = true;
-    endpoint = {
-      domain = null;
-      ipv4 = "192.0.2.13";
-      port = 8443;
-      transport = "tcp";
+    schemaVersion = 3;
+    connection.mieru = {
+      endpoint = {
+        ipv4 = "192.0.2.13";
+        port = 8443;
+      };
+      clients.cHJvYmU.passwordSecret = "fixture-mieru-password";
     };
-    transportMetadata = {
-      protocol = "mieru";
-      userNames = [ "cHJvYmU" ];
-      credentialEncoding = "base64url";
-    };
-    profileNames = [ "cHJvYmU" ];
-    secretNames.users.cHJvYmU = "fixture-mieru-password";
   };
   evalProviderExportType =
     raw:
     (lib.evalModules {
       modules = [
         {
-          options.value = lib.mkOption {
-            type = lib.types.submodule vpnExports.vpnProviderModule;
-          };
+          options.value = lib.mkOption { type = lib.types.submodule vpnExports.vpnProviderModule; };
           config.value = raw;
         }
       ];
     }).config.value;
   validNaiveExport = {
-    schemaVersion = 2;
-    instanceId = "vpn-naiveproxy";
-    machine = fixtureMachineName;
-    role = "addon";
-    protocol = "naiveproxy";
-    enabled = true;
-    endpoint = {
-      domain = "site.example.invalid";
-      ipv4 = "192.0.2.10";
-      port = 443;
-      transport = "tcp";
+    schemaVersion = 3;
+    connection.naiveproxy = {
+      endpoint = {
+        hostname = "site.example.invalid";
+        ipv4 = "192.0.2.10";
+        port = 443;
+      };
+      clients.cHJvYmU.passwordSecret = "fixture-naive-password";
     };
-    transportMetadata = {
-      protocol = "naiveproxy";
-      tlsServerName = "site.example.invalid";
-      userNames = [ "cHJvYmU" ];
-      port = 443;
-    };
-    profileNames = [ "cHJvYmU" ];
-    secretNames.password.cHJvYmU = "fixture-naive-password";
   };
   rejectsMieruExport =
     raw: !(builtins.tryEval (builtins.deepSeq (selectMieruExport raw) true)).success;
   mieruContractResults = {
-    typeAcceptsDomainFreeMieru = (evalProviderExportType validMieruExport).endpoint.domain == null;
+    typeAcceptsDomainFreeMieru =
+      builtins.attrNames (evalProviderExportType validMieruExport).connection.mieru.endpoint == [
+        "ipv4"
+        "port"
+      ];
     typeRejectsDomainFreeExistingProtocol =
       !(builtins.tryEval (
         builtins.deepSeq (evalProviderExportType (
-          lib.recursiveUpdate validNaiveExport { endpoint.domain = null; }
+          lib.recursiveUpdate validNaiveExport { connection.naiveproxy.endpoint.hostname = null; }
         )) true
       )).success;
     validDomainFreeExportAccepted =
-      (selectMieruExport validMieruExport).endpoint == validMieruExport.endpoint;
-    domainRejected = rejectsMieruExport (
-      lib.recursiveUpdate validMieruExport { endpoint.domain = "mieru.example.invalid"; }
+      (selectMieruExport validMieruExport).connection == validMieruExport.connection;
+    hostnameRejected = rejectsMieruExport (
+      lib.recursiveUpdate validMieruExport {
+        connection.mieru.endpoint.hostname = "mieru.example.invalid";
+      }
     );
     invalidIpv4Rejected = rejectsMieruExport (
-      lib.recursiveUpdate validMieruExport { endpoint.ipv4 = "192.0.2.999"; }
+      lib.recursiveUpdate validMieruExport { connection.mieru.endpoint.ipv4 = "192.0.2.999"; }
     );
-    udpTransportRejected = rejectsMieruExport (
-      lib.recursiveUpdate validMieruExport { endpoint.transport = "udp"; }
+    transportRejected = rejectsMieruExport (
+      lib.recursiveUpdate validMieruExport { connection.mieru.endpoint.transport = "udp"; }
     );
     unknownEndpointFieldRejected = rejectsMieruExport (
-      lib.recursiveUpdate validMieruExport { endpoint.serverName = "example.invalid"; }
+      lib.recursiveUpdate validMieruExport { connection.mieru.endpoint.serverName = "example.invalid"; }
     );
-    unknownMetadataRejected = rejectsMieruExport (
-      lib.recursiveUpdate validMieruExport { transportMetadata.sni = "example.invalid"; }
+    unknownPayloadFieldRejected = rejectsMieruExport (
+      lib.recursiveUpdate validMieruExport { connection.mieru.sni = "example.invalid"; }
     );
-    unknownSecretFieldRejected = rejectsMieruExport (
-      lib.recursiveUpdate validMieruExport { secretNames.password.cHJvYmU = "unexpected-secret"; }
+    unknownClientFieldRejected = rejectsMieruExport (
+      lib.recursiveUpdate validMieruExport { connection.mieru.clients.cHJvYmU.username = "other"; }
     );
-    mismatchedUserNamesRejected = rejectsMieruExport (
-      lib.recursiveUpdate validMieruExport { transportMetadata.userNames = [ "other" ]; }
+    emptyClientsRejected = rejectsMieruExport (
+      validMieruExport
+      // {
+        connection.mieru = validMieruExport.connection.mieru // {
+          clients = { };
+        };
+      }
     );
   };
   mieruExportContract = builtins.all (value: value) (builtins.attrValues mieruContractResults);
-  conflictingDnsPinCaseRejected = rejectsInstances "conflicting-dns-pin-case" (
-    publisherWith (
-      publisherSettings
+  conflictingDnsPinCaseRejected = rejectsCompilation (
+    publisherSettings
+    // {
+      edgeDomain = lib.toUpper publisherSettings.edgeDomain;
+      clientDnsEndpoints = [
+        {
+          domain = publisherSettings.edgeDomain;
+          ipv4 = "198.51.100.53";
+        }
+      ];
+    }
+  );
+  # Consumer migration expands the old all-profile reference into an explicit
+  # mapping. Publisher profile identities remain independent of provider accounts.
+  migratedSettings = publisherSettings // {
+    profiles = map (profile: profile // { name = "travel"; }) publisherSettings.profiles;
+    profileLinks = map (link: link // { name = "travel"; }) publisherSettings.profileLinks;
+    providerRefs = map (
+      ref:
+      ref
       // {
-        edgeDomain = lib.toUpper publisherSettings.edgeDomain;
-        clientDnsEndpoints = [
-          {
-            domain = publisherSettings.edgeDomain;
-            ipv4 = "198.51.100.53";
-          }
-        ];
+        clients = {
+          travel = "cHJvYmU";
+        };
       }
-    )
+    ) publisherSettings.providerRefs;
+  };
+  migratedCompiled = compileView migratedSettings consumer.config.exports;
+  migratedRendered = builtins.head migratedCompiled.renderedProfiles;
+  migratedManifest = migratedCompiled.manifest;
+  migratedProxy =
+    type:
+    builtins.head (
+      builtins.filter (proxy: proxy.type == type) migratedRendered.mihomoSelectiveTemplate.proxies
+    );
+  migratedNaive = builtins.head (
+    builtins.filter (outbound: outbound.type == "naive") migratedRendered.profileJsonTemplate.outbounds
+  );
+  migrationResults = {
+    allRefsExplicit = builtins.all (
+      ref: ref.clients == { travel = "cHJvYmU"; } && !(ref ? protocol) && !(ref ? profileNames)
+    ) migratedSettings.providerRefs;
+    profileIdentityPreserved =
+      migratedRendered.name == "travel" && (builtins.head migratedManifest.profiles).name == "travel";
+    accountsRemainProviderIdentities =
+      migratedNaive.username == "cHJvYmU"
+      && (migratedProxy "mieru").username == "cHJvYmU"
+      && (migratedProxy "trusttunnel").username == "cHJvYmU";
+    devicePayloadPreserved =
+      (migratedProxy "vless")."reality-opts"."short-id" == "0123456789abcdef"
+      && (migratedProxy "wireguard").ip == "10.77.0.2";
+    bindingsRemainProviderSecrets =
+      lib.sort builtins.lessThan (
+        lib.unique (
+          lib.concatMap (
+            artifact: map (binding: binding.secretName) artifact.bindings
+          ) (builtins.head migratedManifest.profiles).artifacts
+        )
+      ) == lib.sort builtins.lessThan [
+        "fixture-vless-uuid"
+        "fixture-awg-client-private-key"
+        "fixture-awg-header-protection-key"
+        "fixture-naive-published-password"
+        "fixture-mieru-password"
+        "fixture-anytls-password"
+        "fixture-trusttunnel-password"
+      ];
+    outputsPreserved =
+      map (artifact: artifact.outputName) (builtins.head migratedManifest.profiles).artifacts == [
+        "mihomo.yaml"
+        "profile.json"
+      ];
+  };
+  migrationContract = builtins.all (value: value) (builtins.attrValues migrationResults);
+  unknownAccountRejected = rejectsCompilation (
+    publisherSettings
+    // {
+      providerRefs = [
+        (
+          (builtins.head publisherSettings.providerRefs)
+          // {
+            clients = {
+              cHJvYmU = "unknown-account";
+            };
+          }
+        )
+      ];
+    }
+  );
+  emptyMappingRejected = rejectsCompilation (
+    publisherSettings
+    // {
+      providerRefs = [ ((builtins.head publisherSettings.providerRefs) // { clients = { }; }) ];
+    }
+  );
+  sharedAccountRejected = rejectsCompilation (
+    publisherSettings
+    // {
+      profiles = publisherSettings.profiles ++ [
+        (
+          (builtins.head publisherSettings.profiles)
+          // {
+            name = "travel";
+            pathTokenSecretName = "fixture-travel-path-token";
+          }
+        )
+      ];
+      providerRefs = [
+        (
+          (builtins.head publisherSettings.providerRefs)
+          // {
+            clients = {
+              cHJvYmU = "cHJvYmU";
+              travel = "cHJvYmU";
+            };
+          }
+        )
+      ];
+    }
   );
   consumerMachine = consumer.config.nixosConfigurations.${fixtureMachineName}.config;
-  rendered = builtins.head consumerMachine.clanwright.vpn.publisherRenders.vpn-client-profiles;
-  manifest = consumerMachine.clanwright.vpn.publisherManifests.vpn-client-profiles;
+  compiled = compileView publisherSettings consumer.config.exports;
+  rendered = builtins.head compiled.renderedProfiles;
+  inherit (compiled) manifest;
   manifestProfile = builtins.head manifest.profiles;
   manifestArtifacts = manifestProfile.artifacts;
-  artifactByOutput =
-    outputName:
-    builtins.head (builtins.filter (artifact: artifact.outputName == outputName) manifestArtifacts);
   valueAtPath =
     value: path:
     if path == [ ] then
@@ -389,11 +526,100 @@ let
       lib.concatMap placeholdersIn (builtins.attrValues value)
     else
       [ ];
-  publicationPhaseIds = map (phase: phase.id) manifest.publicationPhases;
-  phaseIndex = id: indexOf (candidate: candidate == id) publicationPhaseIds;
   allAssetRefs = lib.unique (lib.concatMap (artifact: artifact.assetRefs) manifestArtifacts);
   manifestAssets = builtins.attrValues manifest.assetCatalog;
+  expectedCanonicalAssets = {
+    mihomo-ai_domains = [
+      "/assets/v1/catalog/8a6d58340125ea123ceb6af7ab8417dd.txt"
+      "ai_domains.txt"
+      "text/plain; charset=utf-8"
+    ];
+    mihomo-github_domains = [
+      "/assets/v1/catalog/6c07c90dacb4128c65b1680c81794fe2.txt"
+      "github_domains.txt"
+      "text/plain; charset=utf-8"
+    ];
+    mihomo-refilter_blocked_domains = [
+      "/assets/v1/catalog/bcb9e8902437561cc6a78db13fb7f133.mrs"
+      "refilter_blocked_domains.mrs"
+      "application/octet-stream"
+    ];
+    mihomo-refilter_blocked_ips = [
+      "/assets/v1/catalog/8a8d4d676688e6ced1d2debd9050c9c6.mrs"
+      "refilter_blocked_ips.mrs"
+      "application/octet-stream"
+    ];
+    mihomo-ru_blocked_and_geoblocked_domains = [
+      "/assets/v1/catalog/545ebc4683015b7f430e203c2d0bd4e9.mrs"
+      "ru_blocked_and_geoblocked_domains.mrs"
+      "application/octet-stream"
+    ];
+    mihomo-ru_blocked_asn_ips = [
+      "/assets/v1/catalog/cf0daa490dbfd773961568099e805230.mrs"
+      "ru_blocked_asn_ips.mrs"
+      "application/octet-stream"
+    ];
+    personal-proxy-domains = [
+      "/assets/v1/catalog/17c14c90710e679f2843ea2d477b433e.txt"
+      "segments.txt"
+      "text/plain; charset=utf-8"
+    ];
+    secure-dns-domains = [
+      "/assets/v1/catalog/3547f64c9a6f5f9e8aa9e407979f7588.txt"
+      "secure-dns.txt"
+      "text/plain; charset=utf-8"
+    ];
+    secure-dns-filter = [
+      "/assets/v1/catalog/4a2faad8247af00b19dc5c027ba0bbe9.srs"
+      "filters.srs"
+      "application/octet-stream"
+    ];
+    sing-box-ai_domains = [
+      "/assets/v1/catalog/d5fb80bc38cb1d62efea8a4844083183.srs"
+      "ai_domains.srs"
+      "application/octet-stream"
+    ];
+    sing-box-github_domains = [
+      "/assets/v1/catalog/b85034083613ad64795a5186b9e8e99b.srs"
+      "github_domains.srs"
+      "application/octet-stream"
+    ];
+    sing-box-refilter_blocked_domains = [
+      "/assets/v1/catalog/e177dfe079f48001b49cf9215ea1147e.srs"
+      "refilter_blocked_domains.srs"
+      "application/octet-stream"
+    ];
+    sing-box-refilter_blocked_ips = [
+      "/assets/v1/catalog/b07c03e0d2f99e8bf92291923e9daa3e.srs"
+      "refilter_blocked_ips.srs"
+      "application/octet-stream"
+    ];
+    sing-box-ru_blocked_and_geoblocked_domains = [
+      "/assets/v1/catalog/d854f0910ec651c1ae32afcae93cd989.srs"
+      "ru_blocked_and_geoblocked_domains.srs"
+      "application/octet-stream"
+    ];
+    sing-box-ru_blocked_asn_ips = [
+      "/assets/v1/catalog/ce8a692bf3a0dc8e4630e38ada50167d.srs"
+      "ru_blocked_asn_ips.srs"
+      "application/octet-stream"
+    ];
+  };
+  retiredAssetPaths = [
+    "/assets/v1/catalog/filters.srs"
+    "/assets/v1/catalog/segments.txt"
+    "/assets/v1/catalog/secure-dns.txt"
+    "/assets/v1/catalog/ru_blocked_and_geoblocked_domains.srs"
+    "/assets/v1/catalog/ru_blocked_and_geoblocked_domains.mrs"
+    "/assets/v1/catalog/ru_blocked_asn_ips.srs"
+    "/assets/v1/catalog/ru_blocked_asn_ips.mrs"
+    "/assets/v1/catalog/refilter_blocked_domains.srs"
+    "/assets/v1/catalog/refilter_blocked_domains.mrs"
+    "/assets/v1/catalog/refilter_blocked_ips.srs"
+    "/assets/v1/catalog/refilter_blocked_ips.mrs"
+  ];
   manifestResults = {
+    canonicalManifestAccepted = manifestLib.validateManifest manifest;
     schemaVersion = manifest.schemaVersion == 1;
     profileIdentity =
       map (profileEntry: profileEntry.name) manifest.profiles == [ "cHJvYmU" ]
@@ -411,9 +637,16 @@ let
       !(rendered ? mihomoFullTemplate)
       && !(builtins.any (artifact: artifact.outputName == "mihomo-full.yaml") manifestArtifacts)
       && !(builtins.any (artifact: lib.hasSuffix "-mihomo-full" artifact.id) manifestArtifacts);
-    actualTemplatesRetained =
-      (artifactByOutput "mihomo.yaml").template == rendered.mihomoSelectiveTemplate
-      && (artifactByOutput "profile.json").template == rendered.profileJsonTemplate;
+    actualPublicationUsesCompiledTemplates = builtins.all (
+      artifact:
+      lib.hasInfix (builtins.unsafeDiscardStringContext (toString artifact.templatePath)) publicationScript
+    ) manifestArtifacts;
+    actualPublicationUsesCompiledBindings = builtins.all (
+      artifact:
+      builtins.all (
+        binding: lib.hasInfix consumerMachine.sops.secrets.${binding.secretName}.path publicationScript
+      ) artifact.bindings
+    ) manifestArtifacts;
     closedArtifactFormats = builtins.all (
       artifact:
       builtins.elem artifact.format [
@@ -487,8 +720,7 @@ let
             builtins.all
               (
                 asset:
-                asset.legacyPublicPaths == [ ]
-                && builtins.match "/assets/v1/catalog/[a-f0-9]{32}\\.(txt|srs)" asset.publicPath != null
+                builtins.match "/assets/v1/catalog/[a-f0-9]{32}\\.(txt|srs)" asset.publicPath != null
                 && builtins.elem asset.id allAssetRefs
                 && lib.hasInfix "refresh_download ${lib.escapeShellArg asset.validator} ${lib.escapeShellArg asset.filename} ${lib.escapeShellArg asset.source.url}" refreshScript
                 && lib.hasInfix "[ ! -s ${lib.escapeShellArg "${assetRoot}/${asset.filename}"} ]" refreshScript
@@ -503,13 +735,27 @@ let
           "ai_domains"
           "github_domains"
         ];
-    canonicalAndLegacyAssetRoutesExposed =
+    canonicalAssetRoutesExposed =
       let
         routeConfig = consumerMachine.clanwright.vpn.publishers.vpn-client-profiles.routeConfig;
-        publicPaths = lib.concatMap (asset: [ asset.publicPath ] ++ asset.legacyPublicPaths) manifestAssets;
+        publicPaths = map (asset: asset.publicPath) manifestAssets;
       in
       publicPaths == lib.unique publicPaths
       && builtins.all (path: lib.hasInfix "handle ${path} {" routeConfig) publicPaths;
+    exactCanonicalAssetTable =
+      lib.mapAttrs (_: asset: [
+        asset.publicPath
+        asset.filename
+        asset.contentType
+      ]) manifest.assetCatalog == expectedCanonicalAssets;
+    retiredAssetAliasesAbsent =
+      let
+        nativeSite = consumerMachine.services.caddy.virtualHosts."profiles.example.invalid";
+        routeConfig = consumerMachine.clanwright.vpn.publishers.vpn-client-profiles.routeConfig;
+      in
+      builtins.all (
+        path: !(lib.hasInfix path routeConfig) && !(lib.hasInfix path nativeSite.extraConfig)
+      ) retiredAssetPaths;
     # Only the single Mihomo profile is routed; the removed full variant is not.
     mihomoProfileRouteOnly =
       let
@@ -527,9 +773,6 @@ let
           "mrs-ipcidr"
           "srs"
         ]
-        && builtins.isList asset.legacyPublicPaths
-        && asset.legacyPublicPaths == lib.unique asset.legacyPublicPaths
-        && !(builtins.elem asset.publicPath asset.legacyPublicPaths)
         && builtins.elem asset.source.kind [
           "download"
           "adguard-to-srs"
@@ -540,61 +783,21 @@ let
         map (asset: asset.filename) manifestAssets
         == lib.unique (map (asset: asset.filename) manifestAssets)
       &&
-        lib.concatMap (asset: [ asset.publicPath ] ++ asset.legacyPublicPaths) manifestAssets == lib.unique
-          (lib.concatMap (asset: [ asset.publicPath ] ++ asset.legacyPublicPaths) manifestAssets)
-      &&
-        map (asset: asset.routePriority) manifestAssets
-        == lib.unique (map (asset: asset.routePriority) manifestAssets);
-    publishedPhasesMatchManifest =
-      consumerMachine.clanwright.vpn.publisherPublicationPhases.vpn-client-profiles
-      == manifest.publicationPhases;
-    publicationPhasesOrdered =
-      manifest.publicationPhases == [
-        {
-          id = "revoke-current";
-          prerequisites = [ ];
-        }
-        {
-          id = "sync-local-assets";
-          prerequisites = [ "revoke-current" ];
-        }
-        {
-          id = "check-assets";
-          prerequisites = [ "sync-local-assets" ];
-        }
-        {
-          id = "prepare-generation";
-          prerequisites = [ "check-assets" ];
-        }
-        {
-          id = "render-artifacts";
-          prerequisites = [ "prepare-generation" ];
-        }
-        {
-          id = "finalize-links";
-          prerequisites = [ "render-artifacts" ];
-        }
-        {
-          id = "seal-generation";
-          prerequisites = [ "finalize-links" ];
-        }
-        {
-          id = "expose-generation";
-          prerequisites = [ "seal-generation" ];
-        }
-        {
-          id = "retire-old-generations";
-          prerequisites = [ "expose-generation" ];
-        }
-        {
-          id = "cleanup-private-temporaries";
-          prerequisites = [ "retire-old-generations" ];
-        }
-      ]
-      && builtins.all (
-        phase:
-        builtins.all (prerequisite: phaseIndex prerequisite < phaseIndex phase.id) phase.prerequisites
-      ) manifest.publicationPhases;
+        map (asset: asset.publicPath) manifestAssets
+        == lib.unique (map (asset: asset.publicPath) manifestAssets);
+    manifestClosedFields =
+      builtins.attrNames manifest == [
+        "assetCatalog"
+        "profiles"
+        "schemaVersion"
+      ];
+    removedDiagnosticProjections =
+      builtins.all (field: !(builtins.hasAttr field consumerMachine.clanwright.vpn))
+        [
+          "publisherPublicationPhases"
+          "publisherRenders"
+          "publisherManifests"
+        ];
   };
   manifestContract = builtins.all (value: value) (builtins.attrValues manifestResults);
   oneDnsRendered = renderedWithSettings "one-client-dns" (
@@ -612,8 +815,15 @@ let
     builtins.removeAttrs publisherSettings [ "clientDnsEndpoints" ]
   );
   zeroNaiveMachine = zeroNaiveConsumer.config.nixosConfigurations.${fixtureMachineName}.config;
-  zeroNaiveRendered = builtins.head zeroNaiveMachine.clanwright.vpn.publisherRenders.vpn-client-profiles;
-  zeroNaiveManifest = zeroNaiveMachine.clanwright.vpn.publisherManifests.vpn-client-profiles;
+  zeroNaiveCompiled = compileView (
+    publisherSettings
+    // {
+      providerRefs =
+        zeroNaiveOverrides.vpn-client-profiles.roles.publisher.machines.vpn-fixture.settings.providerRefs;
+    }
+  ) zeroNaiveConsumer.config.exports;
+  zeroNaiveRendered = builtins.head zeroNaiveCompiled.renderedProfiles;
+  zeroNaiveManifest = zeroNaiveCompiled.manifest;
   zeroNaiveArtifacts = (builtins.head zeroNaiveManifest.profiles).artifacts;
   zeroNaivePublicationScript = zeroNaiveMachine.systemd.services.${publicationUnitName}.script;
   publicationScript = consumerMachine.systemd.services.${publicationUnitName}.script;
@@ -652,16 +862,42 @@ let
   vlessPolicyRender =
     enabled:
     let
-      candidate = evaluateInstances "vless-mlkem-${lib.boolToString enabled}" (
-        lib.recursiveUpdate fixture.instances {
-          vpn-mihomo-vless-xhttp.roles.gateway.machines.vpn-fixture.settings = {
-            clientFingerprint = "chrome";
-            clientSupportX25519MLKEM768 = enabled;
-          };
-        }
-      );
+      service = builtins.head self.clan.modules."@clanwright/vpn-mihomo-vless-xhttp".imports;
+      settings =
+        (lib.evalModules {
+          modules = [
+            (service.roles.gateway.interface { inherit lib; })
+            {
+              config = fixture.instances.vpn-mihomo-vless-xhttp.roles.gateway.machines.vpn-fixture.settings // {
+                clientFingerprint = "chrome";
+                clientSupportX25519MLKEM768 = enabled;
+              };
+            }
+          ];
+        }).config;
+      producer = service.roles.gateway.perInstance {
+        inherit settings;
+        instanceName = "vpn-mihomo-vless-xhttp";
+        machine.name = fixtureMachineName;
+        mkExports = value: value;
+      };
+      scopes = inputs.clan-core.lib.selectExports (
+        scope:
+        scope.serviceName == "@clanwright/vpn-mihomo-vless-xhttp"
+        && scope.roleName == "gateway"
+        && scope.machineName == fixtureMachineName
+        && scope.instanceName == "vpn-mihomo-vless-xhttp"
+      ) consumer.config.exports;
+      variantExports = lib.mapAttrs (
+        name: value:
+        if builtins.hasAttr name scopes then
+          value // { vpnProvider = producer.exports.vpnProvider; }
+        else
+          value
+      ) consumer.config.exports;
     in
-    builtins.head candidate.machine.clanwright.vpn.publisherRenders.vpn-client-profiles;
+    assert builtins.length (builtins.attrNames scopes) == 1;
+    builtins.head (compileView publisherSettings variantExports).renderedProfiles;
   vlessClientPolicyContract =
     vless."client-fingerprint"
     == fixture.instances.vpn-mihomo-vless-xhttp.roles.gateway.machines.vpn-fixture.settings.clientFingerprint
@@ -1209,6 +1445,7 @@ let
   };
   zeroNaiveContract = builtins.all (value: value) (builtins.attrValues zeroNaiveResults);
   negativeResults = {
+    inherit unknownAccountRejected emptyMappingRejected sharedAccountRejected;
     inherit
       conflictingDnsPinCaseRejected
       deadPublisherCredentialRejected
@@ -1245,7 +1482,7 @@ let
     explicitAnytlsCredentialBinding =
       lib.sort builtins.lessThan consumerMachine.sops.secrets."fixture-anytls-password".restartUnits
       == lib.sort builtins.lessThan [
-        "anytls.service"
+        "sing-box.service"
         "${publicationUnitName}.service"
       ]
       && lib.hasInfix consumerMachine.sops.secrets."fixture-anytls-password".path publicationScript;
@@ -1265,7 +1502,9 @@ let
   };
   negativeContract = builtins.all (value: value) (builtins.attrValues negativeResults);
   contract =
-    clientDnsContract
+    sameCanonicalContract
+    && clientDnsContract
+    && migrationContract
     && clientPolicyContract
     && fakeIpPersistenceContract
     && clientDnsRenderVariantsContract
@@ -1285,6 +1524,8 @@ if !contract then
   throw "Pure client renderer contract failed: ${
     builtins.toJSON {
       inherit
+        sameCanonicalContract
+        sameCanonicalResults
         vlessClientPolicyContract
         clientDnsContract
         clientDnsRenderVariantResults
@@ -1298,6 +1539,8 @@ if !contract then
         disjointPublisherContract
         disjointPublisherResults
         mihomoContract
+        migrationContract
+        migrationResults
         manifestContract
         manifestResults
         mieruContractResults
@@ -1317,6 +1560,8 @@ else
   {
     all = true;
     inherit
+      sameCanonicalContract
+      sameCanonicalResults
       vlessClientPolicyContract
       clientDnsContract
       clientDnsRenderVariantResults
@@ -1328,6 +1573,8 @@ else
       disjointPublisherContract
       disjointPublisherResults
       mihomoContract
+      migrationContract
+      migrationResults
       manifestContract
       manifestResults
       mieruContractResults

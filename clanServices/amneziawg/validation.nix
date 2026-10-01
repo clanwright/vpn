@@ -1,7 +1,7 @@
 { lib }:
 let
   identities = import ../../modules/contracts/identities.nix { inherit lib; };
-  providerEnvelope = import ../../modules/contracts/provider-envelope.nix { inherit lib; };
+  protocolPolicy = import ../../modules/contracts/protocol-policy.nix;
   inRange =
     value: min: max:
     builtins.isInt value && value >= min && value <= max;
@@ -14,26 +14,10 @@ let
   validKey =
     value:
     builtins.isString value && builtins.match "[A-Za-z0-9+/]{42}[AEIMQUYcgkosw048]=" value != null;
-  validHostname =
-    value:
-    let
-      labels = if builtins.isString value then lib.splitString "." value else [ ];
-      validLabel =
-        label:
-        builtins.stringLength label <= 63
-        && builtins.match "[A-Za-z0-9]([A-Za-z0-9-]*[A-Za-z0-9])?" label != null;
-    in
-    builtins.isString value && builtins.stringLength value <= 253 && builtins.all validLabel labels;
-
-  validIPv4 =
-    value:
-    let
-      parts = if builtins.isString value then lib.splitString "." value else [ ];
-      validPart =
-        part: builtins.match "(0|[1-9][0-9]{0,2})" part != null && inRange (builtins.fromJSON part) 0 255;
-    in
-    builtins.length parts == 4 && builtins.all validPart parts;
-
+  inherit (import ../../modules/contracts/address-validation.nix { inherit lib; })
+    validHostname
+    validIPv4
+    ;
   validIPv4Cidr =
     value:
     let
@@ -81,7 +65,7 @@ let
     && builtins.isString package.version
     && lib.hasPrefix family package.version;
 
-  profile = providerEnvelope.fixedTransportMetadata.amneziawg.profile;
+  profile = protocolPolicy.awgProfile;
 
   interfaceExtraOptions = {
     S1 = profile.s1;

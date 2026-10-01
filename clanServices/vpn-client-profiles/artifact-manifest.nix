@@ -12,62 +12,6 @@ let
     "mihomo"
     "json"
   ];
-  expectedPublicationPhases = [
-    {
-      id = "revoke-current";
-      prerequisites = [ ];
-    }
-    {
-      id = "sync-local-assets";
-      prerequisites = [ "revoke-current" ];
-    }
-    {
-      id = "check-assets";
-      prerequisites = [ "sync-local-assets" ];
-    }
-    {
-      id = "prepare-generation";
-      prerequisites = [ "check-assets" ];
-    }
-    {
-      id = "render-artifacts";
-      prerequisites = [ "prepare-generation" ];
-    }
-    {
-      id = "finalize-links";
-      prerequisites = [ "render-artifacts" ];
-    }
-    {
-      id = "seal-generation";
-      prerequisites = [ "finalize-links" ];
-    }
-    {
-      id = "expose-generation";
-      prerequisites = [ "seal-generation" ];
-    }
-    {
-      id = "retire-old-generations";
-      prerequisites = [ "expose-generation" ];
-    }
-    {
-      id = "cleanup-private-temporaries";
-      prerequisites = [ "retire-old-generations" ];
-    }
-  ];
-  indexOf =
-    predicate: values:
-    let
-      go =
-        index: remaining:
-        if remaining == [ ] then
-          -1
-        else if predicate (builtins.head remaining) then
-          index
-        else
-          go (index + 1) (builtins.tail remaining);
-    in
-    go 0 values;
-
   valueAtPath =
     value: path:
     if path == [ ] then
@@ -265,9 +209,7 @@ let
       "contentType"
       "filename"
       "id"
-      "legacyPublicPaths"
       "publicPath"
-      "routePriority"
       "source"
       "validator"
     ]
@@ -276,16 +218,10 @@ let
     && builtins.isString asset.filename
     && builtins.match "[A-Za-z0-9._-]+" asset.filename != null
     && validPublicPath asset.publicPath
-    && builtins.isList asset.legacyPublicPaths
-    && builtins.all validPublicPath asset.legacyPublicPaths
-    && asset.legacyPublicPaths == lib.unique asset.legacyPublicPaths
-    && !(builtins.elem asset.publicPath asset.legacyPublicPaths)
     && builtins.elem asset.contentType [
       "application/octet-stream"
       "text/plain; charset=utf-8"
     ]
-    && builtins.isInt asset.routePriority
-    && asset.routePriority >= 0
     && builtins.elem asset.validator [
       "nonempty"
       "mrs-domain"
@@ -305,48 +241,25 @@ let
       || source.kind == "download"
     );
 
-  validatePublicationPhases =
-    phases:
-    let
-      ids = map (phase: phase.id or null) phases;
-      prerequisitesKnown = builtins.all (
-        phase: builtins.all (prerequisite: builtins.elem prerequisite ids) (phase.prerequisites or [ ])
-      ) phases;
-      prerequisitesEarlier = builtins.all (
-        phase:
-        let
-          phaseIndex = indexOf (id: id == phase.id) ids;
-        in
-        builtins.all (prerequisite: indexOf (id: id == prerequisite) ids < phaseIndex) phase.prerequisites
-      ) phases;
-    in
-    phases == expectedPublicationPhases && prerequisitesKnown && prerequisitesEarlier;
-
   validateManifest =
     manifest:
     let
       profileNames = map (profile: profile.name) manifest.profiles;
       inherit (manifest) assetCatalog;
       assetFilenames = map (asset: asset.filename) (builtins.attrValues assetCatalog);
-      assetPublicPaths = lib.concatMap (asset: [ asset.publicPath ] ++ asset.legacyPublicPaths) (
-        builtins.attrValues assetCatalog
-      );
-      assetRoutePriorities = map (asset: asset.routePriority) (builtins.attrValues assetCatalog);
+      assetPublicPaths = map (asset: asset.publicPath) (builtins.attrValues assetCatalog);
     in
     builtins.attrNames manifest == [
       "assetCatalog"
       "profiles"
-      "publicationPhases"
       "schemaVersion"
     ]
     && manifest.schemaVersion == 1
     && builtins.all (id: validateAsset id assetCatalog.${id}) (builtins.attrNames assetCatalog)
     && assetFilenames == lib.unique assetFilenames
     && assetPublicPaths == lib.unique assetPublicPaths
-    && assetRoutePriorities == lib.unique assetRoutePriorities
     && profileNames == lib.unique profileNames
-    && builtins.all (validateProfile assetCatalog) manifest.profiles
-    && validatePublicationPhases manifest.publicationPhases;
+    && builtins.all (validateProfile assetCatalog) manifest.profiles;
 in
 {
   inherit
@@ -354,12 +267,10 @@ in
     artifactDecodingRules
     collectPlaceholders
     decodingRules
-    expectedPublicationPhases
     hasPlaceholderSyntax
     invalidPlaceholderPlacement
     validateArtifact
     validateManifest
-    validatePublicationPhases
     valueAtPath
     ;
 }

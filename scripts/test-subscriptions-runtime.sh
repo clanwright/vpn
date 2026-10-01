@@ -3,20 +3,35 @@
 set -Eeuo pipefail
 record_failure() {
 	printf 'subscription runtime harness: FAIL near line %s\n' "$1" >&2
-	if [[ -n "${VPN_SUBSCRIPTION_TEST_ARTIFACT_DIR:-}" && -d "${test_root:-}" ]]; then
-		mkdir -p "$VPN_SUBSCRIPTION_TEST_ARTIFACT_DIR"
-		for file in lifecycle.log publication.log mihomo.json singbox.json; do
-			if [[ -f "$test_root/$file" ]]; then cp "$test_root/$file" "$VPN_SUBSCRIPTION_TEST_ARTIFACT_DIR/$file"; fi
-		done
-	fi
 }
 trap 'record_failure "$LINENO"' ERR
 
 repository_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 nix_bin="${VPN_SUBSCRIPTION_TEST_NIX_BIN:-$(command -v nix)}"
 jq_bin="${VPN_SUBSCRIPTION_TEST_JQ_BIN:-$(command -v jq)}"
+if [[ -n "${VPN_SUBSCRIPTION_TEST_ARTIFACT_DIR:-}" ]]; then
+	artifact_dir="$VPN_SUBSCRIPTION_TEST_ARTIFACT_DIR"
+	mkdir -p "$artifact_dir"
+else
+	artifact_root="$repository_root/.work/publisher-runtime"
+	mkdir -p "$artifact_root"
+	artifact_dir="$(mktemp -d "$artifact_root/subscriptions.$(/bin/date -u +%Y%m%dT%H%M%SZ).XXXXXX")"
+fi
 test_root="$(mktemp -d "${TMPDIR:-/tmp}/vpn-subscriptions-runtime-test.XXXXXX")"
-trap 'rm -rf -- "$test_root"' EXIT
+whole_started="$SECONDS"
+finalize() {
+	local status="$?"
+	trap - EXIT
+	if ! /bin/mv -- "$test_root" "$artifact_dir/fixtures"; then
+		printf 'Could not retain subscription fixtures: %s\n' "$test_root" >&2
+		if [[ $status -eq 0 ]]; then status=1; fi
+	fi
+	printf 'status\tduration_seconds\n%s\t%s\n' "$status" "$((SECONDS - whole_started))" >"$artifact_dir/summary.tsv"
+	printf 'Subscription harness artifacts: %s\n' "$artifact_dir"
+	exit "$status"
+}
+trap finalize EXIT
+exec > >(tee "$artifact_dir/harness.log") 2>&1
 mkdir -p "$test_root/bin" "$test_root/runtime" "$test_root/cwd"
 export VPN_SUBSCRIPTION_TEST_ROOT="$test_root/runtime"
 export VPN_SUBSCRIPTION_TEST_URL_FILE="$test_root/url-secret"
@@ -51,6 +66,17 @@ if [[ -n "$output" ]]; then cp "$VPN_SUBSCRIPTION_TEST_BODY" "$output"; fi
 if [[ -n "${VPN_SUBSCRIPTION_TEST_NOW_FILE:-}" && -n "${VPN_SUBSCRIPTION_TEST_ADVANCE_SECONDS:-}" ]]; then
 	read -r now <"$VPN_SUBSCRIPTION_TEST_NOW_FILE"
 	printf '%s\n' "$((now + VPN_SUBSCRIPTION_TEST_ADVANCE_SECONDS))" >"$VPN_SUBSCRIPTION_TEST_NOW_FILE"
+	if [[ -n "${VPN_SUBSCRIPTION_TEST_EXPIRY_PROOF:-}" ]]; then
+		# Inspect the exposed generation while this request is still blocked:
+		# own Naive and the long-lived source survive, the expired sibling does not.
+		test "$((now + VPN_SUBSCRIPTION_TEST_ADVANCE_SECONDS))" -ge "$VPN_SUBSCRIPTION_TEST_SIBLING_EXPIRES"
+		jq -e '([.outbounds[] | select(.type == "naive")] | length == 1)
+			and ([.outbounds[] | select(.type == "vless")] | length == 1)
+			and all(.outbounds[] | select(.type == "vless"); .tag | endswith(" · Skala · REALITY"))
+			and all(.outbounds[]; (.tag | contains(" · Other · ")) | not)' "$VPN_SUBSCRIPTION_TEST_PUBLISHED" >/dev/null
+		cp "$VPN_SUBSCRIPTION_TEST_PUBLISHED" "$VPN_SUBSCRIPTION_TEST_EXPIRY_PROOF.json"
+		printf 'sibling absent from publication before slow fetch returned at %s\n' "$((now + VPN_SUBSCRIPTION_TEST_ADVANCE_SECONDS))" >"$VPN_SUBSCRIPTION_TEST_EXPIRY_PROOF"
+	fi
 fi
 printf '%s' "$VPN_SUBSCRIPTION_TEST_HTTP"
 exit "$VPN_SUBSCRIPTION_TEST_CURL_EXIT"
@@ -80,10 +106,13 @@ MOCK
 chmod +x "$test_root/bin"/*
 export PATH="$test_root/bin:/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin"
 
+fixture_number=0
 generate_fixture() {
 	"$nix_bin" eval --offline --max-jobs 0 --builders '' --impure --json \
 		--option allow-import-from-derivation false \
 		--file "$repository_root/checks/external-subscriptions-runtime-fixture.nix" >"$test_root/fixture.json"
+	fixture_number=$((fixture_number + 1))
+	cp "$test_root/fixture.json" "$test_root/fixture-$fixture_number.json"
 	"$jq_bin" -r '.runtimeScript' "$test_root/fixture.json" >"$test_root/runtime.sh"
 	"$jq_bin" -r '.converter' "$test_root/fixture.json" >"$test_root/converter.jq"
 	"$jq_bin" -r '.composer' "$test_root/fixture.json" >"$test_root/composer.jq"
@@ -159,8 +188,8 @@ assert_no_leaks() {
 "$jq_bin" --arg source fixture --argjson auto true -f "$test_root/converter.jq" \
 	"$VPN_SUBSCRIPTION_TEST_BODY" >"$test_root/converted.json"
 # Service outbounds are counted, not reported; the sing-box skip of the XHTTP
-# node is reported per node with its remark and a fixed reason.
-"$jq_bin" -e '.service == 2 and .skipped == [{index: 1, label: "🇩🇪 Германия", target: "sing-box", reason: "unsupported-xhttp"}]' \
+# node is reported per node with its index and a fixed reason.
+"$jq_bin" -e '.service == 2 and .skipped == [{index: 1, target: "sing-box", reason: "unsupported-xhttp"}]' \
 	"$test_root/converted.json" >/dev/null
 "$jq_bin" '.nodes' "$test_root/converted.json" >"$test_root/nodes.json"
 "$jq_bin" -e 'length == 2 and ([.[] | select(.singBox != null)] | length == 1)
@@ -261,9 +290,9 @@ log_mark
 run_lifecycle refresh
 compose
 assert_nodes 1 1
-# Each skipped node is logged once with its remark and cause.
+# Each skipped node is logged once with its index, target and fixed cause.
 refresh_log | rg -qxF 'VPN external refresh: source=fixture result=accepted mihomo=1 sing-box=1 skipped=1 service=2'
-refresh_log | rg -qxF 'VPN external refresh: source=fixture result=skipped index=1 remark="🇩🇪 Германия" target=all reason=insecure-tls'
+refresh_log | rg -qxF 'VPN external refresh: source=fixture result=skipped index=1 target=all reason=insecure-tls'
 test "$(refresh_log | rg -c 'result=skipped')" == 1
 "$jq_bin" '.[0].outbounds[0].streamSettings.sockopt = {mark: 123}' \
 	"$VPN_SUBSCRIPTION_TEST_BODY" >"$test_root/unsupported.json"
@@ -273,8 +302,8 @@ log_mark
 run_lifecycle refresh
 compose
 assert_nodes 0 0
-refresh_log | rg -qxF 'VPN external refresh: source=fixture result=skipped index=0 remark="🇩🇪 Германия" target=all reason=unsupported-transport-field'
-refresh_log | rg -qxF 'VPN external refresh: source=fixture result=skipped index=1 remark="🇩🇪 Германия" target=all reason=insecure-tls'
+refresh_log | rg -qxF 'VPN external refresh: source=fixture result=skipped index=0 target=all reason=unsupported-transport-field'
+refresh_log | rg -qxF 'VPN external refresh: source=fixture result=skipped index=1 target=all reason=insecure-tls'
 test "$(refresh_log | rg -c 'result=skipped')" == 2
 
 # Invalid response invalidates old nodes. Transient HTTP errors alone preserve
@@ -394,8 +423,8 @@ assert_nodes 0 0
 unset VPN_SUBSCRIPTION_TEST_SHORT_TTL
 generate_fixture
 
-# One source's failed, slow synthetic fetch cannot extend a sibling's TTL.
-# Each refresh iteration processes one source and composition prunes all.
+# Composition after a failed, slow synthetic fetch prunes the expired sibling.
+# The integrated publisher case below also checks exposure before fetch returns.
 export VPN_SUBSCRIPTION_TEST_SECOND_SOURCE=1
 generate_fixture
 rm -f "$VPN_SUBSCRIPTION_TEST_ROOT/external-cache/fixture/next-at"
@@ -543,8 +572,8 @@ assert_unique_names
 	[.outbounds[] | select(.type == "vless") | .tag] == [$mihomo[0].proxies[] | select(.network == "tcp") | .name]' \
 	"$test_root/singbox.json" >/dev/null
 refresh_log | rg -qxF 'VPN external refresh: source=fixture result=accepted mihomo=14 sing-box=7 skipped=0 service=42'
-refresh_log | rg -qxF 'VPN external refresh: source=fixture result=skipped index=1 remark="🇸🇪 Швеция · Резерв" target=sing-box reason=unsupported-xhttp'
-test "$(refresh_log | rg -c 'result=skipped index=[0-9]+ remark="[^"]+ · Резерв" target=sing-box reason=unsupported-xhttp$')" == 7
+refresh_log | rg -qxF 'VPN external refresh: source=fixture result=skipped index=1 target=sing-box reason=unsupported-xhttp'
+test "$(refresh_log | rg -c 'result=skipped index=[0-9]+ target=sing-box reason=unsupported-xhttp$')" == 7
 test "$(refresh_log | rg -c 'result=skipped')" == 7
 if refresh_log | rg -q 'country-[0-9]\.example\.invalid|fixture-xhttp|11111111-1111-4111-8111-111111111111'; then
 	printf 'skip diagnostics leaked connection parameters\n' >&2
@@ -566,9 +595,9 @@ assert_unique_names
 	([.proxies[].name] | sort) == ["🇸🇪 Швеция · Skala · REALITY", "🇸🇪 Швеция · Skala · REALITY 2"]
 	and ([.proxies[].server] | sort) == ["country-0.example.invalid", "country-7.example.invalid"]' "$test_root/mihomo.json" >/dev/null
 refresh_log | rg -qxF 'VPN external refresh: source=fixture result=accepted mihomo=2 sing-box=2 skipped=1 service=9'
-refresh_log | rg -qxF 'VPN external refresh: source=fixture result=skipped index=2 remark="🇸🇪 Швеция" target=all reason=duplicate'
-# Unsupported protocols are skipped by name only; a non-string remark is null,
-# and NEL or line/paragraph separators in a remark cannot split a log line.
+refresh_log | rg -qxF 'VPN external refresh: source=fixture result=skipped index=2 target=all reason=duplicate'
+# Remote remarks, including non-strings and log-injection text with NEL or
+# line/paragraph separators, never enter diagnostics.
 "$jq_bin" '.[0] | .outbounds[0] = {tag: "proxy", protocol: "vmess", settings: {vnext: [{address: "country-0.example.invalid", port: 443}]}}
 	| [.remarks = 7, .remarks = ("A" + ([133] | implode) + "result=skipped" + ([8232] | implode) + "B" + ([8233] | implode) + "C")]' \
 	"$test_root/pairs-body.json" >"$VPN_SUBSCRIPTION_TEST_BODY"
@@ -577,9 +606,41 @@ log_mark
 run_lifecycle refresh
 compose
 assert_nodes 0 0
-refresh_log | rg -qxF 'VPN external refresh: source=fixture result=skipped index=0 remark=null target=all reason=unsupported-protocol'
-refresh_log | rg -qxF 'VPN external refresh: source=fixture result=skipped index=1 remark="A result=skipped B C" target=all reason=unsupported-protocol'
+refresh_log | rg -qxF 'VPN external refresh: source=fixture result=skipped index=0 target=all reason=unsupported-protocol'
+refresh_log | rg -qxF 'VPN external refresh: source=fixture result=skipped index=1 target=all reason=unsupported-protocol'
 test "$(refresh_log | wc -l | tr -d ' ')" == 3
+
+# A remote remark may itself contain a credential or private URL. Keep its UI
+# label and transport disambiguation, but omit it from every skip diagnostic.
+secret_remark='token=synthetic-remark https://remark.example.invalid/s'
+"$jq_bin" --arg remark "$secret_remark" '
+	map(.remarks = $remark) | .[0] as $r | .[1] as $x
+	| [$r, $x, ($r | .outbounds[0].streamSettings.sockopt = {mark: 123}), $r]' \
+	"$repository_root/checks/fixtures/external-subscriptions.json" >"$test_root/private-remark-body.json"
+cp "$test_root/private-remark-body.json" "$VPN_SUBSCRIPTION_TEST_BODY"
+rm -f "$cache_dir/next-at"
+log_mark
+run_lifecycle refresh
+compose
+assert_nodes 2 1
+assert_unique_names
+"$jq_bin" -e --arg label "$secret_remark" '
+	([.proxies[] | select(.type == "vless") | .name] | sort)
+	== ([$label + " · Skala · REALITY", $label + " · Skala · XHTTP"] | sort)' \
+	"$test_root/mihomo.json" >/dev/null
+"$jq_bin" -e --arg label "$secret_remark" '
+	[.outbounds[] | select(.type == "vless") | .tag] == [$label + " · Skala · REALITY"]' \
+	"$test_root/singbox.json" >/dev/null
+cp "$test_root/mihomo.json" "$test_root/private-remark-mihomo.json"
+cp "$test_root/singbox.json" "$test_root/private-remark-singbox.json"
+refresh_log | rg -qxF 'VPN external refresh: source=fixture result=skipped index=1 target=sing-box reason=unsupported-xhttp'
+refresh_log | rg -qxF 'VPN external refresh: source=fixture result=skipped index=2 target=all reason=unsupported-transport-field'
+refresh_log | rg -qxF 'VPN external refresh: source=fixture result=skipped index=3 target=all reason=duplicate'
+test "$(refresh_log | rg -c 'result=skipped')" == 3
+if rg -q 'synthetic-remark|remark\.example\.invalid|remark=' "$test_root/lifecycle.log"; then
+	printf 'skip diagnostics leaked a remote remark\n' >&2
+	exit 1
+fi
 cp "$test_root/names-body.json" "$VPN_SUBSCRIPTION_TEST_BODY"
 rm -f "$cache_dir/next-at"
 run_lifecycle refresh
@@ -622,11 +683,12 @@ compose_direct mihomo "$test_root/nodes-own.json" "$test_root/base-mihomo.json" 
 # its nodes without rescanning earlier ordinals.
 "$jq_bin" '.[0] as $node | [range(1024) as $i | $node | .mihomo.port = ($i + 1) | .source = "Perf"]' \
 	"$test_root/nodes-direct.json" >"$test_root/nodes-perf.json"
-perf_started="$(date +%s)"
-compose_direct mihomo "$test_root/nodes-perf.json" "$test_root/base-mihomo.json" "$test_root/perf-mihomo.json"
-perf_seconds=$(($(date +%s) - perf_started))
+# Bash's timer uses the real clock, independently of the synthetic TTL date.
+TIMEFORMAT='%R'
+{ time compose_direct mihomo "$test_root/nodes-perf.json" "$test_root/base-mihomo.json" "$test_root/perf-mihomo.json"; } 2>"$test_root/perf.time"
+perf_seconds="$(tail -n 1 "$test_root/perf.time")"
 printf 'subscription naming of 1024 identical nodes: %ss\n' "$perf_seconds"
-test "$perf_seconds" -lt 10
+"$jq_bin" -en --argjson seconds "$perf_seconds" '$seconds >= 0 and $seconds < 10' >/dev/null
 "$jq_bin" -e --arg base "$("$jq_bin" -r '.[0] | (if .label == null then "Perf" else .label + " · Perf" end) + " · " + (if .mihomo.network == "xhttp" then "XHTTP" else "REALITY" end)' "$test_root/nodes-perf.json")" '
 	([.proxies[].name] | length == 1024 and length == (unique | length))
 	and .proxies[0].name == $base
@@ -669,8 +731,9 @@ export VPN_SUBSCRIPTION_TEST_NOW=218160
 cp "$repository_root/checks/fixtures/external-subscriptions.json" "$VPN_SUBSCRIPTION_TEST_BODY"
 assert_no_leaks
 
-# Execute the complete generated publication loop: its first own generation
-# must be exposed during fetch, and a failed second generation must revoke it.
+# Execute the complete generated publication loop, first cold and then with
+# two due cached sources. Own availability and sibling withdrawal are inspected
+# inside fetch; a failed second generation must revoke the first in both cases.
 cat >"$test_root/bin/install" <<'MOCK'
 #!/usr/bin/env bash
 set -euo pipefail
@@ -712,31 +775,58 @@ exit 78
 MOCK
 chmod +x "$test_root/bin"/{install,mv,chmod,sleep}
 export VPN_PUBLISHER_TEST_EXTERNAL=1
-export VPN_PUBLISHER_TEST_ROOT="$test_root/publication"
 export VPN_PUBLISHER_TEST_SECRET="$test_root/own-secret"
 export VPN_PUBLISHER_TEST_TOKEN="$test_root/own-token"
-export VPN_SUBSCRIPTION_TEST_INSTALL_COUNT="$test_root/install-count"
-export VPN_SUBSCRIPTION_TEST_OWN_READY="$test_root/own-ready"
-export VPN_SUBSCRIPTION_TEST_PUBLISHED="$VPN_PUBLISHER_TEST_ROOT/runtime/published/current/profiles/fixture_path_token_0123456789abcdef/profile.json"
 printf '%s' 'synthetic-own-secret' >"$VPN_PUBLISHER_TEST_SECRET"
 printf '%s' 'fixture_path_token_0123456789abcdef' >"$VPN_PUBLISHER_TEST_TOKEN"
-mkdir -p "$VPN_PUBLISHER_TEST_ROOT/runtime/published" "$VPN_PUBLISHER_TEST_ROOT/runtime/generations"
-"$nix_bin" eval --offline --max-jobs 0 --builders '' --impure --raw \
-	--option allow-import-from-derivation false \
-	--file "$repository_root/checks/publisher-runtime-fixture.nix" >"$test_root/publisher.sh"
-if (cd "$test_root/cwd" && bash "$test_root/publisher.sh") >"$test_root/publication.log" 2>&1; then
-	printf 'second publication unexpectedly survived injected installation failure\n' >&2
-	exit 1
-fi
-test -f "$VPN_SUBSCRIPTION_TEST_OWN_READY"
-test "$(cat "$VPN_SUBSCRIPTION_TEST_INSTALL_COUNT")" == 2
-rg -q 'stage=file-installation reason=install-failed' "$test_root/publication.log"
-test ! -e "$VPN_PUBLISHER_TEST_ROOT/runtime/published/current"
-test -z "$(find "$VPN_PUBLISHER_TEST_ROOT/runtime/generations" -mindepth 1 -print -quit)"
-test -z "$(find "$VPN_PUBLISHER_TEST_ROOT/runtime" -name '.secret.*' -o -name '.artifact.*' -o -name '.nodes.*' -o -name '.composed.*' -o -name '.request.*')"
-if rg -q 'fixture-secret-url|synthetic-own-secret|11111111-1111-4111-8111-111111111111' "$test_root/publication.log"; then
-	printf 'generated publication leaked synthetic private material\n' >&2
-	exit 1
-fi
+for publication_case in cold sibling-expiry; do
+	export VPN_PUBLISHER_TEST_ROOT="$test_root/publication-$publication_case"
+	export VPN_SUBSCRIPTION_TEST_INSTALL_COUNT="$VPN_PUBLISHER_TEST_ROOT/install-count"
+	export VPN_SUBSCRIPTION_TEST_OWN_READY="$VPN_PUBLISHER_TEST_ROOT/own-ready"
+	export VPN_SUBSCRIPTION_TEST_PUBLISHED="$VPN_PUBLISHER_TEST_ROOT/runtime/published/current/profiles/fixture_path_token_0123456789abcdef/profile.json"
+	mkdir -p "$VPN_PUBLISHER_TEST_ROOT/runtime/published" "$VPN_PUBLISHER_TEST_ROOT/runtime/generations"
+	if [[ "$publication_case" == sibling-expiry ]]; then
+		# Seed through the same generated source factory as the publisher uses.
+		unset VPN_SUBSCRIPTION_TEST_PUBLISHED
+		export VPN_SUBSCRIPTION_TEST_SECOND_SOURCE=1
+		generate_fixture
+		rm -rf -- "$VPN_SUBSCRIPTION_TEST_ROOT/external-cache"
+		run_lifecycle refresh
+		run_lifecycle refresh
+		compose
+		assert_nodes 4 2
+		"$jq_bin" -e '[.outbounds[] | select(.type == "vless") | .tag] | sort
+			== (["🇩🇪 Германия · Skala · REALITY", "🇩🇪 Германия · Other · REALITY"] | sort)' "$test_root/singbox.json" >/dev/null
+		cp "$test_root/singbox.json" "$VPN_PUBLISHER_TEST_ROOT/seeded-siblings.json"
+		cp -R "$VPN_SUBSCRIPTION_TEST_ROOT/external-cache" "$VPN_PUBLISHER_TEST_ROOT/runtime/external-cache"
+		export VPN_SUBSCRIPTION_TEST_PUBLISHED="$VPN_PUBLISHER_TEST_ROOT/runtime/published/current/profiles/fixture_path_token_0123456789abcdef/profile.json"
+		export VPN_SUBSCRIPTION_TEST_NOW_FILE="$test_root/now"
+		export VPN_SUBSCRIPTION_TEST_ADVANCE_SECONDS=90 VPN_SUBSCRIPTION_TEST_CURL_EXIT=28
+		export VPN_SUBSCRIPTION_TEST_EXPIRY_PROOF="$VPN_PUBLISHER_TEST_ROOT/sibling-expiry-before-fetch-return"
+		export VPN_SUBSCRIPTION_TEST_SIBLING_EXPIRES="$(($(cat "$VPN_PUBLISHER_TEST_ROOT/runtime/external-cache/other/accepted-at") + 60))"
+		printf '%s\n' "$VPN_SUBSCRIPTION_TEST_NOW" >"$VPN_SUBSCRIPTION_TEST_NOW_FILE"
+	fi
+	"$nix_bin" eval --offline --max-jobs 0 --builders '' --impure --raw \
+		--option allow-import-from-derivation false \
+		--file "$repository_root/checks/publisher-runtime-fixture.nix" >"$VPN_PUBLISHER_TEST_ROOT/publisher.sh"
+	if (cd "$test_root/cwd" && bash "$VPN_PUBLISHER_TEST_ROOT/publisher.sh") >"$VPN_PUBLISHER_TEST_ROOT/publication.log" 2>&1; then
+		printf 'second publication unexpectedly survived injected installation failure\n' >&2
+		exit 1
+	fi
+	test -f "$VPN_SUBSCRIPTION_TEST_OWN_READY"
+	test "$(cat "$VPN_SUBSCRIPTION_TEST_INSTALL_COUNT")" == 2
+	rg -q 'stage=file-installation reason=install-failed' "$VPN_PUBLISHER_TEST_ROOT/publication.log"
+	if [[ "$publication_case" == sibling-expiry ]]; then
+		test -f "$VPN_SUBSCRIPTION_TEST_EXPIRY_PROOF"
+		cat "$VPN_SUBSCRIPTION_TEST_EXPIRY_PROOF"
+	fi
+	test ! -e "$VPN_PUBLISHER_TEST_ROOT/runtime/published/current"
+	test -z "$(find "$VPN_PUBLISHER_TEST_ROOT/runtime/generations" -mindepth 1 -print -quit)"
+	test -z "$(find "$VPN_PUBLISHER_TEST_ROOT/runtime" -name '.secret.*' -o -name '.artifact.*' -o -name '.nodes.*' -o -name '.composed.*' -o -name '.request.*')"
+	if rg -q 'fixture-secret-url|synthetic-own-secret|11111111-1111-4111-8111-111111111111' "$VPN_PUBLISHER_TEST_ROOT/publication.log"; then
+		printf 'generated publication leaked synthetic private material\n' >&2
+		exit 1
+	fi
+done
 assert_no_leaks
-printf 'subscription runtime harness: PASS (conversion, empty XHTTP host, same-country REALITY+XHTTP and REALITY+REALITY pairs, per-node skip diagnostics, source-label naming and collisions, format-parity naming, 1024-node naming, legacy-cache refetch, rules untouched, composition, scope, manual selection, empty and unsupported, partial200 timeout, retry and TTL, auth, URL rotation, removal, interrupted timestamps, short TTL, sibling expiry during slow fetch, own before fetch, second-publication cleanup, private logs)\n'
+printf 'subscription runtime harness: PASS (conversion, empty XHTTP host, same-country REALITY+XHTTP and REALITY+REALITY pairs, per-node skip diagnostics, private-remark omission with UI names preserved, source-label naming and collisions, format-parity naming, 1024-node naming, legacy-cache refetch, rules untouched, composition, scope, manual selection, empty and unsupported, partial200 timeout, retry and TTL, auth, URL rotation, removal, interrupted timestamps, short TTL, sibling expiry during slow fetch, own before fetch, second-publication cleanup, private logs)\n'

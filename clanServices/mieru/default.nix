@@ -5,19 +5,7 @@
 }:
 let
   identities = import ../../modules/contracts/identities.nix { inherit lib; };
-  providerEnvelope = import ../../modules/contracts/provider-envelope.nix { inherit lib; };
-  decimalPattern = "(0|[1-9][0-9]{0,2})";
-  validIPv4 =
-    value:
-    let
-      octets = lib.splitString "." value;
-      validOctet =
-        octet:
-        builtins.match decimalPattern octet != null
-        && builtins.fromJSON octet >= 0
-        && builtins.fromJSON octet <= 255;
-    in
-    lib.length octets == 4 && builtins.all validOctet octets;
+  inherit (import ../../modules/contracts/address-validation.nix { inherit lib; }) validIPv4;
   validIngressIPv4 = value: validIPv4 value && value != "0.0.0.0";
 in
 {
@@ -85,46 +73,31 @@ in
     perInstance =
       {
         settings,
-        instanceName ? "mieru",
-        machine ? {
-          name = null;
-        },
+        instanceName,
         mkExports ? (value: value),
         ...
       }:
       let
         active = settings.enable;
-        providerMachine =
-          if machine ? name && machine.name != null && machine.name != "" then
-            machine.name
-          else
-            builtins.head (lib.splitString "--" instanceName);
         profileNames = map (user: user.name) settings.users;
         userSecretNames = map (user: user.passwordSecretName) settings.users;
-        secretNames = {
-          users = lib.listToAttrs (
-            map (user: {
-              inherit (user) name;
-              value = user.passwordSecretName;
-            }) settings.users
-          );
-        };
       in
       {
         exports = lib.optionalAttrs active (mkExports {
-          vpnProvider = providerEnvelope.mkProvider {
-            protocol = "mieru";
-            instanceId = instanceName;
-            machine = providerMachine;
-            endpoint = {
-              domain = null;
-              ipv4 = settings.ingressIPv4;
-              inherit (settings) port;
+          vpnProvider = {
+            schemaVersion = 3;
+            connection.mieru = {
+              endpoint = {
+                ipv4 = settings.ingressIPv4;
+                inherit (settings) port;
+              };
+              clients = lib.listToAttrs (
+                map (user: {
+                  inherit (user) name;
+                  value.passwordSecret = user.passwordSecretName;
+                }) settings.users
+              );
             };
-            transportMetadata = {
-              userNames = profileNames;
-            };
-            inherit profileNames secretNames;
           };
         });
 
@@ -241,10 +214,6 @@ in
                   message = "mieru: the injected stock package must be exactly version 3.36.0.";
                 }
                 {
-                  assertion = pkgs.mieru == mieruPackage;
-                  message = "mieru: pkgs.mieru must come from the injected VPN application pin.";
-                }
-                {
                   assertion = config.networking.firewall.enable;
                   message = "mieru: destination-scoped ingress requires the NixOS firewall.";
                 }
@@ -299,8 +268,6 @@ in
                   message = "mieru: mita identity, command, credential validation, and runtime paths must remain guarded.";
                 }
               ];
-
-              nixpkgs.overlays = lib.optional active (_final: _prev: { mieru = mieruPackage; });
 
               users.groups = lib.optionalAttrs active { mita = { }; };
               users.users = lib.optionalAttrs active {

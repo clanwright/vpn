@@ -9,7 +9,7 @@ let
   lib = inputs.nixpkgs.lib;
   fixture = import ./fixtures/example-clan.nix;
   settings = fixture.instances.vpn-mihomo-vless-xhttp.roles.gateway.machines.vpn-fixture.settings;
-  service = import ../clanServices/mihomo-vless-xhttp/default.nix {
+  service = import ../clanServices/vless-xhttp/default.nix {
     inherit lib;
     xrayPackageFor = targetSystem: self.packages.${targetSystem}.xray;
   };
@@ -36,7 +36,7 @@ let
       instanceName = "vpn-mihomo-vless-xhttp";
       machine.name = "vpn-fixture";
       mkExports = exports: exports;
-    }).exports.vpnProvider.transportMetadata;
+    }).exports.vpnProvider.connection.vless-xhttp;
   clientPolicyContract =
     (schemaConfig (builtins.removeAttrs settings [ "clientFingerprint" ])).clientFingerprint == "edge"
     && !(schemaConfig settings).clientSupportX25519MLKEM768
@@ -51,7 +51,7 @@ let
               clientSupportX25519MLKEM768 = true;
             };
           in
-          metadata.fingerprint == fingerprint && metadata.reality.supportX25519MLKEM768
+          metadata.reality.fingerprint == fingerprint && metadata.reality.supportX25519MLKEM768
         )
         [
           "chrome"
@@ -146,10 +146,10 @@ let
     && localListenerInbound.listen == localListenerSettings.localListener.ipv4
     && localListenerInbound.port == localListenerSettings.localListener.port
     &&
-      localProviderExport.endpoint == {
-        inherit (settings) domain port;
+      localProviderExport.connection.vless-xhttp.endpoint == {
+        hostname = settings.domain;
+        inherit (settings) port;
         ipv4 = settings.bindIPv4;
-        transport = "tcp";
       }
     && unwrap localListenerUnit.serviceConfig.AmbientCapabilities == [ ]
     && unwrap localListenerUnit.serviceConfig.CapabilityBoundingSet == [ ]
@@ -379,41 +379,36 @@ let
     ))
   ];
   exportContract =
-    providerExport.schemaVersion == 2
-    && providerExport.protocol == "vless-xhttp"
-    &&
-      providerExport.endpoint == {
-        inherit (settings) domain port;
-        ipv4 = settings.bindIPv4;
-        transport = "tcp";
-      }
-    && providerExport.profileNames == map (profile: profile.name) settings.profiles
-    && providerExport.secretNames.realityPrivateKey == settings.reality.privateKeySecretName
-    &&
-      providerExport.secretNames.vlessUuid == lib.listToAttrs (
-        map (profile: {
-          inherit (profile) name;
-          value = profile.vlessUuidSecretName;
-        }) settings.profiles
-      )
-    &&
-      providerExport.transportMetadata.reality == {
-        serverName = settings.reality.targetHost;
-        inherit (settings.reality) serverNames publicKey;
-        target = "${settings.reality.targetHost}:443";
-        supportX25519MLKEM768 = false;
-        shortIdsByProfile = lib.listToAttrs (
+    providerExport == {
+      schemaVersion = 3;
+      connection.vless-xhttp = {
+        endpoint = {
+          hostname = settings.domain;
+          inherit (settings) port;
+          ipv4 = settings.bindIPv4;
+        };
+        clients = lib.listToAttrs (
           map (profile: {
             inherit (profile) name;
-            value = profile.realityShortId;
+            value = {
+              uuidSecret = profile.vlessUuidSecretName;
+              shortId = profile.realityShortId;
+            };
           }) settings.profiles
         );
-      }
-    &&
-      providerExport.transportMetadata.xhttp == {
-        inherit (settings.xhttp) path;
-        mode = "auto";
+        reality = {
+          serverName = settings.reality.targetHost;
+          inherit (settings.reality) publicKey;
+          fingerprint = settings.clientFingerprint;
+          supportX25519MLKEM768 = false;
+        };
+        xhttp = { inherit (settings.xhttp) path; };
+        doh = {
+          hostname = settings.doh.domain;
+          inherit (settings.doh) ipv4;
+        };
       };
+    };
   directDefaultsContract =
     (schemaResult settings).success
     && (schemaResult (

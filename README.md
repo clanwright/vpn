@@ -4,11 +4,11 @@ Nine VPN and DNS modules for Clan/NixOS on `x86_64-linux`.
 
 | Module | Implementation |
 | --- | --- |
-| [VLESS/XHTTP](clanServices/mihomo-vless-xhttp/README.md) | Xray with REALITY |
+| [VLESS/XHTTP](clanServices/vless-xhttp/README.md) | Xray with REALITY |
 | [AmneziaWG](clanServices/amneziawg/README.md) | Userspace AmneziaWG 3 |
 | [NaiveProxy](clanServices/naiveproxy/README.md) | Caddy forward proxy |
 | [Mieru](clanServices/mieru/README.md) | Native mita, TCP with UDP relay |
-| [AnyTLS](clanServices/anytls/README.md) | Standalone sing-box, TLS 1.3/TCP with UoT v2 |
+| [AnyTLS](clanServices/anytls/README.md) | Native NixOS sing-box, TLS 1.3/TCP with UoT v2 |
 | [TrustTunnel](clanServices/trusttunnel/README.md) | Standalone endpoint, HTTP/2 with TCP and UDP relay |
 | [Client profiles](clanServices/vpn-client-profiles/README.md) | Mihomo and sing-box profile publisher |
 | [AdGuard Home](clanServices/adguardhome/README.md) | DNS/DoH front end and dnsproxy reserve |
@@ -26,7 +26,10 @@ bindings, exposure policy, monitoring and deployment.
 - [Verification](docs/operations/verify.md): local checks and retained artifacts.
 - [Release](docs/operations/release.md): release procedure.
 - [Contract migration](docs/operations/migrate-contracts.md): consumer changes
-  for provider schema 2 and the separated publication/exposure contracts.
+  for provider schema 3, publisher integration schema 2 and native Caddy seams.
+- [Open decisions](docs/backlog.md): unresolved ownership and support questions.
+- [Accepted decisions](docs/adr/): immutable architectural rationale.
+- [References](references/README.md): supporting protocol and client research.
 
 Module pages document settings and link to their operating procedures.
 Documentation describes the checked-in implementation; it does not establish
@@ -40,7 +43,8 @@ and evaluation tooling only. There is no hosted CI or automatic merging.
 Verification uses pure Nix evaluation and static source checks with builders
 and build jobs disabled. Application execution, runtime tests, virtual machines,
 Linux builds and tests on deployed machines are outside repository verification.
-Python code and test harnesses are prohibited.
+Python code and test harnesses are prohibited. Evidence and remaining consumer
+runtime acceptance are defined in [verification](docs/operations/verify.md).
 
 ## License
 

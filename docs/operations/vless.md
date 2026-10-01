@@ -41,8 +41,8 @@ Changing only the fingerprint or only the flag does not satisfy this client
 requirement. The repository preserves `edge` and `false` defaults, so updating
 the VPN input alone does not migrate consumer settings or deployed profiles.
 
-The gateway exports this policy as `transportMetadata.fingerprint` and
-`transportMetadata.reality.supportX25519MLKEM768`; the own-provider renderer
+The gateway exports this policy as `connection.vless-xhttp.reality.fingerprint` and
+`connection.vless-xhttp.reality.supportX25519MLKEM768`; the own-provider renderer
 uses them for the Mihomo profile. With false or absent
 support policy, the generated `reality-opts` omits `support-x25519mlkem768`.
 External subscription imports and client core packages are unchanged.

@@ -6,6 +6,20 @@
 }:
 let
   lib = inputs.nixpkgs.lib;
+  pkgs = inputs.nixpkgs.legacyPackages.x86_64-linux;
+  manifestLib = import ../clanServices/vpn-client-profiles/artifact-manifest.nix { inherit lib; };
+  publisherCompiler = import ../clanServices/vpn-client-profiles/publisher.nix { inherit lib; };
+  compile =
+    externalSubscriptions:
+    publisherCompiler.compile {
+      inherit pkgs;
+      instanceName = "vpn-client-profiles";
+      exports = consumer.config.exports;
+      selectExports = inputs.clan-core.lib.selectExports;
+      settings = fixture.instances.vpn-client-profiles.roles.publisher.machines.vpn-fixture.settings // {
+        inherit externalSubscriptions;
+      };
+    };
   service = builtins.head self.clan.modules."@clanwright/vpn-client-profiles".imports;
   evalSettings =
     settings:
@@ -37,9 +51,9 @@ let
     )).externalSubscriptions.fixture;
   fixture = import ./fixtures/example-clan.nix;
   consume = import ./lib/consumer.nix { inherit inputs root self; };
-  instanceNames = builtins.filter (
-    name: !(lib.hasPrefix "network-" name) && name != "edge-wildcard-certificate"
-  ) (builtins.attrNames fixture.instances);
+  instanceNames = builtins.filter (name: !(lib.hasPrefix "network-" name)) (
+    builtins.attrNames fixture.instances
+  );
   consumer = consume {
     inherit instanceNames;
     includeNetwork = true;
@@ -50,7 +64,7 @@ let
   inherit (consumer) machine;
   unitName = "vpn-client-profiles-publish-fixture";
   unit = machine.systemd.services.${unitName};
-  manifest = machine.clanwright.vpn.publisherManifests.vpn-client-profiles;
+  inherit (compile { fixture = source; }) manifest;
   labelCases = {
     ordinary = "Skala";
     flagAndCyrillic = "🇩🇪 Германия";
@@ -88,26 +102,23 @@ let
   };
   unlabelled = externalOf { fixture = source; };
   inherit (labelled) composer converter runtimeScript;
-  forcesSystem =
+  forcesCompilation =
     candidate:
-    (builtins.tryEval (builtins.deepSeq candidate.machine.system.build.toplevel.drvPath true)).success;
-  labelCollision = consume {
-    inherit instanceNames;
-    includeNetwork = true;
-    fixtureName = "vpn-external-subscriptions-label-fixture";
-    instanceOverrides.vpn-client-profiles.roles.publisher.machines.vpn-fixture.settings.externalSubscriptions.fixture =
-      source // {
-        label = "A";
-      };
+    let
+      attempt = builtins.tryEval (
+        builtins.deepSeq candidate.settings (manifestLib.validateManifest candidate.manifest)
+      );
+    in
+    attempt.success && attempt.value;
+  labelCollision = compile {
+    fixture = source // {
+      label = "A";
+    };
   };
-  distinctLabel = consume {
-    inherit instanceNames;
-    includeNetwork = true;
-    fixtureName = "vpn-external-subscriptions-label-fixture";
-    instanceOverrides.vpn-client-profiles.roles.publisher.machines.vpn-fixture.settings.externalSubscriptions.fixture =
-      source // {
-        label = "Skala";
-      };
+  distinctLabel = compile {
+    fixture = source // {
+      label = "Skala";
+    };
   };
   invalidSourceCases = {
     missingSecret = builtins.removeAttrs source [ "urlSecretName" ];
@@ -161,8 +172,8 @@ in
   invalidLabels = lib.mapAttrs (
     _: value: !(accepts (withSource (source // { label = value; })))
   ) invalidLabelCases;
-  ownLabelCollisionRejected = !(forcesSystem labelCollision);
-  distinctLabelAccepted = forcesSystem distinctLabel;
+  ownLabelCollisionRejected = !(forcesCompilation labelCollision);
+  distinctLabelAccepted = forcesCompilation distinctLabel;
   # Names are resolved when composing: the label is a compose-time argument
   # and the cached download stores neither name nor digest.
   composerGroups =
@@ -203,14 +214,23 @@ in
   runtimeDependencies =
     builtins.any (package: lib.hasPrefix "bash" (package.pname or package.name)) unit.path
     && builtins.elem "diffutils" (map (package: package.pname or package.name) unit.path);
-  profileComposition = builtins.all (
-    profile:
-    profile.name == "cHJvYmU"
+  profileComposition =
+    manifest.profiles != [ ]
     && builtins.all (
+      profile:
+      profile.name == "cHJvYmU"
+      && builtins.all (
+        artifact:
+        artifact.runtimeComposition.kind == "external-subscriptions"
+        && artifact.runtimeComposition.profileName == profile.name
+        && artifact.runtimeComposition.format == artifact.format
+      ) profile.artifacts
+    ) manifest.profiles;
+  actualPublicationUsesCompiledTemplates = builtins.all (
+    profile:
+    builtins.all (
       artifact:
-      artifact.runtimeComposition.kind == "external-subscriptions"
-      && artifact.runtimeComposition.profileName == profile.name
-      && artifact.runtimeComposition.format == artifact.format
+      lib.hasInfix (builtins.unsafeDiscardStringContext (toString artifact.templatePath)) unit.script
     ) profile.artifacts
   ) manifest.profiles;
   noPublicSourceCredentials =

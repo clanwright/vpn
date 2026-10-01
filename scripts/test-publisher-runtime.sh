@@ -4,11 +4,24 @@ set -euo pipefail
 repository_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 nix_bin="$(command -v nix)"
 jq_bin="$(command -v jq)"
+artifact_root="$repository_root/.work/publisher-runtime"
+mkdir -p "$artifact_root"
+artifact_dir="$(mktemp -d "$artifact_root/$(/bin/date -u +%Y%m%dT%H%M%SZ).XXXXXX")"
 test_root="$(mktemp -d "${TMPDIR:-/tmp}/vpn-publisher-runtime-test.XXXXXX")"
-cleanup() {
-	rm -rf -- "$test_root"
+whole_started="$SECONDS"
+finalize() {
+	local status="$?"
+	trap - EXIT
+	if ! /bin/mv -- "$test_root" "$artifact_dir/fixtures"; then
+		printf 'Could not retain publisher fixtures: %s\n' "$test_root" >&2
+		if [[ $status -eq 0 ]]; then status=1; fi
+	fi
+	printf 'status\tduration_seconds\n%s\t%s\n' "$status" "$((SECONDS - whole_started))" >"$artifact_dir/summary.tsv"
+	printf 'Publisher harness artifacts: %s\n' "$artifact_dir"
+	exit "$status"
 }
-trap cleanup EXIT
+trap finalize EXIT
+exec > >(tee "$artifact_dir/harness.log") 2>&1
 
 mock_bin="$test_root/bin"
 runtime_root="$test_root/case"
@@ -154,6 +167,7 @@ test ! -e "$runtime_root/runtime/published/current"
 test -z "$(find "$runtime_root/runtime/generations" -mindepth 1 -print -quit)"
 assert_no_private_temporaries
 assert_execution_cwd_empty
+cp "$failure_log" "$test_root/failure-mktemp.log"
 
 reset_case
 export VPN_PUBLISHER_TEST_FAIL_JQ=1
@@ -167,6 +181,7 @@ test ! -e "$runtime_root/runtime/published/current"
 test -z "$(find "$runtime_root/runtime/generations" -mindepth 1 -print -quit)"
 assert_no_private_temporaries
 assert_execution_cwd_empty
+cp "$failure_log" "$test_root/failure-jq.log"
 
 reset_case
 export VPN_PUBLISHER_TEST_FAIL_SECRET_CHMOD=1
@@ -180,7 +195,9 @@ test ! -e "$runtime_root/runtime/published/current"
 test -z "$(find "$runtime_root/runtime/generations" -mindepth 1 -print -quit)"
 assert_no_private_temporaries
 assert_execution_cwd_empty
+cp "$failure_log" "$test_root/failure-secret-chmod.log"
 
 printf 'publisher runtime harness: PASS (success, artifact mktemp failure, jq failure, secret chmod failure)\n'
 VPN_SUBSCRIPTION_TEST_NIX_BIN="$nix_bin" VPN_SUBSCRIPTION_TEST_JQ_BIN="$jq_bin" \
+	VPN_SUBSCRIPTION_TEST_ARTIFACT_DIR="$artifact_dir/subscriptions" \
 	bash "$repository_root/scripts/test-subscriptions-runtime.sh"

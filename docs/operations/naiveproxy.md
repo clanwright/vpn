@@ -3,7 +3,7 @@
 Run the complete [verification gate](verify.md):
 
 ```bash
-nix shell --offline --inputs-from . --max-jobs 0 --builders '' nixpkgs#deadnix nixpkgs#gitleaks nixpkgs#nixfmt nixpkgs#statix --command scripts/verify.sh
+nix shell --offline --inputs-from . --max-jobs 0 --builders '' --option allow-import-from-derivation false nixpkgs#deadnix nixpkgs#gitleaks nixpkgs#nixfmt nixpkgs#statix --command scripts/verify.sh
 ```
 
 Retain `.work/verification/<UTC-run-id>.<suffix>/summary.tsv` and its stage logs. The
@@ -17,11 +17,14 @@ sing-box with native Naive support. No standalone Naive executable is required.
 The Network Caddy package is the approved custom-package exception. The gate
 does not build it or claim a successful application exchange.
 
-The consumer owns the selected public-site claim, TCP/443 bind, certificate
+The consumer owns the canonical native Caddy vhost, exact IPv4/TCP443 bind,
+shared-listener cover-host native bases and stable physical certificate
 identity, device secret bindings, and additional destination denies.
 Record and review those values there before adoption. This runbook does not
 authorize changing them.
-Every password identity is also a client profile identity.
+Each password identity is a provider authentication account. Publisher profiles
+select that account through the explicit `providerRefs.clients` profile-to-account
+map; profile and account names may differ.
 
 Consumer-owned Clan vars must generate nonempty unpadded base64url passwords
 (`A-Z`, `a-z`, `0-9`, `_`, `-`) without whitespace or a terminal newline.
@@ -37,5 +40,6 @@ refresh daemon or automatic file rollback.
 Complete repository verification before an independently approved release or
 consumer adoption. The gate provides no claim about actual reload behavior,
 tunnels, credential revocation on existing connections or network reachability.
-Consumer monitoring and operational procedures remain in the consumer
+The shared [evidence boundary](verify.md#evidence-and-runtime-acceptance)
+identifies the remaining runtime acceptance. Consumer monitoring and operational procedures remain in the consumer
 repository; no live test sequence is included here.

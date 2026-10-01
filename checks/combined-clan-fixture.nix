@@ -2,10 +2,10 @@
   combined,
   fixture,
   lib,
+  publisherManifest,
 }:
 let
   supportNames = [
-    "edge-wildcard-certificate"
     "network-caddy"
     "network-certificates"
   ];
@@ -25,25 +25,20 @@ let
   adguardSettings = builtins.fromJSON adguardTemplate.content;
   adguardIntegration = machine.clanwright.dns.adguardhome.integration;
   publisherIntegration = machine.clanwright.vpn.publishers.vpn-client-profiles;
-  publisherManifest = machine.clanwright.vpn.publisherManifests.vpn-client-profiles;
-  inherit (publisherManifest) publicationPhases;
-  publicationPhaseIds = map (phase: phase.id) publicationPhases;
-  indexOf =
-    predicate: values:
-    let
-      go =
-        index: remaining:
-        if remaining == [ ] || predicate (builtins.head remaining) then
-          index
-        else
-          go (index + 1) (builtins.tail remaining);
-    in
-    go 0 values;
-  phaseIndex = id: indexOf (candidate: candidate == id) publicationPhaseIds;
-  phasePrerequisites =
-    id: (builtins.head (builtins.filter (phase: phase.id == id) publicationPhases)).prerequisites;
-  caddyFragments = machine.networkCore.caddy.effectiveFragments;
-  acmeReloadUnits = machine.networkCore.acme.reloadServices.fixture;
+  expectedPublicationPhaseIds = [
+    "revoke-current"
+    "sync-local-assets"
+    "check-assets"
+    "prepare-generation"
+    "render-artifacts"
+    "finalize-links"
+    "seal-generation"
+    "expose-generation"
+    "retire-old-generations"
+    "cleanup-private-temporaries"
+  ];
+  caddySites = machine.services.caddy.virtualHosts;
+  acmeReloadUnits = machine.security.acme.certs.fixture.reloadServices;
   publicationUnitName = lib.removeSuffix ".service" publisherIntegration.publicationUnit;
   refreshUnitName = lib.removeSuffix ".service" publisherIntegration.refreshUnit;
   publicationUnit = units.${publicationUnitName};
@@ -52,9 +47,19 @@ let
   publicationScriptPhaseRegions = builtins.tail (
     lib.splitString publicationPhaseMarker publicationUnit.script
   );
-  publicationScriptPhaseIds = map (
-    segment: builtins.head (lib.splitString "\n" segment)
-  ) publicationScriptPhaseRegions;
+  phaseIdsFor =
+    script:
+    map (segment: builtins.head (lib.splitString "\n" segment)) (
+      builtins.tail (lib.splitString publicationPhaseMarker script)
+    );
+  publicationScriptPhaseIds = phaseIdsFor publicationUnit.script;
+  phaseRegion =
+    id:
+    builtins.head (
+      builtins.filter (
+        segment: builtins.head (lib.splitString "\n" segment) == id
+      ) publicationScriptPhaseRegions
+    );
   revokeCommand = "rm -f -- ${publisherIntegration.profileRoot}";
   generationsFind = ''find "$runtime_base/generations"'';
   revokePhaseRegion = builtins.head publicationScriptPhaseRegions;
@@ -85,25 +90,90 @@ let
     ) requiredFixtureAssetNames
     && !(lib.hasInfix "segments.txt" refreshUnit.script);
   publicationPhaseResults = {
-    revokePrecedesAssetPreparation =
-      phasePrerequisites "sync-local-assets" == [ "revoke-current" ]
-      && phaseIndex "revoke-current" < phaseIndex "sync-local-assets";
-    assetsPrecedeGeneration =
-      phasePrerequisites "check-assets" == [ "sync-local-assets" ]
-      && phasePrerequisites "prepare-generation" == [ "check-assets" ]
-      && phaseIndex "check-assets" < phaseIndex "prepare-generation";
-    renderPrecedesExposure =
-      phasePrerequisites "render-artifacts" == [ "prepare-generation" ]
-      && phasePrerequisites "expose-generation" == [ "seal-generation" ]
-      && phaseIndex "render-artifacts" < phaseIndex "expose-generation";
-    retirementAndCleanupFollowExposure =
-      phasePrerequisites "retire-old-generations" == [ "expose-generation" ]
-      && phasePrerequisites "cleanup-private-temporaries" == [ "retire-old-generations" ]
-      && phaseIndex "expose-generation" < phaseIndex "cleanup-private-temporaries";
-    scriptMarkersMatchManifestOrder = publicationScriptPhaseIds == publicationPhaseIds;
+    manifestContainsBothClientFormats =
+      map (profile: profile.name) publisherManifest.profiles == [ "cHJvYmU" ]
+      &&
+        map (artifact: artifact.outputName) (builtins.head publisherManifest.profiles).artifacts == [
+          "mihomo.yaml"
+          "profile.json"
+        ];
+    actualPublicationUsesManifestTemplates = builtins.all (
+      profile:
+      builtins.all (
+        artifact:
+        lib.hasInfix (builtins.unsafeDiscardStringContext (toString artifact.templatePath)) publicationUnit.script
+      ) profile.artifacts
+    ) publisherManifest.profiles;
+    actualPublicationUsesManifestBindings = builtins.all (
+      profile:
+      builtins.all (
+        artifact:
+        builtins.all (
+          binding:
+          lib.hasInfix machine.sops.secrets.${binding.secretName}.path publicationUnit.script
+          &&
+            builtins.elem publisherIntegration.publicationUnit
+              machine.sops.secrets.${binding.secretName}.restartUnits
+        ) artifact.bindings
+      ) profile.artifacts
+    ) publisherManifest.profiles;
+    scriptHasExactTenOrderedPhases = publicationScriptPhaseIds == expectedPublicationPhaseIds;
+    removedManifestGraph =
+      builtins.attrNames publisherManifest == [
+        "assetCatalog"
+        "profiles"
+        "schemaVersion"
+      ]
+      && builtins.all (field: !(builtins.hasAttr field machine.clanwright.vpn)) [
+        "publisherPublicationPhases"
+        "publisherManifests"
+        "publisherRenders"
+      ];
+    swappedMarkersDetected =
+      phaseIdsFor (
+        builtins.replaceStrings
+          [
+            "# publication-phase:render-artifacts"
+            "# publication-phase:expose-generation"
+          ]
+          [
+            "# publication-phase:expose-generation"
+            "# publication-phase:render-artifacts"
+          ]
+          publicationUnit.script
+      ) != expectedPublicationPhaseIds;
+    missingMarkerDetected =
+      phaseIdsFor (
+        builtins.replaceStrings
+          [
+            "# publication-phase:seal-generation"
+          ]
+          [ "# removed-phase" ]
+          publicationUnit.script
+      ) != expectedPublicationPhaseIds;
+    duplicateMarkerDetected =
+      phaseIdsFor (publicationUnit.script + "\n# publication-phase:expose-generation\n")
+      != expectedPublicationPhaseIds;
     revokePhaseRemovesCurrentBeforeGenerationCleanup =
       lib.hasInfix generationsFind revokePhaseRegion
       && lib.hasInfix revokeCommand revokeRegionBeforeGenerationsFind;
+    assetPreparationBeforeGeneration =
+      lib.hasInfix "local_asset_tmp=" (phaseRegion "sync-local-assets")
+      && builtins.all (
+        name: lib.hasInfix "test -s ${publisherIntegration.assetRoot}/${name}" (phaseRegion "check-assets")
+      ) requiredFixtureAssetNames
+      && lib.hasInfix ''stage="$(mktemp -d'' (phaseRegion "prepare-generation");
+    renderingBeforeSealedExposure =
+      lib.hasInfix "--rawfile binding_" (phaseRegion "render-artifacts")
+      && lib.hasInfix ''find "$stage" -type f -exec chmod 0440'' (phaseRegion "seal-generation")
+      && lib.hasInfix ''mv -- "$stage" "$generation"'' (phaseRegion "seal-generation")
+      && lib.hasInfix ''ln -s -- "$generation" "$link_tmp"'' (phaseRegion "expose-generation")
+      && lib.hasInfix ''mv -Tf -- "$link_tmp"'' (phaseRegion "expose-generation");
+    retirementAndPrivateCleanupAfterExposure =
+      lib.hasInfix ''! -path "$generation" -exec rm -rf'' (phaseRegion "retire-old-generations")
+      && lib.hasInfix ''rm -f -- "''${private_tmp_files[@]}"'' (phaseRegion "cleanup-private-temporaries")
+      && lib.hasInfix "private_tmp_files=()" (phaseRegion "cleanup-private-temporaries")
+      && lib.hasInfix "trap - EXIT" (phaseRegion "cleanup-private-temporaries");
   };
   publicationPhaseContract = builtins.all (value: value) (
     builtins.attrValues publicationPhaseResults
@@ -130,10 +200,15 @@ let
       "wants"
       "wantedBy"
     ];
+  nativeCompositionResults = import ./lib/native-composition.nix { inherit lib; } {
+    inherit machine publisherManifest;
+    domain = "profiles.example.invalid";
+  };
   contract =
     builtins.attrNames config.inventory.instances
     == lib.sort builtins.lessThan (supportNames ++ serviceNames)
-    && builtins.length (builtins.attrNames config._services.allServices) == 12
+    && builtins.length (builtins.attrNames config._services.allServices) == 11
+    && builtins.all (value: value) (builtins.attrValues nativeCompositionResults)
     && machine.services.xray.enable
     && units ? xray
     && units ? mita
@@ -164,18 +239,23 @@ let
         "trusttunnel.service"
         publisherIntegration.publicationUnit
       ]
-    && units ? anytls
-    && machine.sops.templates ? "anytls.json"
-    && machine.sops.templates."anytls.json".owner == "anytls"
-    && machine.sops.templates."anytls.json".group == "anytls"
-    && machine.sops.templates."anytls.json".mode == "0400"
-    && machine.sops.templates."anytls.json".restartUnits == [ "anytls.service" ]
+    && machine.services.sing-box.enable
+    && units ? sing-box
+    && !(units ? anytls)
+    && !(machine.sops.templates ? "anytls.json")
+    && machine.systemd.services.sing-box.serviceConfig.User == "sing-box"
+    && machine.systemd.services.sing-box.serviceConfig.Group == "sing-box"
+    &&
+      (builtins.head (builtins.head machine.services.sing-box.settings.inbounds).users).password == {
+        _secret = "/run/credentials/sing-box.service/password-cHJvYmU";
+      }
+    && builtins.elem "password-cHJvYmU:${anytlsPasswordSecret.path}" machine.systemd.services.sing-box.serviceConfig.LoadCredential
     && anytlsPasswordSecret.owner == "root"
     && anytlsPasswordSecret.group == "root"
     && anytlsPasswordSecret.mode == "0400"
     &&
       lib.sort builtins.lessThan anytlsPasswordSecret.restartUnits == lib.sort builtins.lessThan [
-        "anytls.service"
+        "sing-box.service"
         publisherIntegration.publicationUnit
       ]
     && !((machine.networkCore.mihomo or { }) ? vlessXhttp)
@@ -210,14 +290,20 @@ let
         reloadUnits = [ "adguardhome.service" ];
       }
     && machineOptions.clanwright.dns.adguardhome.integration.readOnly
-    && caddyFragments ? dns-adguardhome-ui
-    && caddyFragments.dns-adguardhome-ui.listenAddresses == [ "100.64.0.10" ]
-    && lib.hasInfix ''{http.request.local.host} != "100.64.0.10"'' caddyFragments.dns-adguardhome-ui.extraConfig
-    && lib.hasInfix ''{http.request.local.port} != "443"'' caddyFragments.dns-adguardhome-ui.extraConfig
-    && caddyFragments ? dns-adguardhome-doh
-    && caddyFragments.dns-adguardhome-doh.listenAddresses == [ "192.0.2.10" ]
-    && lib.hasInfix ''{http.request.local.host} != "192.0.2.10"'' caddyFragments.dns-adguardhome-doh.extraConfig
-    && lib.hasInfix "tls_server_name ${adguardIntegration.dohBackend.serverName}" caddyFragments.dns-adguardhome-doh.extraConfig
+    && caddySites ? "adguard.example.invalid"
+    && caddySites."adguard.example.invalid".listenAddresses == [ "100.64.0.10" ]
+    &&
+      lib.hasInfix ''{http.request.local.host} != "100.64.0.10"''
+        caddySites."adguard.example.invalid".extraConfig
+    && lib.hasInfix "{http.request.local.port} != 443" caddySites."adguard.example.invalid".extraConfig
+    && caddySites ? "dns.example.invalid"
+    && caddySites."dns.example.invalid".listenAddresses == [ "192.0.2.10" ]
+    &&
+      lib.hasInfix ''{http.request.local.host} != "192.0.2.10"''
+        caddySites."dns.example.invalid".extraConfig
+    &&
+      lib.hasInfix "tls_server_name ${adguardIntegration.dohBackend.serverName}"
+        caddySites."dns.example.invalid".extraConfig
     && builtins.elem "caddy.service" acmeReloadUnits
     && builtins.elem "adguardhome.service" acmeReloadUnits
     && builtins.elem "acme" (lib.toList units.adguardhome.serviceConfig.SupplementaryGroups)
@@ -227,15 +313,16 @@ let
         443
       ]
     && machine.networking.firewall.interfaces.tailscale0.allowedUDPPorts == [ 53 ]
-    && publisherIntegration.schemaVersion == 1
-    && publisherFieldOptions.schemaVersion.type.check 1
-    && !(publisherFieldOptions.schemaVersion.type.check 2)
+    && publisherIntegration.schemaVersion == 2
+    && publisherFieldOptions.schemaVersion.type.check 2
+    && !(publisherFieldOptions.schemaVersion.type.check 1)
     && builtins.all (field: publisherFieldOptions.${field}.readOnly) [
       "schemaVersion"
       "configGatewayDomain"
       "profileRoot"
       "assetRoot"
       "linksRoot"
+      "logConfig"
       "routeConfig"
       "publicationUnit"
       "refreshUnit"
@@ -250,25 +337,30 @@ let
     && publisherIntegration.readerGroup == "vpn-client-profiles"
     && publisherIntegration.publicationUnit == "vpn-client-profiles-publish-fixture.service"
     && publisherIntegration.refreshUnit == "vpn-client-profiles-public-assets-fixture.service"
-    && lib.hasPrefix "log_skip" (lib.strings.trim publisherIntegration.routeConfig)
-    && !(lib.hasInfix "profiles.example.invalid" publisherIntegration.routeConfig)
+    && lib.hasInfix "log_skip" publisherIntegration.logConfig
+    && lib.hasPrefix "route {" (lib.strings.trim publisherIntegration.routeConfig)
+    && lib.hasInfix "profiles.example.invalid" publisherIntegration.routeConfig
     && !(lib.hasInfix "bind " publisherIntegration.routeConfig)
     && !(lib.hasInfix "tls " publisherIntegration.routeConfig)
     && !(lib.hasInfix "import " publisherIntegration.routeConfig)
     && builtins.all (
       asset: lib.hasInfix "handle ${asset.publicPath}" publisherIntegration.routeConfig
     ) (builtins.attrValues publisherManifest.assetCatalog)
-    && machine.clanwright.vpn.publisherPublicationPhases.vpn-client-profiles == publicationPhases
-    && caddyFragments ? vpn-client-profiles
-    && caddyFragments.vpn-client-profiles.hostName == publisherIntegration.configGatewayDomain
+    && caddySites ? "profiles.example.invalid"
+    && caddySites."profiles.example.invalid".hostName == publisherIntegration.configGatewayDomain
     &&
-      caddyFragments.vpn-client-profiles.listenAddresses == [
+      caddySites."profiles.example.invalid".listenAddresses == [
         "192.0.2.10"
         "100.64.0.10"
       ]
-    && lib.hasInfix ''{http.request.local.host} != "100.64.0.10"'' caddyFragments.vpn-client-profiles.extraConfig
-    && lib.hasInfix publisherIntegration.linksRoot caddyFragments.vpn-client-profiles.extraConfig
-    && lib.hasInfix publisherIntegration.routeConfig caddyFragments.vpn-client-profiles.extraConfig
+    &&
+      lib.hasInfix ''{http.request.local.host} != "100.64.0.10"''
+        caddySites."profiles.example.invalid".extraConfig
+    && lib.hasInfix publisherIntegration.linksRoot caddySites."profiles.example.invalid".extraConfig
+    &&
+      lib.hasInfix (builtins.unsafeDiscardStringContext publisherIntegration.routeConfig)
+        caddySites."profiles.example.invalid".extraConfig
+    && lib.hasInfix publisherIntegration.logConfig caddySites."profiles.example.invalid".extraConfig
     && builtins.elem publisherIntegration.readerGroup (
       lib.toList caddyUnit.serviceConfig.SupplementaryGroups
     )
@@ -311,19 +403,21 @@ let
     && pathTokenSecret.restartUnits == [ publisherIntegration.publicationUnit ]
     && lib.hasInfix pathTokenSecret.path publicationUnit.script
     && machine.services.dnsproxy.settings.listen-addrs == [ "127.0.0.1" ]
-    && caddyFragments ? fixture-site
-    && builtins.elem "forward-proxy" caddyFragments.fixture-site.capabilities;
+    && caddySites ? "site.example.invalid"
+    && caddySites."site.example.invalid".forwardProxy
+    && caddySites."site.example.invalid".hostName == ":443";
 in
 if !contract then
   throw "Combined external Clan fixture contract failed: ${
     builtins.toJSON {
-      inherit publicationPhaseResults;
+      inherit publicationPhaseResults nativeCompositionResults;
     }
   }"
 else
   {
     all = true;
     inherit
+      nativeCompositionResults
       assetLifecycleResults
       contract
       publicationPhaseContract

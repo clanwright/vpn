@@ -1,15 +1,34 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-if [[ $# -gt 1 ]]; then
-	printf 'Usage: %s [evaluation-test-name]\n' "$0" >&2
+usage() {
+	printf 'Usage: %s [--network-candidate /nix/store/<hash>-<name>] [evaluation-test-name]\n' "$0" >&2
 	exit 2
+}
+requested_test=""
+network_candidate=""
+while [[ $# -gt 0 ]]; do
+	case "$1" in
+	--network-candidate)
+		[[ $# -ge 2 && -z "$network_candidate" ]] || usage
+		network_candidate="$2"
+		[[ "$network_candidate" =~ ^/nix/store/[a-z0-9]{32}-[a-zA-Z0-9+._-]+$ ]] || usage
+		[[ -d "$network_candidate" && ! -L "$network_candidate" ]] || usage
+		shift 2
+		;;
+	*)
+		[[ -z "$requested_test" && "$1" =~ ^[a-z0-9-]+$ && "$1" != -* ]] || usage
+		requested_test="$1"
+		shift
+		;;
+	esac
+done
+flake_override_args=(--no-write-lock-file)
+input_mode=root-pin
+if [[ -n "$network_candidate" ]]; then
+	input_mode=network-candidate
+	flake_override_args+=(--override-input network "path:$network_candidate")
 fi
-if [[ $# -eq 1 && ! "$1" =~ ^[a-z0-9-]+$ ]]; then
-	printf 'Usage: %s [evaluation-test-name]\n' "$0" >&2
-	exit 2
-fi
-requested_test="${1:-}"
 
 repo_root="$(git rev-parse --show-toplevel)"
 cd "$repo_root"
@@ -23,8 +42,14 @@ eval_manifest=""
 verification_scope="${requested_test:+test:$requested_test}"
 verification_scope="${verification_scope:-full}"
 summary="$artifact_dir/summary.tsv"
+input_metadata="$artifact_dir/input-metadata.tsv"
 printf '%s\n' "$verification_scope" >"$artifact_dir/scope.txt"
 printf 'stage\tstatus\tduration_seconds\tlog\n' >"$summary"
+printf 'key\tvalue\ninput_mode\t%s\nflake_lock_hash_scope\troot-source-snapshot\n' "$input_mode" >"$input_metadata"
+printf '%q\n' "${flake_override_args[@]}" >"$artifact_dir/flake-override-arguments.txt"
+if [[ -n "$network_candidate" ]]; then
+	printf 'network_candidate_path\t%s\n' "$network_candidate" >>"$input_metadata"
+fi
 whole_started="$(date +%s)"
 
 finalize() {
@@ -44,7 +69,7 @@ finalize() {
 		whole_status=fail
 	fi
 	printf 'whole\t%s\t%s\t%s\n' "$whole_status" "$((whole_finished - whole_started))" "$summary" >>"$summary"
-	printf 'Verification %s for %s. Summary: %s\n' "$whole_status" "$verification_scope" "$summary"
+	printf 'Verification %s for %s (%s). Summary: %s; input metadata: %s\n' "$whole_status" "$verification_scope" "$input_mode" "$summary" "$input_metadata"
 	exit "$status"
 }
 trap finalize EXIT
@@ -118,7 +143,7 @@ static_checks() {
 evaluation_checks() {
 	local cleanup_status=0
 	local eval_status
-	local evaluation_attr
+	local evaluation_apply
 	local source_file
 	local physical_tmp
 	physical_tmp="$(cd "${TMPDIR:-/tmp}" && pwd -P)" || return
@@ -174,8 +199,19 @@ evaluation_checks() {
 		--option builders ''
 		--max-jobs 0
 		--option allow-import-from-derivation false
+		--option eval-cache false
 	)
 	local flake_ref="path:$eval_source"
+	if [[ -n "$network_candidate" ]]; then
+		"${nix_eval[@]}" hash path --type sha256 "$network_candidate" >"$artifact_dir/network-candidate.nar-hash" || {
+			cleanup_evaluation_source
+			return 1
+		}
+		printf 'network_candidate_nar_hash\t%s\n' "$(cat "$artifact_dir/network-candidate.nar-hash")" >>"$input_metadata" || {
+			cleanup_evaluation_source
+			return 1
+		}
+	fi
 	# NAR hashing includes file contents, executable bits and symlink targets.
 	# Hash the filtered copy actually evaluated, rather than only the Git commit.
 	"${nix_eval[@]}" hash path --type sha256 "$eval_source" >"$artifact_dir/source.nar-hash" || {
@@ -187,16 +223,19 @@ evaluation_checks() {
 		return 1
 	}
 	if [[ -n "$requested_test" ]]; then
-		evaluation_attr="$flake_ref#evaluationTests.x86_64-linux.results.$requested_test"
+		evaluation_apply="tests: { inherit (tests) moduleNames packageNames; results = tests.results.$requested_test; }"
 	else
-		evaluation_attr="$flake_ref#evaluationTests.x86_64-linux"
+		evaluation_apply='tests: tests'
 	fi
 
-	"${nix_eval[@]}" flake check --no-build --no-write-lock-file --system x86_64-linux "$flake_ref" \
-		&& "${nix_eval[@]}" eval --json --no-write-lock-file "$flake_ref#clan.modules" --apply builtins.attrNames >/dev/null \
-		&& "${nix_eval[@]}" eval --json --no-write-lock-file "$flake_ref#packages.x86_64-linux" --apply builtins.attrNames >/dev/null \
-		&& "${nix_eval[@]}" eval --json --no-write-lock-file "$evaluation_attr"
+	# Keep flake schema validation, which also covers formatter/devShell shapes.
+	# Inventories and contracts share one evaluator rather than three processes.
+	"${nix_eval[@]}" flake check --no-build "${flake_override_args[@]}" --system x86_64-linux "$flake_ref" \
+		&& "${nix_eval[@]}" eval --json "${flake_override_args[@]}" "$flake_ref#evaluationTests.x86_64-linux" --apply "$evaluation_apply" >"$artifact_dir/evaluation.json"
 	eval_status="$?"
+	if [[ $eval_status -eq 0 ]]; then
+		cat "$artifact_dir/evaluation.json" || eval_status="$?"
+	fi
 	cleanup_evaluation_source || cleanup_status="$?"
 	if [[ $eval_status -ne 0 ]]; then
 		return "$eval_status"

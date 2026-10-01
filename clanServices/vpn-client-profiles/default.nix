@@ -8,102 +8,7 @@
   ...
 }:
 let
-  types = import ./types.nix { inherit lib; };
-  vpnExports = import ../../modules/contracts/vpn-exports.nix { inherit lib; };
-  inherit (types) linksPageDefaults;
-  publisherDefaults = {
-    enable = false;
-    localMachineName = "";
-    configGatewayDomain = null;
-    publicIPv4 = null;
-    edgeDomain = null;
-    clientDnsEndpoints = null;
-    tailnetAdminDomains = [ ];
-    personalProxyDomains = [ ];
-    profiles = [ ];
-    providerRefs = [ ];
-    externalSubscriptions = { };
-    profileLinks = [ ];
-    linksPage = linksPageDefaults;
-  };
-  profileNamesFor =
-    ref: provider:
-    let
-      selected = if ref.profileNames == [ ] then provider.profileNames else ref.profileNames;
-      unknown = lib.subtractLists provider.profileNames selected;
-    in
-    if selected != lib.unique selected then
-      throw "vpn-client-profiles: duplicate profileNames in ${ref.machine}/${ref.instanceId}"
-    else if unknown != [ ] then
-      throw "vpn-client-profiles: provider ref selects unknown profiles: ${lib.concatStringsSep ", " unknown}"
-    else
-      selected;
-  publisherProfileOptions = {
-    enable = lib.mkOption {
-      type = lib.types.bool;
-      default = publisherDefaults.enable;
-    };
-    localMachineName = lib.mkOption {
-      type = types.optionalSafeIdentityType;
-      default = publisherDefaults.localMachineName;
-    };
-    configGatewayDomain = lib.mkOption {
-      type = lib.types.nullOr lib.types.str;
-      default = publisherDefaults.configGatewayDomain;
-      description = "Consumer gateway domain embedded into generated client templates.";
-    };
-    publicIPv4 = lib.mkOption {
-      type = lib.types.nullOr lib.types.str;
-      default = publisherDefaults.publicIPv4;
-      description = "Consumer public IPv4 embedded into generated client templates.";
-    };
-    edgeDomain = lib.mkOption {
-      type = lib.types.nullOr lib.types.str;
-      default = publisherDefaults.edgeDomain;
-      description = "Consumer edge domain embedded into generated client templates.";
-    };
-    clientDnsEndpoints = lib.mkOption {
-      type = lib.types.nullOr types.clientDnsEndpointsType;
-      default = publisherDefaults.clientDnsEndpoints;
-      description = "Consumer-owned DNS-over-HTTPS endpoints; null preserves the edgeDomain/publicIPv4 endpoint.";
-    };
-    tailnetAdminDomains = lib.mkOption {
-      type = lib.types.listOf lib.types.str;
-      default = publisherDefaults.tailnetAdminDomains;
-    };
-    personalProxyDomains = lib.mkOption {
-      type = lib.types.listOf lib.types.str;
-      default = publisherDefaults.personalProxyDomains;
-      description = "Consumer-owned domain suffixes routed by the selective profile.";
-    };
-    profiles = lib.mkOption {
-      type = lib.types.listOf types.profileType;
-      default = publisherDefaults.profiles;
-    };
-    providerRefs = lib.mkOption {
-      type = lib.types.listOf types.providerRefType;
-      default = publisherDefaults.providerRefs;
-    };
-    externalSubscriptions = lib.mkOption {
-      type = types.externalSubscriptionsType;
-      apply =
-        sources:
-        if builtins.all (name: types.safeIdentityType.check name) (builtins.attrNames sources) then
-          sources
-        else
-          throw "vpn-client-profiles: external subscription IDs must be safe identities.";
-      default = publisherDefaults.externalSubscriptions;
-      description = "Profile-scoped external connections; subscription URLs are runtime secrets.";
-    };
-    profileLinks = lib.mkOption {
-      type = lib.types.listOf types.profileLinkType;
-      default = publisherDefaults.profileLinks;
-    };
-    linksPage = lib.mkOption {
-      type = types.linksPageType;
-      default = publisherDefaults.linksPage;
-    };
-  };
+  publisherCompiler = import ./publisher.nix { inherit lib; };
 in
 {
   _class = "clan.service";
@@ -114,67 +19,30 @@ in
   };
   roles.publisher = {
     description = "Publish client profiles from explicit non-secret provider exports";
-    interface = _: { options = publisherProfileOptions; };
+    inherit (publisherCompiler) interface;
     perInstance =
       {
         settings,
-        instanceName ? "vpn-client-profiles",
+        instanceName,
         exports ? { },
         ...
       }:
-      let
-        publisherRaw =
-          publisherDefaults // settings // { linksPage = linksPageDefaults // (settings.linksPage or { }); };
-        publisher = publisherRaw // {
-          clientDnsEndpoints =
-            if publisherRaw.enable then
-              types.normalizeClientDnsEndpoints publisherRaw
-            else
-              publisherRaw.clientDnsEndpoints;
-        };
-        providerRefs = publisher.providerRefs or [ ];
-        active = publisher.enable;
-        providerFor =
-          ref:
-          vpnExports.selectVpnProvider {
-            providerInstanceId = ref.instanceId;
-            providerMachine = ref.machine;
-            inherit (ref) protocol;
-            consumerInstanceId = instanceName;
-            selectExports = if clanLib == null then null else clanLib.selectExports;
-            inherit exports;
-          };
-        providers =
-          if !active then
-            [ ]
-          else
-            map (
-              ref:
-              let
-                provider = providerFor ref;
-              in
-              provider
-              // {
-                profileNames = profileNamesFor ref provider;
-                display = ref.display or null;
-              }
-            ) providerRefs;
-        runtimeMachineName = publisher.localMachineName;
-        publisherProfileNames = map (profile: profile.name) publisher.profiles;
-        providerRefKeys = map (ref: "${ref.machine}/${ref.instanceId}/${ref.protocol}") providerRefs;
-        profileLinkNames = map (link: link.name) publisher.profileLinks;
-        profilePathTokenSecretNames = map (profile: profile.pathTokenSecretName) publisher.profiles;
-        ownDisplayLabels = map (
-          ref: if (ref.display or null) == null then ref.machine else ref.display.label
-        ) providerRefs;
-        externalDisplayLabels = lib.mapAttrsToList (
-          sourceId: source: if (source.label or null) == null then sourceId else source.label
-        ) publisher.externalSubscriptions;
-      in
       {
         nixosModule =
           { config, pkgs, ... }:
           let
+            compiled = publisherCompiler.compile {
+              inherit
+                pkgs
+                settings
+                instanceName
+                exports
+                ;
+              selectExports = if clanLib == null then null else clanLib.selectExports;
+            };
+            publisher = compiled.settings;
+            active = publisher.enable;
+            runtimeMachineName = publisher.localMachineName;
             system =
               if pkgs ? stdenv && pkgs.stdenv ? hostPlatform && pkgs.stdenv.hostPlatform ? system then
                 pkgs.stdenv.hostPlatform.system
@@ -193,10 +61,6 @@ in
             publicationUnit = "${publicationService}.service";
             refreshUnit = "${refreshService}.service";
             matcherSuffix = lib.replaceStrings [ "_" "-" "." ] [ "_u" "_h" "_d" ] instanceName;
-            render = import ./client-profiles.nix {
-              inherit lib pkgs providers;
-              settings = publisher;
-            };
             publicAssets = import ./public-assets.nix {
               inherit
                 lib
@@ -207,7 +71,7 @@ in
                 readerGroup
                 refreshService
                 ;
-              inherit (render) manifest;
+              inherit (compiled) manifest;
             };
             publication = import ./runtime-publication.nix {
               inherit
@@ -222,7 +86,7 @@ in
                 refreshUnit
                 ;
               settings = publisher;
-              inherit (render) manifest renderedProfiles;
+              inherit (compiled) manifest;
               inherit (publicAssets) requiredAssetPaths localAssetSyncScript;
             };
             assetRoute = path: filename: contentType: ''
@@ -237,48 +101,52 @@ in
                 file_server
               }
             '';
-            routeConfig = ''
+            logConfig = ''
               log_skip
+            '';
+            routeConfig = ''
+              route {
+                @vpn_client_profile_site_${matcherSuffix} host ${publisher.configGatewayDomain}
+                route @vpn_client_profile_site_${matcherSuffix} {
+                  @vpn_client_profile_yaml_${matcherSuffix} path_regexp ^/[A-Za-z0-9_-]{32,128}/mihomo\.yaml$
+                  handle @vpn_client_profile_yaml_${matcherSuffix} {
+                    root * ${profileRoot}/profiles
+                    header Content-Type "text/yaml; charset=utf-8"
+                    header Content-Disposition "attachment"
+                    header Cache-Control "no-store"
+                    header Referrer-Policy "no-referrer"
+                    header X-Robots-Tag "noindex, nofollow, noarchive"
+                    header X-Content-Type-Options "nosniff"
+                    file_server
+                  }
 
-              @vpn_client_profile_yaml_${matcherSuffix} path_regexp ^/[A-Za-z0-9_-]{32,128}/mihomo\.yaml$
-              handle @vpn_client_profile_yaml_${matcherSuffix} {
-                root * ${profileRoot}/profiles
-                header Content-Type "text/yaml; charset=utf-8"
-                header Content-Disposition "attachment"
-                header Cache-Control "no-store"
-                header Referrer-Policy "no-referrer"
-                header X-Robots-Tag "noindex, nofollow, noarchive"
-                header X-Content-Type-Options "nosniff"
-                file_server
+                  @vpn_client_profile_json_${matcherSuffix} path_regexp ^/[A-Za-z0-9_-]{32,128}/profile\.json$
+                  handle @vpn_client_profile_json_${matcherSuffix} {
+                    root * ${profileRoot}/profiles
+                    header Content-Type "application/json; charset=utf-8"
+                    header Content-Disposition "attachment; filename=profile.json"
+                    header Profile-Title "Edge"
+                    header profile-update-interval "24"
+                    header Cache-Control "no-store"
+                    header Referrer-Policy "no-referrer"
+                    header X-Robots-Tag "noindex, nofollow, noarchive"
+                    header X-Content-Type-Options "nosniff"
+                    file_server
+                  }
+
+                  ${lib.concatMapStringsSep "\n" (
+                    asset: assetRoute asset.publicPath asset.filename asset.contentType
+                  ) publicAssets.referencedAssets}
+                }
               }
-
-              @vpn_client_profile_json_${matcherSuffix} path_regexp ^/[A-Za-z0-9_-]{32,128}/profile\.json$
-              handle @vpn_client_profile_json_${matcherSuffix} {
-                root * ${profileRoot}/profiles
-                header Content-Type "application/json; charset=utf-8"
-                header Content-Disposition "attachment; filename=profile.json"
-                header Profile-Title "Edge"
-                header profile-update-interval "24"
-                header Cache-Control "no-store"
-                header Referrer-Policy "no-referrer"
-                header X-Robots-Tag "noindex, nofollow, noarchive"
-                header X-Content-Type-Options "nosniff"
-                file_server
-              }
-
-              ${lib.concatMapStringsSep "\n" (
-                asset:
-                lib.concatMapStringsSep "\n" (path: assetRoute path asset.filename asset.contentType) (
-                  [ asset.publicPath ] ++ asset.legacyPublicPaths
-                )
-              ) publicAssets.referencedAssets}
             '';
             integration = {
-              schemaVersion = 1;
+              schemaVersion = 2;
               inherit
                 profileRoot
                 assetRoot
                 linksRoot
+                logConfig
                 routeConfig
                 publicationUnit
                 refreshUnit
@@ -297,79 +165,9 @@ in
           {
             imports = [ ./integration.nix ];
             config = {
-              clanwright.vpn = {
-                publishers = lib.mkIf active { ${instanceName} = integration; };
-                publisherRenders = lib.mkIf active {
-                  ${instanceName} = publication.renderedProfiles;
-                };
-                publisherManifests = lib.mkIf active {
-                  ${instanceName} = render.manifest;
-                };
-                publisherPublicationPhases = lib.mkIf active {
-                  ${instanceName} = publication.publicationPhases;
-                };
-              };
+              clanwright.vpn.publishers = lib.mkIf active { ${instanceName} = integration; };
               users.groups.${readerGroup} = lib.mkIf active { };
               assertions = [
-                {
-                  assertion = builtins.all (
-                    source: lib.subtractLists publisherProfileNames source.profileNames == [ ]
-                  ) (builtins.attrValues publisher.externalSubscriptions);
-                  message = "vpn-client-profiles: external subscriptions may reference only declared profiles.";
-                }
-                {
-                  assertion = builtins.all (label: !(builtins.elem label ownDisplayLabels)) externalDisplayLabels;
-                  message = "vpn-client-profiles: external subscription labels, including ID fallbacks, must differ from provider display labels and machine-name fallbacks.";
-                }
-                {
-                  assertion = !active || runtimeMachineName != "";
-                  message = "vpn-client-profiles: localMachineName is required when publishing is enabled.";
-                }
-                {
-                  assertion = !active || publisher.configGatewayDomain != null;
-                  message = "vpn-client-profiles: configGatewayDomain is required when publishing is enabled.";
-                }
-                {
-                  assertion = !active || publisher.publicIPv4 != null;
-                  message = "vpn-client-profiles: publicIPv4 is required when publishing is enabled.";
-                }
-                {
-                  assertion = !active || publisher.edgeDomain != null;
-                  message = "vpn-client-profiles: edgeDomain is required when publishing is enabled.";
-                }
-                {
-                  assertion =
-                    !active || builtins.deepSeq publisher.clientDnsEndpoints (publisher.clientDnsEndpoints != [ ]);
-                  message = "vpn-client-profiles: enabled publisher requires at least one valid client DNS endpoint.";
-                }
-                {
-                  assertion = !active || providerRefs != [ ];
-                  message = "vpn-client-profiles: enabled publisher requires explicit providerRefs.";
-                }
-                {
-                  assertion = !active || publisher.profiles != [ ];
-                  message = "vpn-client-profiles: enabled publisher requires explicit profiles.";
-                }
-                {
-                  assertion = publisherProfileNames == lib.unique publisherProfileNames;
-                  message = "vpn-client-profiles: profile names must be unique.";
-                }
-                {
-                  assertion = providerRefKeys == lib.unique providerRefKeys;
-                  message = "vpn-client-profiles: providerRefs must be unique by machine, instance and protocol.";
-                }
-                {
-                  assertion = profileLinkNames == lib.unique profileLinkNames;
-                  message = "vpn-client-profiles: profile link names must be unique.";
-                }
-                {
-                  assertion = profilePathTokenSecretNames == lib.unique profilePathTokenSecretNames;
-                  message = "vpn-client-profiles: each profile requires a distinct path-token secret.";
-                }
-                {
-                  assertion = lib.subtractLists publisherProfileNames profileLinkNames == [ ];
-                  message = "vpn-client-profiles: profile links may reference only declared profiles.";
-                }
                 {
                   assertion = !active || mihomoPackage == appsPkgs.mihomo;
                   message = "vpn-client-profiles: Mihomo must be the exact repository-selected stock package.";

@@ -11,7 +11,7 @@ let
   sourceLabel = name: source: if (source.label or null) == null then name else source.label;
   sources = settings.externalSubscriptions or { };
   # The converter returns {nodes, skipped, service}. Only nodes are cached;
-  # skipped entries carry the profile index, sanitized remark and a fixed
+  # skipped entries carry the profile index, target and a fixed
   # reason code, never outbound values or jq error text.
   converter = ''
     def closed($allowed): type == "object" and ((keys - $allowed) | length == 0);
@@ -81,9 +81,9 @@ let
         | ([$candidates[] | select(has("node"))] | group_by(.node)) as $groups
         | {nodes:[$groups[] | .[0].node],
            service:([.[] | .outbounds[] | select(service)] | length),
-           skipped:([$candidates[] | select(has("reason")) | {index,label,target:"all",reason}]
-             + [$groups[] | .[1:][] | {index,label,target:"all",reason:"duplicate"}]
-             + [$groups[] | .[0] | select(.node.singBox == null) | {index,label,target:"sing-box",reason:"unsupported-xhttp"}]
+           skipped:([$candidates[] | select(has("reason")) | {index,target:"all",reason}]
+             + [$groups[] | .[1:][] | {index,target:"all",reason:"duplicate"}]
+             + [$groups[] | .[0] | select(.node.singBox == null) | {index,target:"sing-box",reason:"unsupported-xhttp"}]
              | sort_by(.index))}
       end
     end
@@ -211,7 +211,7 @@ let
           accepted_now=1
           jq -r --arg source ${lib.escapeShellArg name} '
             "VPN external refresh: source=\($source) result=accepted mihomo=\(.nodes | length) sing-box=\([.nodes[] | select(.singBox != null)] | length) skipped=\([.skipped[] | select(.target == "all")] | length) service=\(.service)",
-            (.skipped[] | "VPN external refresh: source=\($source) result=skipped index=\(.index) remark=\(.label | tojson) target=\(.target) reason=\(.reason)")
+            (.skipped[] | "VPN external refresh: source=\($source) result=skipped index=\(.index) target=\(.target) reason=\(.reason)")
           ' "$request_dir/converted.json" >&3 || true
           date +%s > "$source_dir/accepted-at"
           now="$(date +%s)"

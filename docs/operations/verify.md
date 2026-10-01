@@ -1,160 +1,175 @@
 # Verify the repository
 
-The main repository gate uses pure Nix evaluation and static source
-hygiene. It does not build packages or checks and does not execute VPN,
-DNS, parser, key-management, service or listener binaries. Python, virtual
-machines, VM-backed runners and tests on deployed machines are prohibited.
+The repository gate checks static source hygiene and forces pure Nix contracts.
+It disables builders, build jobs and import-from-derivation. It does not build
+Linux outputs, execute application binaries or parsers, start services, open
+listeners or test deployed machines. Python, virtual machines and VM runners
+are prohibited.
 
-A separate publisher regression harness is the narrow execution exception.
-It runs the generated publication shell with synthetic credentials and real
-local jq in an isolated temporary directory. Privileged ownership operations
-are stubbed; the JSON fixture does not invoke VPN parsers. It provides evidence
-about interpolation and temporary-file cleanup, not systemd, production permissions, client parser
-acceptance or deployed publication. It uses no real secrets or network and
-does not extend the main gate's execution boundary.
+## Local gate
 
-The same harness invokes `scripts/test-subscriptions-runtime.sh` for external
-subscription import. It uses synthetic Xray profiles and a stubbed HTTP client,
-clock and privileged filesystem commands. It checks extraction, including
-same-country REALITY and XHTTP pairs with an empty XHTTP host, per-node skip
-diagnostics without connection parameters, per-client
-composition, profile scope, `Ручной`/`Авто` membership, the custom `GLOBAL`
-group, node naming and collisions, source labels without refetch, cache
-invalidation and expiry without contacting a subscription or running VPN
-parsers. Its timeout stub does not prove elapsed-time enforcement on Linux.
-Neither harness proves systemd readiness, client compatibility, upstream
-availability or deployed secret handling.
+Run the complete gate from the repository root with the cached tools:
 
-Run it separately with local Bash, Nix and jq available:
+```bash
+nix shell --offline --inputs-from . --max-jobs 0 --builders '' --option allow-import-from-derivation false nixpkgs#deadnix nixpkgs#gitleaks nixpkgs#nixfmt nixpkgs#statix --command scripts/verify.sh
+```
+
+For one named evaluation result, append its name:
+
+```bash
+nix shell --offline --inputs-from . --max-jobs 0 --builders '' --option allow-import-from-derivation false nixpkgs#deadnix nixpkgs#gitleaks nixpkgs#nixfmt nixpkgs#statix --command scripts/verify.sh adguardhome-contracts
+```
+
+A focused pass is not the complete gate. The script uses the same filtered source
+snapshot and static stage for both:
+
+1. `static`: diff whitespace, Nix formatting, Statix, Deadnix and redacted Gitleaks.
+2. `evaluation`: public module IDs, package names and forced
+   `evaluationTests.x86_64-linux` results in one offline JSON evaluation.
+
+Gitleaks retains its standard detection rules and excludes only the root
+`.work/` evidence directory through native configuration. Active files, including
+hidden configuration and untracked source, remain in the scan.
+
+The nonempty named inventory rejects false booleans, non-boolean leaves and empty
+containers. Each named result forces its nested assertions; the top-level `all`
+forces every result. The flake's evaluation inventory is authoritative.
+
+Evaluation snapshots contain tracked and non-ignored untracked source files,
+excluding `.git`, `.work`, environment files and common secret, private-key and
+certificate extensions. The temporary snapshot is removed on exit. The runner
+never installs tools or enters another shell.
+
+## Contract coverage
+
+Checks share the production schemas and private publisher compiler. They cover
+nine stable module IDs, schema 3 provider tags, explicit account maps, negative
+security overrides, generated server/client structures, native service isolation,
+exact package authority, secret wiring and combined Clan composition. Compiler
+variants avoid repeated full composition; retained composition fixtures cover
+actual units, restart targets and exposure wiring.
+
+| Result | Domain regression coverage |
+| --- | --- |
+| `client-render-contracts` | Provider/profile compatibility, DNS/routing, client structures and missing-input rejection. |
+| `publisher-manifest-contracts` | Asset references, structural bindings and publication manifest. |
+| `adguardhome-contracts` | DNS/private rewrites, timeout arithmetic, filtering combinations and DoH stamp structure. |
+| `awg-contracts` | Scoped ingress, forwarding and SNAT, including NAT-disabled configuration. |
+| `naiveproxy-contracts` | Full authenticated CONNECT fragment, ACLs, listener guards and native attachment. |
+| `xray-contracts` | Public exports and direct/loopback listener configuration. |
+
+Additional forced contracts cover native AnyTLS package, identity, environment,
+credentials and vendor-declaration guards; TrustTunnel H2/IPv4 restrictions;
+publisher cleanup, readiness, retries, required assets, 15 canonical paths and
+retirement of exactly 11 path aliases. Native systemd declaration origins and
+package authority are trusted inputs; evaluation does not inspect unbuilt vendor
+outputs or prove final unit assembly. Password validator source hygiene is
+lexical and does not execute the validator.
+
+Production and checks use the same internal schema 1 artifact manifest
+(`schemaVersion`, `assetCatalog`, `profiles`). The generated publication shell
+has a fixed sequence; there is no configurable phase graph or NixOS manifest
+projection. Source assertions inspect withdrawal, cleanup and exposure order.
+See [contracts](../contracts.md) for public behavior and the module pages for
+settings; consumers need not duplicate generated rule text or renderers.
+
+## Synthetic publisher harness
+
+This is the narrow execution exception. It runs generated publication shell
+with synthetic credentials and real local jq/filesystem tools in an isolated
+temporary directory. VPN parsers, HTTP fetching, clocks and privileged ownership
+operations are stubbed. It uses no real secrets or network.
 
 ```bash
 bash scripts/test-publisher-runtime.sh
 ```
 
-The harness evaluates the real publisher generator offline with builders
-disabled, then checks JSON credential substitution and cleanup after injected
-allocation, permission-setup and jq failures. It also checks that publication
-writes no files into its working directory. Ownership and read-only temporary
-file modes are adapted for an unprivileged test process, and the Linux-only
-`mv -T` option is adapted for the local filesystem tools. These adaptations do
-not verify production permissions or replacement semantics. Cleanup checks
-assume filesystem deletion succeeds; they do not cover forced termination or
-filesystem failures that prevent unlinking files.
+The harness evaluates the generator offline with builders disabled and invokes
+`scripts/test-subscriptions-runtime.sh`. It checks structural substitution,
+allocation/permission/jq failure cleanup, no writes to the working directory,
+external Xray extraction, per-node skip diagnostics, names and collisions,
+profile selection, cache invalidation and expiry, and 1024-node uniqueness.
+The integrated slow-fetch fixture inspects the exposed `profile.json`: own
+publication precedes fetch, accepted siblings remain and expired siblings are
+withdrawn. Injected publication failures check global withdrawal and cleanup,
+including omission of synthetic secrets from logs.
 
-Run the complete local gate from the repository root:
+Unprivileged ownership and file modes, plus adaptation of Linux `mv -T`, do not
+prove production permissions or replacement semantics. Deletion-failure and
+forced-termination cleanup are outside the harness. Synthetic clocks and timeout
+stubs do not prove Linux elapsed-time enforcement or a hard deadline for the
+`65 * sourceCount + 30` TTL holdback. Client parsers and actual upstream
+availability remain outside its evidence.
 
-```bash
-nix shell --offline --inputs-from . --max-jobs 0 --builders '' nixpkgs#deadnix nixpkgs#gitleaks nixpkgs#nixfmt nixpkgs#statix --command scripts/verify.sh
-```
+## Retained artifacts
 
-To run the same static gate and one named evaluation contract through the same
-filtered snapshot path, pass its result name:
+Each gate creates a unique ignored `.work/verification/<UTC-run-id>.<suffix>/`:
 
-```bash
-nix shell --offline --inputs-from . --max-jobs 0 --builders '' nixpkgs#deadnix nixpkgs#gitleaks nixpkgs#nixfmt nixpkgs#statix --command scripts/verify.sh adguardhome-contracts
-```
-
-The outer command selects the four already-cached check tools from the pinned
-`nixpkgs` input in offline mode with builders disabled. It does not build a
-development-shell derivation. The script itself never enters another shell or
-installs tools. It executes two stages:
-
-1. `static`: diff whitespace, Nix formatting, Statix, Deadnix and redacted
-   Gitleaks checks.
-2. `evaluation`: flake evaluation, public module and package-name evaluation,
-   then a forced JSON evaluation of `evaluationTests.x86_64-linux` with
-   offline mode, builders disabled, zero build jobs and import-from-derivation
-   disabled.
-
-Evaluation uses a temporary source snapshot outside the repository containing
-only tracked and non-ignored untracked files. The snapshot excludes `.git`,
-`.work`, environment files and common secret, private-key or certificate
-extensions before Nix copies the source into its store. The script removes the
-snapshot on exit.
-
-The evaluation suite covers the nine stable module IDs, closed schemas,
-negative security overrides, generated server and client configuration
-structures, service isolation, package authority, secret/template wiring and
-combined Clan composition. Publisher checks cover static log suppression,
-publication cleanup/retry declarations, public-cache paths and readiness,
-secret restart targets and consumer-owned integration. These are generated
-configuration and script contracts, not execution of the runtime scripts.
-Manifest checks reject missing or duplicate placeholder bindings, unsupported
-decoders, unknown asset references and invalid publication phase order. The
-runtime script is rendered from those phases; static guards also inspect the
-resulting script. Separate consumer fixtures cover a disabled publisher, an
-enabled publisher with minimal dependencies and complete composition.
-Profile policy fixtures cover synthetic users, publishers and protocol
-compatibility, including single-protocol profiles, manual-only selection,
-three own DoH endpoints, protected UDP and IPv6 local exceptions. Asset checks
-cover opaque canonical paths, legacy alias collisions and MRS validation before
-cache replacement. AdGuard checks cover all four Safe Search/YouTube combinations
-and unchanged private DNS routing and rewrites.
-AdGuard timeout checks cover typed defaults, a nondefault profile and rejected
-retry-budget boundaries for silent upstreams. They check generated timeouts and
-their arithmetic relationship, not elapsed client time or runtime fallback;
-the [consumer scenarios](adguardhome.md#consumer-runtime-acceptance-specification)
-remain owned by Clanwright.
-AnyTLS checks cover its separate stock sing-box service, TLS 1.3 policy,
-runtime credentials, scoped ingress and process egress guard, plus both client
-formats with AnyTLS-only and manual-only selection. UoT v2 relay, certificate
-renewal and target-network availability remain consumer runtime acceptance.
-TrustTunnel checks cover the stock 1.1.0 package, standalone H2-only listener,
-runtime TOML credentials and certificate bindings, native private-destination
-denial, IPv4-only process restrictions and DNS-scoped guard exceptions. Provider
-and profile contracts cover its closed export schema, Mihomo TCP/UDP selection,
-single-protocol and manual-only cases, and exclusion from sing-box. Runtime TOML
-parsing, HTTP 404 authentication compatibility, TLS renewal, UDP cleanup,
-memory bounds and reconnect remain separate consumer acceptance.
-The asset contracts check refresh-before-publication ordering, the complete
-required-file guard after local asset synchronization, retention of cached
-downloads on failure and retry declarations for recovery. Empty-cache and
-upstream-outage behavior still require separate consumer runtime acceptance,
-as does parsing the HaGeZi domain list with the pinned Mihomo version.
-Each named test forces all its nested results and
-rejects false booleans or non-boolean leaves before returning JSON. Focused and
-full evaluation use that same success condition; the top-level `all` value
-forces every named result.
-
-Domain regression ownership is exercised by these named evaluation results:
-
-| Result | Coverage |
+| Artifact | Meaning |
 | --- | --- |
-| `client-render-contracts` | Provider/profile compatibility, client configuration structures, DNS/routing policy and missing-input rejection. |
-| `publisher-manifest-contracts` | Artifact bindings, required assets and publication phase ordering; combined composition checks also inspect generated cleanup and revocation guards. |
-| `adguardhome-contracts` | Selected DNS configuration and DoH stamp structure, including malformed, truncated and appended-payload fixtures. |
-| `awg-contracts` | Generated scoped ingress, forwarding and SNAT rules, including NAT-disabled configuration. |
-| `naiveproxy-contracts` | Generated authentication and CONNECT routing configuration. |
-| `xray-contracts` | Public provider exports and direct/loopback listener configuration. |
+| `scope.txt` | `full` or `test:<name>`. |
+| `summary.tsv` and stage logs | Status, durations and complete readable output. |
+| `revision.txt`, `worktree-status.txt` | Starting commit and pending paths, without a retained diff. |
+| `source-files.txt`, `source.nar-hash` | Filtered source inventory and exact evaluated snapshot hash. |
+| `flake-lock.hash` | Snapshot root lockfile hash. |
 
-These checks belong to this repository; consumers need not duplicate its
-renderers or generated rule text. Stamp structure checks do not run dnsproxy's
-parser, and generated firewall/authentication rules do not establish successful
-packet forwarding or authenticated CONNECT.
+Source and lock hashes are written when evaluation prepares its snapshot; a
+static-stage failure retains only earlier metadata. The NAR hash identifies
+contents, executable bits and symlink targets, including uncommitted source.
+The synthetic harness retains pass/fail logs and wall-clock performance in
+`.work/publisher-runtime/<UTC-run-id>.<suffix>/`. Preserve evidence directories.
 
-Each run creates a unique ignored `.work/verification/<UTC-run-id>.<suffix>/`
-directory. `scope.txt` records `full` or `test:<name>` so a focused
-pass cannot be mistaken for the complete gate. Read `summary.tsv` for stage
-status, duration and log paths. The adjacent logs contain the complete readable
-output. Preserve that directory with review evidence.
+The runner also supports explicit ephemeral Network qualification through
+`--network-candidate` with an existing direct nonsymlink store directory.
+It uses an override and `--no-write-lock-file`; root-pin failure cannot be
+reported as override success or hidden behind an adapter. Override identity,
+computed NAR hash and shell-quoted arguments are retained in
+`input-metadata.tsv` and `flake-override-arguments.txt`. The root lockfile hash
+still describes the root lock, not the effective override graph. Ephemeral
+qualification does not adopt a producer input.
 
-`revision.txt` identifies the starting Git commit and `worktree-status.txt`
-records pending paths without retaining a diff. `source-files.txt` lists the
-filtered snapshot inputs using shell-quoted paths. `source.nar-hash` hashes
-the actual evaluated snapshot, including file contents, executable bits and
-symlink targets; `flake-lock.hash` separately hashes its lockfile. These hashes
-identify uncommitted and untracked source changes as well as committed code.
-They are written when the evaluation snapshot is prepared; a run that fails
-during static checks has only its starting revision and worktree status.
+## Evidence and runtime acceptance
 
-A passing gate proves that the evaluated Nix contracts and static source checks
-accepted the revision. It does not prove that application configuration
-parsers accept generated files, packages can be built on Linux, systemd units
-start, DNS answers or fallback behave at runtime, VPN authentication or relay
-works, or any consumer machine adopted the change. Those runtime properties
-remain unverified under the defined test boundary.
+Static/pure acceptance, the synthetic publisher harness and independent review
+qualify repository source. A release, permanent consumer input adoption and
+runtime acceptance are separate operations. Network owns the compatible native
+Caddy/ACME API, specialized package and producer publication; a released producer
+must supply that API before the consumer can adopt this source.
 
-AWG startup guard failure scenarios and external acceptance are listed in
-[VPN readiness](vpn-readiness.md). Its pure Nix contracts inspect
-the generated guards; passing those contracts does not prove that the guards
-execute correctly under systemd.
+Network-owned ordinary synthetic controls qualify generic Caddy authentication,
+ACLs, listener/Host behavior, cover GET, TLS and logging contexts. They do not
+execute VPN's actual exported policy. VPN's exact-source pure composition must
+check the complete context-bearing authenticated CONNECT fragment, runtime
+import, named canonical/alias attachments and single root attachment, schema 2
+publisher fragments and fixed package/startup declarations. Optional consumer
+use of Access's public `lib.tailscaleReadyGate { pkgs; ipv4; interface; }` has
+separate qualification in ignored artifacts; it is not a shipped VPN root/lock
+input or mandatory fixture edge. When selected, it attaches to ordinary native
+Caddy `ExecStartPre` under the consuming UID/sandbox with Access package authority;
+there is no reload hook, watcher, privileged prefix or CLI override.
+
+The following consumer observations are **PREDEPLOY / NOT OBSERVED** by these
+repository checks:
+
+- Final assembled systemd units/vendor drop-ins, actual same-host startup and
+  journal behavior, including native Tailscale interface/address readiness.
+- Actual cancellation, forced stop, cgroup/process lifetime and stop-before-delete
+  ordering; cleanup under interruption, resource/socket bounds, root-peer
+  interference and private file-descriptor access/inheritance. Generated guards
+  and the synthetic harness do not prove these consuming-manager properties.
+- Native credential substitution, permissions and certificate-copy refresh on
+  ACME reload/restart; actual TLS/SNI and authenticated CONNECT routing.
+- Authentication, TCP/UDP relay, parser/client compatibility and availability on
+  intended networks, including reconnect, idle and sustained traffic.
+- Token privacy in returned HTTP errors and every logging sink; access-log
+  suppression alone does not establish this.
+- DNS answers, private-resolution closure and elapsed fallback/failover behavior;
+  source timeout arithmetic is not a measured client deadline.
+
+No root/systemd runner, VM, test host or isolation workaround is introduced to
+obtain those observations. The missing runtime evidence does not block bounded
+source acceptance. Deployment and other protected operations require their own
+authorization. Scenario owners are [AdGuard](adguardhome.md),
+[Unbound](unbound.md), [NaiveProxy](naiveproxy.md), [VLESS](vless.md),
+[Mieru](mieru.md), [AnyTLS](anytls.md), [TrustTunnel](trusttunnel.md),
+[AWG readiness](vpn-readiness.md) and [sing-box clients](sing-box-client.md).

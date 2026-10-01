@@ -72,7 +72,7 @@
     perInstance =
       {
         settings,
-        instanceName ? "dns-unbound",
+        instanceName,
         ...
       }:
       {
@@ -150,6 +150,10 @@
                 {
                   assertion = lib.length activeInstances == 1;
                   message = "unbound: only one active instance may claim the native Unbound runtime per machine.";
+                }
+                {
+                  assertion = config.services.unbound.enable && !config.services.unbound.resolveLocalQueries;
+                  message = "unbound: the active recursive backend must stay enabled without taking over the host resolver.";
                 }
                 {
                   assertion = config.services.unbound.package == unboundPackage;

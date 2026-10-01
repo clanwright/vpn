@@ -1,120 +1,65 @@
 { inputs, ... }:
 let
   lib = inputs.nixpkgs.lib;
-  providerEnvelope = import ../modules/contracts/provider-envelope.nix { inherit lib; };
+  clanLib = inputs.clan-core.lib;
+  policy = import ../modules/contracts/protocol-policy.nix;
+  identities = import ../modules/contracts/identities.nix { inherit lib; };
   vpnExports = import ../modules/contracts/vpn-exports.nix { inherit lib; };
-
-  validProvider = providerEnvelope.mkProvider {
-    protocol = "vless-xhttp";
-    instanceId = "fixture.vless";
-    machine = "fixture.machine";
-    endpoint = {
-      domain = "vless.example.invalid";
-      ipv4 = "192.0.2.10";
-      port = 443;
-    };
-    transportMetadata = {
-      reality = {
-        serverName = "donor.example.invalid";
-        serverNames = [ "donor.example.invalid" ];
-        target = "donor.example.invalid:443";
-        shortIdsByProfile."device.one" = "0123456789abcdef";
-        publicKey = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA";
+  machine = "fixture.machine";
+  instance = "fixture.provider";
+  endpoint = {
+    hostname = "vpn.example.invalid";
+    ipv4 = "192.0.2.10";
+    port = 443;
+  };
+  passwordPayload = {
+    inherit endpoint;
+    clients."device.one".passwordSecret = "fixture/device.one-password";
+  };
+  fixtures =
+    lib.mapAttrs
+      (_tag: payload: {
+        schemaVersion = 3;
+        connection.${_tag} = payload;
+      })
+      {
+        naiveproxy = passwordPayload;
+        anytls = passwordPayload;
+        trusttunnel = passwordPayload;
+        mieru = passwordPayload // {
+          endpoint = builtins.removeAttrs endpoint [ "hostname" ];
+        };
+        vless-xhttp = {
+          inherit endpoint;
+          clients."device.one" = {
+            uuidSecret = "fixture/device.one-vless-uuid";
+            shortId = "0123456789abcdef";
+          };
+          reality = {
+            serverName = "donor.example.invalid";
+            publicKey = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA";
+            fingerprint = "edge";
+            supportX25519MLKEM768 = false;
+          };
+          xhttp.path = "/fixture";
+          doh = {
+            hostname = "dns.example.invalid";
+            ipv4 = "192.0.2.53";
+          };
+        };
+        amneziawg = {
+          inherit endpoint;
+          serverPublicKey = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=";
+          headerProtectionKeySecret = "fixture/awg-header-protection-key";
+          clients."device.one" = {
+            ipv4 = "10.77.0.2";
+            privateKeySecret = "fixture/device.one-awg-private-key";
+            keepaliveSeconds = null;
+          };
+        };
       };
-      xhttp = {
-        path = "/fixture";
-        mode = "auto";
-      };
-      fingerprint = "edge";
-      doh = {
-        domain = "dns.example.invalid";
-        ipv4 = "192.0.2.53";
-      };
-    };
-    profileNames = [ "device.one" ];
-    secretNames = {
-      realityPrivateKey = "fixture/reality-private-key";
-      vlessUuid."device.one" = "fixture/device.one-vless-uuid";
-    };
-  };
-
-  validMieru = providerEnvelope.mkProvider {
-    protocol = "mieru";
-    instanceId = "fixture.mieru";
-    machine = "fixture.machine";
-    endpoint = {
-      domain = null;
-      ipv4 = "192.0.2.12";
-      port = 443;
-    };
-    transportMetadata.userNames = [ "device.one" ];
-    profileNames = [ "device.one" ];
-    secretNames.users."device.one" = "fixture/device.one-mieru-password";
-  };
-  validAnytls = providerEnvelope.mkProvider {
-    protocol = "anytls";
-    instanceId = "fixture.anytls";
-    machine = "fixture.machine";
-    endpoint = {
-      domain = "anytls.example.invalid";
-      ipv4 = "192.0.2.14";
-      port = 443;
-    };
-    transportMetadata = {
-      tlsServerName = "anytls.example.invalid";
-      userNames = [ "device.one" ];
-    };
-    profileNames = [ "device.one" ];
-    secretNames.users."device.one" = "fixture/device.one-anytls-password";
-  };
-  validTrustTunnel = providerEnvelope.mkProvider {
-    protocol = "trusttunnel";
-    instanceId = "fixture.trusttunnel";
-    machine = "fixture.machine";
-    endpoint = {
-      domain = "trusttunnel.example.invalid";
-      ipv4 = "192.0.2.15";
-      port = 443;
-    };
-    transportMetadata = {
-      tlsServerName = "trusttunnel.example.invalid";
-      userNames = [ "device.one" ];
-    };
-    profileNames = [ "device.one" ];
-    secretNames.users."device.one" = "fixture/device.one-trusttunnel-password";
-  };
-  validAwg = providerEnvelope.mkProvider {
-    protocol = "amneziawg";
-    instanceId = "fixture.awg";
-    machine = "fixture.machine";
-    endpoint = {
-      domain = "awg.example.invalid";
-      ipv4 = "192.0.2.13";
-      port = 443;
-    };
-    transportMetadata = {
-      serverPublicKey = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=";
-      interfaceName = "awg0";
-      address = "10.77.0.1/24";
-      mtu = 1280;
-      peers = [
-        {
-          name = "device.one";
-          publicKey = "CCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCA=";
-          allowedIPs = [ "10.77.0.2/32" ];
-          clientPersistentKeepalive = 25;
-        }
-      ];
-    };
-    profileNames = [ "device.one" ];
-    secretNames = {
-      clientPrivateKey."device.one" = "fixture/device.one-awg-private-key";
-      headerProtectionKey = "fixture/awg-header-protection-key";
-    };
-  };
-
-  evalProvider =
-    value:
+  evalDefinitions =
+    definitions:
     (lib.evalModules {
       modules = [
         {
@@ -122,342 +67,659 @@ let
             type = lib.types.submodule vpnExports.vpnProviderModule;
           };
         }
-        { config.provider = value; }
-      ];
+      ]
+      ++ map (value: { config.provider = value; }) definitions;
     }).config.provider;
-  typeAccepts = value: (builtins.tryEval (builtins.deepSeq (evalProvider value) true)).success;
-
-  selectProvider =
-    protocol: value:
-    let
-      metadata = providerEnvelope.protocols.${protocol};
-      selectExports =
-        predicate: exports:
-        if
-          predicate {
-            serviceName = metadata.service;
-            instanceName = value.instanceId;
-            roleName = metadata.role;
-            machineName = value.machine;
-          }
-        then
-          exports
-        else
-          { };
-    in
+  evalProvider = value: evalDefinitions [ value ];
+  accepts = value: (builtins.tryEval (builtins.deepSeq value true)).success;
+  typeAccepts = value: accepts (evalProvider value);
+  update = tag: patch: lib.recursiveUpdate fixtures.${tag} { connection.${tag} = patch; };
+  replacePayload = tag: payload: fixtures.${tag} // { connection.${tag} = payload; };
+  scopedExport = tag: value: {
+    "${
+      policy.protocols.${tag}.service
+    }:${instance}:${policy.protocols.${tag}.role}:${machine}".vpnProvider =
+      value;
+  };
+  select =
+    exports:
     vpnExports.selectVpnProvider {
-      providerInstanceId = value.instanceId;
-      providerMachine = value.machine;
-      inherit protocol selectExports;
-      exports.selected.vpnProvider = value;
+      providerMachine = machine;
+      providerInstanceId = instance;
+      inherit (clanLib) selectExports;
+      inherit exports;
       consumerInstanceId = "fixture.publisher";
     };
-  selectorAccepts =
-    protocol: value: (builtins.tryEval (builtins.deepSeq (selectProvider protocol value) true)).success;
-
-  wrongMode = lib.recursiveUpdate validProvider {
-    transportMetadata.xhttp.mode = "stream-one";
-  };
-  wrongRole = validProvider // {
-    role = "addon";
-  };
-  wrongTransport = lib.recursiveUpdate validProvider {
-    endpoint.transport = "udp";
-  };
-  wrongMetadataProtocol = lib.recursiveUpdate validProvider {
-    transportMetadata.protocol = "anytls";
-  };
-
-  fixedPolicyCases = [
-    {
-      name = "mieruCredentialEncoding";
-      protocol = "mieru";
-      value = lib.recursiveUpdate validMieru { transportMetadata.credentialEncoding = "plain"; };
-    }
-    {
-      name = "anytlsTlsVerify";
-      protocol = "anytls";
-      value = lib.recursiveUpdate validAnytls { transportMetadata.tlsVerify = false; };
-    }
-    {
-      name = "anytlsTlsMinVersion";
-      protocol = "anytls";
-      value = lib.recursiveUpdate validAnytls { transportMetadata.tlsMinVersion = "1.2"; };
-    }
-    {
-      name = "anytlsCredentialEncoding";
-      protocol = "anytls";
-      value = lib.recursiveUpdate validAnytls { transportMetadata.credentialEncoding = "plain"; };
-    }
-    {
-      name = "trustTunnelTlsVerify";
-      protocol = "trusttunnel";
-      value = lib.recursiveUpdate validTrustTunnel { transportMetadata.tlsVerify = false; };
-    }
-    {
-      name = "trustTunnelCredentialEncoding";
-      protocol = "trusttunnel";
-      value = lib.recursiveUpdate validTrustTunnel { transportMetadata.credentialEncoding = "plain"; };
-    }
-    {
-      name = "trustTunnelUpstreamProtocol";
-      protocol = "trusttunnel";
-      value = lib.recursiveUpdate validTrustTunnel { transportMetadata.upstreamProtocol = "http3"; };
-    }
-    {
-      name = "awgGeneration";
-      protocol = "amneziawg";
-      value = lib.recursiveUpdate validAwg { transportMetadata.generation = 2; };
-    }
-    {
-      name = "awgProfile";
-      protocol = "amneziawg";
-      value = lib.recursiveUpdate validAwg { transportMetadata.profile.s1 = 13; };
-    }
-  ];
-
-  fixedPolicyTypeResults = lib.listToAttrs (
-    map (case: {
-      inherit (case) name;
-      value = !(typeAccepts case.value);
-    }) fixedPolicyCases
-  );
-  fixedPolicySelectorResults = lib.listToAttrs (
-    map (case: {
-      inherit (case) name;
-      value = !(selectorAccepts case.protocol case.value);
-    }) fixedPolicyCases
-  );
-
-  canonicalizedMieru = providerEnvelope.mkProvider {
-    protocol = "mieru";
-    instanceId = "fixture.mieru";
-    machine = "fixture.machine";
-    endpoint = validMieru.endpoint // {
-      transport = "udp";
+  selectorAccepts = tag: value: accepts (select (scopedExport tag value));
+  extraOptionModule = value: { lib, ... }: {
+    options.unexpected = lib.mkOption {
+      type = lib.types.nonEmptyStr;
+      default = "synthetic";
     };
-    transportMetadata = {
-      protocol = "anytls";
-      userNames = [ "device.one" ];
-      credentialEncoding = "plain";
-    };
-    inherit (validMieru) profileNames secretNames;
+    config = value;
   };
+  forFixtures = f: lib.mapAttrs f fixtures;
+  every = values: builtins.all (value: value) (builtins.attrValues values);
 
-  /*
-    Retain this exact catalog assertion so adding a protocol requires an explicit
-    role, service, and transport decision in the public contract check.
-  */
+  # Unknown/null fields are deliberately left in each definition. Native closed
+  # submodules must reject them before any consumer sees a selected projection.
+  shapeCases = forFixtures (
+    tag: value: {
+      valid = typeAccepts value;
+      emptyTag = !(typeAccepts (value // { connection = { }; }));
+      unknownTag = !(typeAccepts (value // { connection.unsupported = value.connection.${tag}; }));
+      conflictingTags =
+        !(typeAccepts (
+          value
+          // {
+            connection = value.connection // {
+              unsupported = { };
+            };
+          }
+        ));
+      unknownRoot = !(typeAccepts (value // { unexpected = true; }));
+      nullUnknownRoot = !(typeAccepts (value // { unexpected = null; }));
+      rootCheckControl =
+        !(typeAccepts (
+          value
+          // {
+            _module.check = false;
+            unexpected = null;
+          }
+        ));
+      rootExplicitCheck = !(typeAccepts (value // { _module.check = true; }));
+      rootFreeformControl =
+        !(typeAccepts (
+          value
+          // {
+            _module.freeformType = lib.types.attrs;
+            unexpected = null;
+          }
+        ));
+      payloadCheckControl =
+        !(typeAccepts (
+          update tag {
+            _module.check = false;
+            unexpected = null;
+          }
+        ));
+      payloadFreeformControl =
+        !(typeAccepts (
+          update tag {
+            _module.freeformType = lib.types.attrs;
+            unexpected = null;
+          }
+        ));
+      endpointCheckControl =
+        !(typeAccepts (
+          update tag {
+            endpoint._module.check = false;
+            endpoint.unexpected = null;
+          }
+        ));
+      clientCheckControl =
+        !(typeAccepts (
+          update tag {
+            clients."device.one"._module.check = false;
+            clients."device.one".unexpected = null;
+          }
+        ));
+      specialRootControls = builtins.all (field: !(typeAccepts (value // { ${field} = { }; }))) [
+        "imports"
+        "options"
+        "config"
+      ];
+      specialPayloadControls = builtins.all (field: !(typeAccepts (update tag { ${field} = { }; }))) [
+        "imports"
+        "options"
+        "config"
+      ];
+      specialAccountNamesAllowed = typeAccepts (
+        replacePayload tag (
+          value.connection.${tag}
+          // {
+            clients.config = value.connection.${tag}.clients."device.one";
+          }
+        )
+      );
+      oldEnvelope =
+        !(typeAccepts (
+          value
+          // {
+            protocol = tag;
+            inherit machine;
+          }
+        ));
+      legacyVersion = !(typeAccepts (value // { schemaVersion = 2; }));
+      nullVersion = !(typeAccepts (value // { schemaVersion = null; }));
+      nullConnection = !(typeAccepts (value // { connection = null; }));
+      nullPayload = !(typeAccepts (replacePayload tag null));
+      unknownPayload = !(typeAccepts (update tag { unexpected = true; }));
+      nullUnknownPayload = !(typeAccepts (update tag { unexpected = null; }));
+      nullEndpoint = !(typeAccepts (update tag { endpoint = null; }));
+      unknownEndpoint = !(typeAccepts (update tag { endpoint.unexpected = true; }));
+      nullUnknownEndpoint = !(typeAccepts (update tag { endpoint.unexpected = null; }));
+      missingIpv4 =
+        !(typeAccepts (
+          replacePayload tag (
+            value.connection.${tag}
+            // {
+              endpoint = builtins.removeAttrs value.connection.${tag}.endpoint [ "ipv4" ];
+            }
+          )
+        ));
+      nullIpv4 = !(typeAccepts (update tag { endpoint.ipv4 = null; }));
+      malformedIpv4 = !(typeAccepts (update tag { endpoint.ipv4 = "192.0.2.999"; }));
+      noncanonicalIpv4 = !(typeAccepts (update tag { endpoint.ipv4 = "192.00.2.10"; }));
+      zeroPort = !(typeAccepts (update tag { endpoint.port = 0; }));
+      highPort = !(typeAccepts (update tag { endpoint.port = 65536; }));
+      nullPort = !(typeAccepts (update tag { endpoint.port = null; }));
+      emptyClients = !(typeAccepts (replacePayload tag (value.connection.${tag} // { clients = { }; })));
+      nullClients = !(typeAccepts (update tag { clients = null; }));
+      unknownClientField = !(typeAccepts (update tag { clients."device.one".unexpected = true; }));
+      nullUnknownClientField = !(typeAccepts (update tag { clients."device.one".unexpected = null; }));
+      unsafeClient =
+        !(typeAccepts (
+          replacePayload tag (
+            value.connection.${tag}
+            // {
+              clients."unsafe/client" = value.connection.${tag}.clients."device.one";
+            }
+          )
+        ));
+      duplicatedCredential =
+        !(typeAccepts (
+          update tag {
+            clients."device.two" = value.connection.${tag}.clients."device.one";
+          }
+        ));
+      versionForcesPayload =
+        !(accepts
+          (evalProvider (
+            update tag {
+              endpoint.unexpected = null;
+            }
+          )).schemaVersion
+        );
+      requiredPayloadFields = builtins.all (
+        field: !(typeAccepts (replacePayload tag (builtins.removeAttrs value.connection.${tag} [ field ])))
+      ) (builtins.attrNames value.connection.${tag});
+      requiredClientFields = builtins.all (
+        field:
+        field == "keepaliveSeconds"
+        || !(typeAccepts (
+          replacePayload tag (
+            value.connection.${tag}
+            // {
+              clients."device.one" = builtins.removeAttrs value.connection.${tag}.clients."device.one" [ field ];
+            }
+          )
+        ))
+      ) (builtins.attrNames value.connection.${tag}.clients."device.one");
+      nullClientFields = builtins.all (
+        field:
+        field == "keepaliveSeconds"
+        || !(typeAccepts (
+          update tag {
+            clients."device.one".${field} = null;
+          }
+        ))
+      ) (builtins.attrNames value.connection.${tag}.clients."device.one");
+    }
+  );
+  hostnameCases =
+    lib.genAttrs [ "naiveproxy" "vless-xhttp" "amneziawg" "anytls" "trusttunnel" ]
+      (tag: {
+        missing =
+          !(typeAccepts (
+            replacePayload tag (
+              fixtures.${tag}.connection.${tag}
+              // {
+                endpoint = builtins.removeAttrs endpoint [ "hostname" ];
+              }
+            )
+          ));
+        null = !(typeAccepts (update tag { endpoint.hostname = null; }));
+        empty = !(typeAccepts (update tag { endpoint.hostname = ""; }));
+        malformed = !(typeAccepts (update tag { endpoint.hostname = "vpn..example.invalid"; }));
+        wildcard = !(typeAccepts (update tag { endpoint.hostname = "*.example.invalid"; }));
+      });
+  specificCases = {
+    mieruHostnameRejected =
+      !(typeAccepts (update "mieru" { endpoint.hostname = "vpn.example.invalid"; }));
+    vlessShortIdLength =
+      !(typeAccepts (update "vless-xhttp" { clients."device.one".shortId = "abc"; }));
+    vlessShortIdCase =
+      !(typeAccepts (update "vless-xhttp" { clients."device.one".shortId = "0123456789ABCDEF"; }));
+    vlessRepeatedShortId =
+      !(typeAccepts (
+        update "vless-xhttp" {
+          clients."device.two" = {
+            uuidSecret = "fixture/device.two-vless-uuid";
+            shortId = "0123456789abcdef";
+          };
+        }
+      ));
+    vlessPublicKey = !(typeAccepts (update "vless-xhttp" { reality.publicKey = "invalid"; }));
+    vlessMissingPolicy =
+      !(typeAccepts (
+        replacePayload "vless-xhttp" (
+          fixtures.vless-xhttp.connection.vless-xhttp
+          // {
+            reality = builtins.removeAttrs fixtures.vless-xhttp.connection.vless-xhttp.reality [
+              "supportX25519MLKEM768"
+            ];
+          }
+        )
+      ));
+    vlessEnabledPolicy = typeAccepts (update "vless-xhttp" { reality.supportX25519MLKEM768 = true; });
+    vlessWrongPolicyType =
+      !(typeAccepts (update "vless-xhttp" { reality.supportX25519MLKEM768 = "true"; }));
+    vlessUnknownReality = !(typeAccepts (update "vless-xhttp" { reality.unexpected = null; }));
+    vlessPath = !(typeAccepts (update "vless-xhttp" { xhttp.path = "relative"; }));
+    vlessWhitespacePath = !(typeAccepts (update "vless-xhttp" { xhttp.path = "/white space"; }));
+    vlessFixedModeRemoved = !(typeAccepts (update "vless-xhttp" { xhttp.mode = "auto"; }));
+    vlessDohIpv4 = !(typeAccepts (update "vless-xhttp" { doh.ipv4 = "192.0.2.999"; }));
+    vlessDohHostname = !(typeAccepts (update "vless-xhttp" { doh.hostname = "dns..invalid"; }));
+    awgPublicKey = !(typeAccepts (update "amneziawg" { serverPublicKey = "invalid"; }));
+    awgNoncanonicalPublicKey =
+      !(typeAccepts (
+        update "amneziawg" { serverPublicKey = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAB="; }
+      ));
+    awgHeaderBindingOverlap =
+      !(typeAccepts (
+        update "amneziawg" {
+          headerProtectionKeySecret = "fixture/device.one-awg-private-key";
+        }
+      ));
+    awgRepeatedClientIp =
+      !(typeAccepts (
+        update "amneziawg" {
+          clients."device.two" = {
+            ipv4 = "10.77.0.2";
+            privateKeySecret = "fixture/device.two-awg-private-key";
+            keepaliveSeconds = 25;
+          };
+        }
+      ));
+    awgNullKeepalivePreserved =
+      (evalProvider fixtures.amneziawg).connection.amneziawg.clients."device.one".keepaliveSeconds
+      == null;
+    awgPositiveKeepalive = typeAccepts (
+      update "amneziawg" { clients."device.one".keepaliveSeconds = 25; }
+    );
+    awgZeroKeepalive =
+      !(typeAccepts (update "amneziawg" { clients."device.one".keepaliveSeconds = 0; }));
+    awgLargeKeepalive =
+      !(typeAccepts (update "amneziawg" { clients."device.one".keepaliveSeconds = 65536; }));
+    unsafeSecret =
+      !(typeAccepts (update "anytls" { clients."device.one".passwordSecret = "../unsafe"; }));
+    oldFixedPolicyRejected = !(typeAccepts (update "anytls" { tlsVerify = true; }));
+  };
+  mergeCases = {
+    validSplitDefinitions = accepts (evalDefinitions [
+      {
+        schemaVersion = 3;
+        connection.anytls.endpoint = endpoint;
+      }
+      { connection.anytls.clients = passwordPayload.clients; }
+    ]);
+    conflictingNativeTags =
+      !(accepts (evalDefinitions [
+        fixtures.anytls
+        fixtures.trusttunnel
+      ]));
+    sharedPasswordAcrossDefinitions =
+      !(accepts (evalDefinitions [
+        fixtures.anytls
+        {
+          connection.anytls.clients."device.two" = passwordPayload.clients."device.one";
+        }
+      ]));
+    sharedUuidAcrossDefinitions =
+      !(accepts (evalDefinitions [
+        fixtures.vless-xhttp
+        {
+          connection.vless-xhttp.clients."device.two" = {
+            uuidSecret = "fixture/device.one-vless-uuid";
+            shortId = "fedcba9876543210";
+          };
+        }
+      ]));
+    unknownAcrossDefinitions =
+      !(accepts (evalDefinitions [
+        fixtures.anytls
+        { unexpected = null; }
+      ]));
+  };
+  nativeModuleCases = forFixtures (
+    tag: value: {
+      closedModuleExpression = typeAccepts (_: {
+        config = value;
+      });
+      rootOptionExtension = !(typeAccepts (extraOptionModule value));
+      versionForcesRootExtension = !(accepts (evalProvider (extraOptionModule value)).schemaVersion);
+      payloadOptionExtension =
+        !(typeAccepts (replacePayload tag (extraOptionModule value.connection.${tag})));
+      endpointOptionExtension =
+        !(typeAccepts (
+          replacePayload tag (
+            value.connection.${tag}
+            // {
+              endpoint = extraOptionModule value.connection.${tag}.endpoint;
+            }
+          )
+        ));
+      clientOptionExtension =
+        !(typeAccepts (
+          replacePayload tag (
+            value.connection.${tag}
+            // {
+              clients."device.one" = extraOptionModule value.connection.${tag}.clients."device.one";
+            }
+          )
+        ));
+    }
+  );
+  # Exercise the pinned Clan registration wrapper, rather than substituting a
+  # more restrictive root type than producers actually receive.
+  registrationModule =
+    (
+      (import (inputs.clan-core.outPath + "/modules/clan/top-level-interface.nix") {
+        inherit lib clanLib;
+        self = { };
+        config = { };
+      }).options.exportInterfaces.apply
+        { vpnProvider = vpnExports.vpnProviderModule; }
+    ).vpnProvider;
+  registeredProvider =
+    value:
+    (lib.evalModules {
+      modules = [
+        registrationModule
+        { config.vpnProvider = value; }
+      ];
+    }).config.vpnProvider;
+  registrationCases = {
+    realClanRegistration = accepts (registeredProvider fixtures.anytls);
+    realClanRootOptionExtension = !(accepts (registeredProvider (extraOptionModule fixtures.anytls)));
+    realClanPayloadOptionExtension =
+      !(accepts (registeredProvider (replacePayload "anytls" (extraOptionModule passwordPayload))));
+    realClanRealityOptionExtension =
+      !(accepts (
+        registeredProvider (
+          replacePayload "vless-xhttp" (
+            fixtures.vless-xhttp.connection.vless-xhttp
+            // {
+              reality = extraOptionModule fixtures.vless-xhttp.connection.vless-xhttp.reality;
+            }
+          )
+        )
+      ));
+    realClanRootControl =
+      !(accepts (
+        registeredProvider (
+          fixtures.anytls
+          // {
+            _module.check = false;
+            unexpected = null;
+          }
+        )
+      ));
+    realClanPayloadControl =
+      !(accepts (
+        registeredProvider (
+          update "anytls" {
+            _module.check = false;
+            unexpected = null;
+          }
+        )
+      ));
+    realClanRootFreeform =
+      !(accepts (
+        registeredProvider (
+          fixtures.anytls
+          // {
+            _module.freeformType = lib.types.attrs;
+            unexpected = null;
+          }
+        )
+      ));
+    nativeDocsDiscovery =
+      builtins.attrNames (registrationModule.options.vpnProvider.type.getSubOptions [ "vpnProvider" ])
+      == [
+        "_module"
+        "connection"
+        "schemaVersion"
+      ];
+    nativePayloadDocsDiscovery =
+      builtins.attrNames (
+        (
+          (registrationModule.options.vpnProvider.type.getSubOptions [ "vpnProvider" ])
+          .connection.type.getSubOptions
+            [
+              "vpnProvider"
+              "connection"
+            ]
+        ).anytls.type.getSubOptions
+          [
+            "vpnProvider"
+            "connection"
+            "anytls"
+          ]
+      ) == [
+        "_module"
+        "clients"
+        "endpoint"
+      ];
+  };
+  nativeSelectionCases = forFixtures (
+    tag: value: {
+      valid = selectorAccepts tag value;
+      internalScopeOnly =
+        select (scopedExport tag value) == {
+          inherit machine;
+          instanceId = instance;
+          inherit (value) connection;
+        };
+      tagMustMatchScope =
+        !(selectorAccepts tag fixtures.${if tag == "anytls" then "trusttunnel" else "anytls"});
+      wrongRole =
+        !(accepts (select {
+          "${policy.protocols.${tag}.service}:${instance}:wrong-role:${machine}".vpnProvider = value;
+        }));
+      wrongService =
+        !(accepts (select {
+          "@foreign/vpn:${instance}:${policy.protocols.${tag}.role}:${machine}".vpnProvider = value;
+        }));
+      wrongMachine =
+        !(accepts (select {
+          "${
+            policy.protocols.${tag}.service
+          }:${instance}:${policy.protocols.${tag}.role}:other-machine".vpnProvider =
+            value;
+        }));
+      wrongInstance =
+        !(accepts (select {
+          "${
+            policy.protocols.${tag}.service
+          }:other-instance:${policy.protocols.${tag}.role}:${machine}".vpnProvider =
+            value;
+        }));
+      nullUnknownFieldRejected = !(selectorAccepts tag (update tag { unexpected = null; }));
+    }
+  );
+  selectorCases = {
+    noProvider = !(accepts (select { }));
+    multipleKnownProviders =
+      !(accepts (
+        select (
+          (scopedExport "anytls" fixtures.anytls) // (scopedExport "trusttunnel" fixtures.trusttunnel)
+        )
+      ));
+    missingInterface =
+      !(accepts (select {
+        "${policy.protocols.anytls.service}:${instance}:gateway:${machine}" = { };
+      }));
+    disabledNullInterface = !(selectorAccepts "anytls" null);
+    invalidSelectorResult =
+      !(accepts (
+        vpnExports.selectVpnProvider {
+          providerMachine = machine;
+          providerInstanceId = instance;
+          selectExports = _: _: [ ];
+          exports = { };
+        }
+      ));
+    unknownExports = !(accepts (select null));
+  };
   expectedCatalog = {
-    anytls = {
-      role = "gateway";
-      service = "@clanwright/vpn-anytls";
-      transport = "tcp";
-    };
-    amneziawg = {
-      role = "gateway";
-      service = "@clanwright/vpn-amneziawg";
-      transport = "udp";
-    };
-    mieru = {
-      role = "gateway";
-      service = "@clanwright/vpn-mieru";
-      transport = "tcp";
-    };
     naiveproxy = {
       role = "addon";
       service = "@clanwright/vpn-naiveproxy";
-      transport = "tcp";
-    };
-    trusttunnel = {
-      role = "gateway";
-      service = "@clanwright/vpn-trusttunnel";
-      transport = "tcp";
     };
     vless-xhttp = {
       role = "gateway";
       service = "@clanwright/vpn-mihomo-vless-xhttp";
-      transport = "tcp";
+    };
+    amneziawg = {
+      role = "gateway";
+      service = "@clanwright/vpn-amneziawg";
+    };
+    mieru = {
+      role = "gateway";
+      service = "@clanwright/vpn-mieru";
+    };
+    anytls = {
+      role = "gateway";
+      service = "@clanwright/vpn-anytls";
+    };
+    trusttunnel = {
+      role = "gateway";
+      service = "@clanwright/vpn-trusttunnel";
     };
   };
-
-  unsupportedConstructor = builtins.tryEval (
-    builtins.deepSeq (providerEnvelope.mkProvider {
-      protocol = "unsupported";
-      instanceId = "fixture";
-      machine = "fixture";
-      endpoint = { };
-      transportMetadata = { };
-      profileNames = [ "fixture" ];
-      secretNames = { };
-    }) true
-  );
-  constructorContract =
-    providerEnvelope.schemaVersion == 2
-    && providerEnvelope.protocols == expectedCatalog
-    && validProvider.schemaVersion == 2
-    && validProvider.role == "gateway"
-    && validProvider.enabled
-    && validProvider.endpoint.transport == "tcp"
-    && validProvider.transportMetadata.protocol == "vless-xhttp"
-    && canonicalizedMieru.endpoint.transport == "tcp"
-    && canonicalizedMieru.transportMetadata.protocol == "mieru"
-    && canonicalizedMieru.transportMetadata.credentialEncoding == "base64url"
-    && validAnytls.endpoint.transport == "tcp"
+  policyContract =
+    vpnExports.schemaVersion == 3
+    && policy.protocols == expectedCatalog
+    && policy.awgGeneration == 3
+    && policy.awgMtu == 1280
     &&
-      validAnytls.transportMetadata == {
-        protocol = "anytls";
-        tlsServerName = "anytls.example.invalid";
-        userNames = [ "device.one" ];
-        tlsVerify = true;
-        tlsMinVersion = "1.3";
-        credentialEncoding = "base64url";
-      }
-    && validTrustTunnel.endpoint.transport == "tcp"
-    &&
-      validTrustTunnel.transportMetadata == {
-        protocol = "trusttunnel";
-        userNames = [ "device.one" ];
-        tlsServerName = "trusttunnel.example.invalid";
-        tlsVerify = true;
-        credentialEncoding = "base64url";
-        upstreamProtocol = "http2";
-      }
-    && !unsupportedConstructor.success;
-  typeResults = {
-    valid = typeAccepts validProvider;
-    legacyRealityPolicyDefaultsFalse =
-      !(evalProvider validProvider).transportMetadata.reality.supportX25519MLKEM768;
-    enabledRealityPolicy = typeAccepts (
-      lib.recursiveUpdate validProvider { transportMetadata.reality.supportX25519MLKEM768 = true; }
-    );
-    wrongRealityPolicyType =
-      !(typeAccepts (
-        lib.recursiveUpdate validProvider { transportMetadata.reality.supportX25519MLKEM768 = "true"; }
-      ));
-    validAnytls = typeAccepts validAnytls;
-    validTrustTunnel = typeAccepts validTrustTunnel;
-    wrongMode = !(typeAccepts wrongMode);
-    wrongRole = !(typeAccepts wrongRole);
-    wrongTransport = !(typeAccepts wrongTransport);
-    wrongMetadataProtocol = !(typeAccepts wrongMetadataProtocol);
-    fixedPolicies = builtins.all (value: value) (builtins.attrValues fixedPolicyTypeResults);
+      policy.awgProfile == {
+        s1 = 12;
+        s2 = 12;
+        s3 = 12;
+        s4 = 12;
+        h1 = 1;
+        h2 = 2;
+        h3 = 3;
+        h4 = 4;
+        contentPaddingAddition = {
+          min = 2;
+          max = 10;
+        };
+        randomTrailers = true;
+        disableCookies = false;
+      };
+  identityCases = {
+    stableCertificateKey = identities.certificateKeyType.check "existing_cert.example.invalid";
+    maxCertificateKey = identities.certificateKeyType.check (lib.concatStrings (lib.replicate 253 "x"));
+    overlongCertificateKey =
+      !(identities.certificateKeyType.check (lib.concatStrings (lib.replicate 254 "x")));
+    wildcardCertificateKey = !(identities.certificateKeyType.check "*.example.invalid");
+    unsafeCertificatePath = !(identities.certificateKeyType.check "cert/child");
+    strictDeviceLength =
+      !(identities.safeIdentityType.check (lib.concatStrings (lib.replicate 65 "x")));
+    maxDeviceLength = identities.safeIdentityType.check (lib.concatStrings (lib.replicate 64 "x"));
+    distinctDnsPunctuation =
+      identities.certificateKeyType.check "a-b.example"
+      && identities.certificateKeyType.check "a.b.example";
   };
-  typeContract = builtins.all (value: value) (builtins.attrValues typeResults);
-  selectorResults = {
-    validVless = selectorAccepts "vless-xhttp" validProvider;
-    enabledRealityPolicy = selectorAccepts "vless-xhttp" (
-      lib.recursiveUpdate validProvider { transportMetadata.reality.supportX25519MLKEM768 = true; }
-    );
-    disabledRealityPolicy = selectorAccepts "vless-xhttp" (
-      lib.recursiveUpdate validProvider { transportMetadata.reality.supportX25519MLKEM768 = false; }
-    );
-    wrongRealityPolicyType =
-      !(selectorAccepts "vless-xhttp" (
-        lib.recursiveUpdate validProvider { transportMetadata.reality.supportX25519MLKEM768 = "true"; }
-      ));
-    unknownRealityField =
-      !(selectorAccepts "vless-xhttp" (
-        lib.recursiveUpdate validProvider { transportMetadata.reality.unexpected = true; }
-      ));
-    validMieru = selectorAccepts "mieru" validMieru;
-    validAnytls = selectorAccepts "anytls" validAnytls;
-    validTrustTunnel = selectorAccepts "trusttunnel" validTrustTunnel;
-    validAwg = selectorAccepts "amneziawg" validAwg;
-    anytlsMissingIpv4 =
-      !(selectorAccepts "anytls" (
-        validAnytls // { endpoint = builtins.removeAttrs validAnytls.endpoint [ "ipv4" ]; }
-      ));
-    anytlsMissingDomain =
-      !(selectorAccepts "anytls" (
-        validAnytls // { endpoint = builtins.removeAttrs validAnytls.endpoint [ "domain" ]; }
-      ));
-    anytlsWrongIpv4 =
-      !(selectorAccepts "anytls" (lib.recursiveUpdate validAnytls { endpoint.ipv4 = "192.0.2.999"; }));
-    anytlsSniMismatch =
-      !(selectorAccepts "anytls" (
-        lib.recursiveUpdate validAnytls { transportMetadata.tlsServerName = "other.example.invalid"; }
-      ));
-    anytlsUdpTransportRejected =
-      !(selectorAccepts "anytls" (lib.recursiveUpdate validAnytls { endpoint.transport = "udp"; }));
-    anytlsUnknownMetadataRejected =
-      !(selectorAccepts "anytls" (
-        lib.recursiveUpdate validAnytls { transportMetadata.alpn = [ "h2" ]; }
-      ));
-    anytlsUsersMismatch =
-      !(selectorAccepts "anytls" (
-        lib.recursiveUpdate validAnytls { transportMetadata.userNames = [ "other" ]; }
-      ));
-    anytlsSecretMapMismatch =
-      !(selectorAccepts "anytls" (
-        lib.recursiveUpdate validAnytls { secretNames.users.other = "fixture/other-anytls-password"; }
-      ));
-    trustTunnelMissingIpv4 =
-      !(selectorAccepts "trusttunnel" (
-        validTrustTunnel // { endpoint = builtins.removeAttrs validTrustTunnel.endpoint [ "ipv4" ]; }
-      ));
-    trustTunnelMissingDomain =
-      !(selectorAccepts "trusttunnel" (
-        validTrustTunnel // { endpoint = builtins.removeAttrs validTrustTunnel.endpoint [ "domain" ]; }
-      ));
-    trustTunnelWrongIpv4 =
-      !(selectorAccepts "trusttunnel" (
-        lib.recursiveUpdate validTrustTunnel { endpoint.ipv4 = "192.0.2.999"; }
-      ));
-    trustTunnelSniMismatch =
-      !(selectorAccepts "trusttunnel" (
-        lib.recursiveUpdate validTrustTunnel {
-          transportMetadata.tlsServerName = "other.example.invalid";
-        }
-      ));
-    trustTunnelUdpTransportRejected =
-      !(selectorAccepts "trusttunnel" (
-        lib.recursiveUpdate validTrustTunnel { endpoint.transport = "udp"; }
-      ));
-    trustTunnelUnknownTopLevelRejected =
-      !(selectorAccepts "trusttunnel" (validTrustTunnel // { unexpected = true; }));
-    trustTunnelUnknownEndpointRejected =
-      !(selectorAccepts "trusttunnel" (
-        lib.recursiveUpdate validTrustTunnel { endpoint.path = "/unexpected"; }
-      ));
-    trustTunnelUnknownMetadataRejected =
-      !(selectorAccepts "trusttunnel" (
-        lib.recursiveUpdate validTrustTunnel { transportMetadata.alpn = [ "h2" ]; }
-      ));
-    trustTunnelUsersMismatch =
-      !(selectorAccepts "trusttunnel" (
-        lib.recursiveUpdate validTrustTunnel { transportMetadata.userNames = [ "other" ]; }
-      ));
-    trustTunnelSecretMapMismatch =
-      !(selectorAccepts "trusttunnel" (
-        lib.recursiveUpdate validTrustTunnel {
-          secretNames.users.other = "fixture/other-trusttunnel-password";
-        }
-      ));
-    dottedIdentity = (selectProvider "vless-xhttp" validProvider).profileNames == [ "device.one" ];
-    wrongMode = !(selectorAccepts "vless-xhttp" wrongMode);
-    wrongRole = !(selectorAccepts "vless-xhttp" wrongRole);
-    wrongTransport = !(selectorAccepts "vless-xhttp" wrongTransport);
-    wrongMetadataProtocol = !(selectorAccepts "vless-xhttp" wrongMetadataProtocol);
-    fixedPolicies = builtins.all (value: value) (builtins.attrValues fixedPolicySelectorResults);
+  addressValidation = import ../modules/contracts/address-validation.nix { inherit lib; };
+  repeat = count: lib.concatStrings (lib.replicate count "a");
+  maxHostname = lib.concatStringsSep "." [
+    (repeat 63)
+    (repeat 63)
+    (repeat 63)
+    (repeat 61)
+  ];
+  addressCases = {
+    validHostnames = builtins.all addressValidation.validHostname [
+      "Vpn.Example.INVALID"
+      "localhost"
+      "123"
+      "1.2.3.4"
+      "a-b.example"
+      (repeat 63)
+      maxHostname
+    ];
+    invalidHostnames = builtins.all (value: !addressValidation.validHostname value) [
+      null
+      1
+      [ ]
+      { }
+      ""
+      "a..b"
+      "a.-b"
+      "a.b-"
+      "*.example"
+      "a_b.example"
+      "example:443"
+      "example."
+      (repeat 64)
+      "${maxHostname}a"
+    ];
+    validIPv4s = builtins.all addressValidation.validIPv4 [
+      "0.0.0.0"
+      "255.255.255.255"
+      "192.0.2.1"
+    ];
+    invalidIPv4s = builtins.all (value: !addressValidation.validIPv4 value) [
+      null
+      1
+      [ ]
+      { }
+      ""
+      "256.0.0.1"
+      "192.00.2.1"
+      "192.0.2"
+      "192.0.2.1.1"
+      "192.0.2.-1"
+      "192.0.2.1:443"
+      "2001:db8::1"
+    ];
   };
-  selectorContract = builtins.all (value: value) (builtins.attrValues selectorResults);
-  contract = constructorContract && typeContract && selectorContract;
+  results = {
+    inherit policyContract;
+    typeContract =
+      every (lib.mapAttrs (_: every) shapeCases)
+      && every (lib.mapAttrs (_: every) hostnameCases)
+      && every specificCases
+      && every mergeCases
+      && every (lib.mapAttrs (_: every) nativeModuleCases)
+      && every registrationCases;
+    selectorContract = every (lib.mapAttrs (_: every) nativeSelectionCases) && every selectorCases;
+    identityContract = every identityCases;
+    addressContract = every addressCases;
+  };
+  details = {
+    inherit
+      shapeCases
+      hostnameCases
+      specificCases
+      mergeCases
+      nativeSelectionCases
+      selectorCases
+      identityCases
+      addressCases
+      registrationCases
+      nativeModuleCases
+      ;
+  };
 in
-if !contract then
-  throw "Provider constructor, type, or selector contract failed: ${
-    builtins.toJSON {
-      inherit
-        constructorContract
-        selectorContract
-        selectorResults
-        typeContract
-        typeResults
-        ;
-    }
-  }"
-else
-  {
-    all = true;
-    inherit constructorContract selectorContract typeContract;
-  }
+builtins.deepSeq details (
+  if !every results then
+    throw "Provider native type, policy or scope selector contract failed: ${builtins.toJSON details}"
+  else
+    results // { all = true; }
+)

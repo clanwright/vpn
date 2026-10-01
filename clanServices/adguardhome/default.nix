@@ -183,7 +183,7 @@
 
     perInstance =
       {
-        instanceName ? "dns-adguardhome",
+        instanceName,
         settings,
         ...
       }:
@@ -199,10 +199,16 @@
             active = settings.enable;
             activeInstances = config.clanwright.dns.adguardhome.activeInstances;
             adguardPackage = adguardPackageFor pkgs.system;
-            adguardSchemaVersion = 34;
+            adguardSchemaVersion = adguardPackage.schema_version;
             dnsproxyPackage = dnsproxyPackageFor pkgs.system;
             templateName = "${instanceName}-adguardhome.yaml";
             configCredentialPath = config.sops.templates.${templateName}.path;
+            effectiveUnit = config.systemd.services.adguardhome;
+            credentialStartPre = [
+              "${pkgs.coreutils}/bin/install -m 600 %d/config /var/lib/AdGuardHome/AdGuardHome.yaml"
+              "${adguardPackage}/bin/AdGuardHome -c /var/lib/AdGuardHome/AdGuardHome.yaml --check-config"
+            ];
+            credentialExecStart = "${lib.getExe adguardPackage} --no-check-update --pidfile /run/AdGuardHome/AdGuardHome.pid --work-dir /var/lib/AdGuardHome/ --config /var/lib/AdGuardHome/AdGuardHome.yaml";
             secretSettings = {
               path = "/run/secrets/${settings.auth.passwordSecretName}";
               owner = "root";
@@ -560,8 +566,28 @@
                       config.services.adguardhome.enable
                       && config.services.adguardhome.settings == null
                       && !config.services.adguardhome.mutableSettings
-                      && !config.services.adguardhome.openFirewall;
+                      && !config.services.adguardhome.openFirewall
+                      && config.services.adguardhome.extraArgs == [ ]
+                      && !config.services.adguardhome.allowDHCP;
                   message = "adguardhome: the native service must retain credential-owned settings and closed firewall defaults.";
+                }
+                {
+                  assertion =
+                    !active
+                    ||
+                      effectiveUnit.serviceConfig.LoadCredential == "config:${configCredentialPath}"
+                      && effectiveUnit.serviceConfig.ExecStartPre == credentialStartPre
+                      && effectiveUnit.preStart == ""
+                      && effectiveUnit.serviceConfig.ExecStart == credentialExecStart
+                      && effectiveUnit.serviceConfig.DynamicUser
+                      && effectiveUnit.serviceConfig.StateDirectory == "AdGuardHome"
+                      && effectiveUnit.serviceConfig.RuntimeDirectory == "AdGuardHome"
+                      && effectiveUnit.serviceConfig.NoNewPrivileges
+                      && effectiveUnit.serviceConfig.ProtectSystem == "strict"
+                      && effectiveUnit.serviceConfig.CapabilityBoundingSet == [ "CAP_NET_BIND_SERVICE" ]
+                      && effectiveUnit.serviceConfig.AmbientCapabilities == [ "CAP_NET_BIND_SERVICE" ]
+                      && !(builtins.elem "AF_PACKET" effectiveUnit.serviceConfig.RestrictAddressFamilies);
+                  message = "adguardhome: the effective native unit must install and validate its credential before starting the closed DNS runtime without DHCP capabilities.";
                 }
                 {
                   assertion = !active || config.services.dnsproxy.package == dnsproxyPackage;
@@ -728,10 +754,7 @@
                 ++ sopsUnits;
                 serviceConfig = {
                   LoadCredential = "config:${configCredentialPath}";
-                  ExecStartPre = [
-                    "${pkgs.coreutils}/bin/install -m 600 %d/config /var/lib/AdGuardHome/AdGuardHome.yaml"
-                    "${adguardPackage}/bin/AdGuardHome -c /var/lib/AdGuardHome/AdGuardHome.yaml --check-config"
-                  ];
+                  ExecStartPre = credentialStartPre;
                 };
               };
 

@@ -9,7 +9,7 @@ Their public entrypoints are listed in [contracts](contracts.md).
 | --- | --- |
 | Service implementation and defaults | Placement and composition |
 | Typed provider exports | Machine facts and secret bindings |
-| Exact application packages | Exposure, certificates and Caddy site claims |
+| Exact application packages | Exposure, certificates and native Caddy sites |
 | Module and integration contracts | Operator entrypoints, monitoring and deployment |
 
 The flake does not import a consumer checkout. TCP tuning belongs to the consumer.
@@ -22,18 +22,25 @@ The flake does not import a consumer checkout. TCP tuning belongs to the consume
   the consumer owns shared-port SNI routing and HTTPS composition.
 - AmneziaWG runs as a userspace generation-3 UDP gateway with a runtime
   header-protection key and individual peer keys.
-- NaiveProxy contributes a Caddy `forward_proxy` fragment to a consumer-selected
-  public site. The consumer supplies Network's Caddy package with the required
-  plugins.
+- NaiveProxy extends a native Caddy vhost selected by canonical domain with
+  `forwardProxy = true` and a full authenticated CONNECT route at order 500.
+  The consumer owns the base site, exact IPv4/TCP443 listener, aliases and
+  physical certificate ID. Root catch-all attaches CONNECT once automatically;
+  consumers attach the same fragment inside named canonical/alias Host routes
+  on the public listener that could shadow an allowed target. Ordinary sites
+  retain GET/certificate bases and do not become forwardProxy sites. Network supplies the
+  sole specialized Caddy package; advertised public IPv4 and actual bind IPv4
+  remain separate.
 - Mieru runs stock native `mita` in its own service, with a TCP transport and
   UDP relay over TCP. It requires no domain or certificate. The process binds
   its port on wildcard addresses; module firewall guards restrict ingress to
   the consumer-selected IPv4 and restrict service-originated destinations.
   Consumer supplies the system resolver addresses and owns host DNS configuration.
-  Mieru is selectable in both Mihomo profiles, including their ordinary Auto
+  Mieru is selectable in the single Mihomo profile, including its ordinary Auto
   groups when permitted by the profile's `autoProtocols`. It is not exported
   to sing-box.
-- AnyTLS runs stock sing-box in its own service and Unix identity, accepting
+- AnyTLS uses native NixOS `services.sing-box`, `sing-box.service` and its
+  Unix identity, accepting
   TCP on the consumer-selected IPv4 endpoint with TLS 1.3 only. Each device has
   its own runtime password. Default padding and session reuse are preserved;
   UDP uses UoT v2 inside TCP. Process-scoped network rules restrict new egress
@@ -58,12 +65,15 @@ The flake does not import a consumer checkout. TCP tuning belongs to the consume
   Auto selection, including protected UDP; official sing-box has no matching
   outbound. See the [module](../clanServices/trusttunnel/README.md).
 
-Provider modules construct their common export envelope through the shared
-contract implementation. Protocol-specific transport data remains owned by
-each provider; consumers select those exports through the public helpers.
+Provider modules publish schema 3 through a shared closed native type, with
+exactly one `connection` tag and its client-facing payload. Clan scope supplies
+service, role, machine and instance identity. The publisher selects accounts
+through explicit profile-to-account maps; protocol policy stays internal.
 
-The profile publisher normalizes its settings and passes selected typed
-provider exports and per-device bindings to its renderer.
+The private publisher compiler owns the settings interface, normalization,
+provider selection and per-device account bindings. Production and checks use
+the same compiler; it returns validated settings and the artifact manifest.
+The renderer returns only that manifest.
 It renders one Mihomo profile and publishes a sing-box profile
 for devices with an eligible Naive or AnyTLS provider or a selected external
 subscription. Personal proxy domain additions come from the consumer.
@@ -86,9 +96,12 @@ including external IPv6 rejection on the device.
 Rendering produces an internal artifact manifest: client templates, output
 formats, structural secret bindings and required public assets. The runtime
 publisher reads that manifest without knowing protocol-specific client fields.
-An explicit asset catalog supplies opaque publication paths, legacy URL aliases, refresh sources and
-readiness requirements. These are private implementation interfaces, not new
-consumer configuration.
+An explicit asset catalog supplies opaque publication paths, refresh sources and
+readiness requirements. The 11 historical asset-path aliases are retired by
+[ADR-0001](adr/0001-retire-asset-path-aliases.md); canonical assets and native
+host aliases are preserved. These are private implementation interfaces, not new
+consumer configuration. Checks derive their views from the canonical manifest;
+there are no NixOS render, manifest or publication-phase projections.
 
 External subscriptions are publisher inputs, not Clan provider exports.
 The consumer selects source IDs, SOPS URL-secret bindings and explicit device
@@ -97,6 +110,14 @@ composes client-specific outbounds and selectors through the manifest. It
 does not import upstream DNS, routing or inbounds. External Auto eligibility
 is separate from the own-provider protocol policy. Subscription credentials
 and accepted snapshots stay private under `/run`, separate from public assets.
+
+External subscriptions retain a bounded publisher loop and due-source
+round-robin because accepted-at TTL, retries, auth rotation, atomic global
+withdrawal and publication of own providers before remote fetch share lifecycle
+state. Public asset mirrors use native timers. The `65 * sourceCount + 30` TTL
+holdback is conservative policy; its reserve is not a measured hard deadline.
+External sing-box connections intentionally retain first-own-DoH bootstrap
+policy; no race/failover behavior is claimed for that path.
 
 Clients download rule assets directly from the publisher's pinned IPv4 while
 retaining the gateway hostname for HTTPS verification. Downloads do not depend
@@ -116,9 +137,28 @@ assets without a hard expiry and expose nonsecret status for consumer monitoring
 A publication refresh withdraws the old profile generation before rendering
 and exposes a complete generation only on success. Failed refreshes cannot keep
 serving revoked credentials. Caddy uses static routes and does not require,
-restart or reload for the publisher. The consumer supplies site claims, grants
+restart or reload for the publisher. The consumer supplies native sites, grants
 the exported reader group and restricts access to the links page. Access logging
 of tokenized URIs is suppressed.
+
+The native publisher integration is schema 2: site-level `logConfig` preserves
+unconditional `log_skip` before alias responses at order 1000, including
+configured aliases. Its complete matcherless `routeConfig` keeps canonical
+host/path guards inside and attaches at order 1500. Native order is explicit
+CONNECT 500, aliases 1000, publisher 1500 and terminal fallback 2000. Consumers
+merge context-bearing fragments without parsing or unwrapping their contents.
+
+Network owns native Caddy/ACME composition, stable physical certificate IDs
+and the sole specialized Caddy package; native ACME/Lego retains certificate
+authority. The released Network input must support the exported seam before
+consumer adoption. Qualification and runtime limits have one owner:
+[verification](operations/verify.md#evidence-and-runtime-acceptance).
+
+TrustTunnel’s retained 15-second `/proc` readiness probe requires positive
+MAINPID ownership of the exact listener socket. Upstream 1.1.0 uses
+`Type=simple` without notify support; native `Type=exec` establishes execution
+and failure behavior, not that positive ownership. This requirement is
+independent of Mieru’s RPC readiness behavior.
 
 ## DNS
 
@@ -134,11 +174,15 @@ reserves time for the warm encrypted-to-plaintext cascade and declares an
 isolated silent-failure acceptance budget. Clanwright measures final A/AAAA
 answers and elapsed time; source assertions do not prove runtime failover.
 
-AdGuard Home, Unbound and NaiveProxy each allow one active instance per machine;
+AdGuard Home, Unbound, NaiveProxy and AnyTLS each allow one active instance per machine;
 their native services or Caddy integration are singletons. Disabled instances
 do not claim that slot. Private DNS validation and policy rendering are isolated
 in a pure internal module; the AdGuard integration retains assertions on the
 final effective configuration after NixOS option merging.
+
+AdGuard’s optional native `systemResolver.enableLocalStub` role capability and
+current default preserve host DNS behavior through NixOS resolver options.
+There is no repository-owned `resolv.conf` writer.
 
 Optional private zones form a closed conditional-routing branch in both
 AdGuard upstream lists. Their numeric private resolvers never fall through to

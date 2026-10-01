@@ -10,14 +10,14 @@
 }:
 let
   inherit (manifest) assetCatalog;
-  referencedAssetIds = lib.unique (
-    lib.concatMap (
-      profile: lib.concatMap (artifact: artifact.assetRefs) profile.artifacts
-    ) manifest.profiles
+  referencedAssetIds = lib.sort builtins.lessThan (
+    lib.unique (
+      lib.concatMap (
+        profile: lib.concatMap (artifact: artifact.assetRefs) profile.artifacts
+      ) manifest.profiles
+    )
   );
-  referencedAssets = lib.sort (left: right: left.routePriority < right.routePriority) (
-    map (id: assetCatalog.${id}) referencedAssetIds
-  );
+  referencedAssets = map (id: assetCatalog.${id}) referencedAssetIds;
   remoteAssets = builtins.filter (asset: asset.source.kind != "local-file") referencedAssets;
   allLocalAssets = builtins.filter (asset: asset.source.kind == "local-file") (
     builtins.attrValues assetCatalog

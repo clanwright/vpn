@@ -18,25 +18,20 @@ let
     auto = builtins.getEnv "VPN_SUBSCRIPTION_TEST_MANUAL" != "1";
     maxStaleSeconds = if builtins.getEnv "VPN_SUBSCRIPTION_TEST_SHORT_TTL" == "1" then 60 else 86400;
   };
-  providerEnvelope = import ../modules/contracts/provider-envelope.nix { inherit lib; };
   providers = [
-    (providerEnvelope.mkProvider {
-      protocol = "naiveproxy";
+    {
       instanceId = "own-naive";
       machine = "own-edge";
-      endpoint = {
-        domain = "own-naive.example.invalid";
-        ipv4 = "192.0.2.10";
-        port = 443;
+      connection.naiveproxy = {
+        endpoint = {
+          hostname = "own-naive.example.invalid";
+          ipv4 = "192.0.2.10";
+          port = 443;
+        };
+        clients.fixture.passwordSecret = "fixture-own-password";
       };
-      profileNames = [ "fixture" ];
-      transportMetadata = {
-        tlsServerName = "own-naive.example.invalid";
-        userNames = [ "fixture" ];
-        port = 443;
-      };
-      secretNames.password.fixture = "fixture-own-password";
-    })
+      profileClients.fixture = "fixture";
+    }
   ];
   settings = {
     localMachineName = "fixture";
@@ -84,7 +79,9 @@ let
       providers
       ;
   };
-  profile = builtins.head rendered.renderedProfiles;
+  profile =
+    builtins.head
+      ((import ./lib/manifest-view.nix { inherit lib; }) rendered.manifest).renderedProfiles;
   external = import ../clanServices/vpn-client-profiles/external-subscriptions.nix {
     inherit lib settings;
     config.sops.secrets.fixture-url.path = builtins.getEnv "VPN_SUBSCRIPTION_TEST_URL_FILE";
@@ -93,6 +90,7 @@ let
 in
 {
   inherit (external)
+    sources
     converter
     composer
     converterPath

@@ -155,11 +155,10 @@ upstreams. Успешный резерв должен завершиться р�
 короткого профиля допустимы, например, `A = 11`, `F = 2`, `B = 45`, но это
 сокращает отдельную попытку public DNS и требует consumer-приёмки.
 
-Прежние `A = 10`, `F = 3` не оставляли места для тёплой цепочки `5F = 15s`.
-Default `F = 3` сохранён, а `A` увеличен до `16`: молчащий Unbound теперь
-может задержать первое обращение к резерву примерно на `32s` вместо `20s`.
-Это явный компромисс общего stock timeout, который AdGuard применяет и к
-primary, и к fallback. Отдельного поддерживаемого retry-count knob здесь нет.
+Default `A = 16` вмещает тёплую цепочку `5F = 15s`, сохраняя `F = 3`.
+Компромисс общего stock timeout: молчащий Unbound может задержать первое
+обращение к резерву примерно на `32s`. AdGuard применяет один timeout и к
+primary, и к fallback; отдельного поддерживаемого retry-count knob здесь нет.
 
 Основание — исходники выбранных версий, не runtime-наблюдение:
 
@@ -191,11 +190,9 @@ stale-ответом, а не общий срок рекурсии. Эти св�
 другом сценарии нельзя выдавать за нарушение доказанного общего deadline.
 При обновлении любой из закреплённых библиотек модель повторов пересматривается.
 
-На Harbor наблюдавшиеся около `20s` согласуются с двумя прежними попытками
-по `10s`, но не устанавливают причину отказа Unbound. `exchange failed`
-описывает попытку primary и не доказывает отсутствие fallback либо клиентский
-SERVFAIL. Требуемая [consumer-приёмка](../../docs/operations/adguardhome.md#consumer-runtime-acceptance-specification)
-сопоставляет попытки с итоговым ответом отдельно для A и AAAA.
+Требуемая [consumer-приёмка](../../docs/operations/adguardhome.md#consumer-runtime-acceptance-specification)
+сопоставляет попытки primary/fallback с итоговым ответом отдельно для A и AAAA.
+Запись `exchange failed` описывает попытку upstream, а не итог клиентского запроса.
 
 ## Exports and dependencies
 
@@ -248,20 +245,8 @@ typed contract, сгенерированную конфигурацию и от�
 чистым Nix evaluation, не запуская AdGuard Home, dnsproxy или VM. Реальное
 поведение systemd и сетевых путей этим результатом не доказано.
 
-Safe Search schema сверена с
+Safe Search использует
 [`SafeSearchConfig`](https://github.com/AdguardTeam/AdGuardHome/blob/v0.107.79/internal/filtering/safesearch.go#L18-L32)
-AdGuard Home 0.107.79; прежняя проверка
-[`OpenAPI`](https://github.com/AdguardTeam/AdGuardHome/blob/v0.107.78/openapi/openapi.yaml#L2679-L2698)
-относилась к 0.107.78. Внешняя семантика сверена с официальной
+AdGuard Home 0.107.79; внешняя семантика описана в официальной
 [`Configuration` wiki](https://github.com/AdguardTeam/AdGuardHome/wiki/Configuration).
-Историческая проверка route/rewrite semantics относилась к AdGuard Home 0.107.78:
-[`filtering`](https://github.com/AdguardTeam/AdGuardHome/blob/v0.107.78/internal/filtering/filtering.go),
-[`dnsforward`](https://github.com/AdguardTeam/AdGuardHome/blob/v0.107.78/internal/dnsforward/filter.go),
-[`access`](https://github.com/AdguardTeam/AdGuardHome/blob/v0.107.78/internal/dnsforward/access.go),
-[`middleware`](https://github.com/AdguardTeam/AdGuardHome/blob/v0.107.78/internal/dnsforward/middleware.go)
-и [`fallback setup`](https://github.com/AdguardTeam/AdGuardHome/blob/v0.107.78/internal/dnsforward/dnsforward.go#L678-L699),
-а DS selection — с dnsproxy 0.83.0, встроенным в ту версию AdGuard Home:
-[`upstreams`](https://github.com/AdguardTeam/dnsproxy/blob/v0.83.0/proxy/upstreams.go)
-и [`proxy`](https://github.com/AdguardTeam/dnsproxy/blob/v0.83.0/proxy/proxy.go).
-Это историческое source evidence, а не runtime-проверка выбранной 0.107.79.
-Отдельный loopback fallback service использует stock dnsproxy 0.84.1.
+Source contracts не заменяют runtime-наблюдение выбранной версии.

@@ -1,725 +1,252 @@
 { lib }:
 let
   inherit (lib) types;
-  inherit (types) nonEmptyListOf nonEmptyStr;
   identities = import ./identities.nix { inherit lib; };
-  providerEnvelope = import ./provider-envelope.nix { inherit lib; };
-  inherit (identities)
-    safeIdentity
-    safeSecretName
-    safeIdentityType
-    safeSecretNameType
-    ;
-  inherit (providerEnvelope)
-    protocolRoles
-    protocolServices
-    protocolTransports
-    ;
-  fixed = value: types.enum [ value ];
-  nullableNonEmptyStr = types.nullOr nonEmptyStr;
-  mkSubmodule = options: { inherit options; };
+  policy = import ./protocol-policy.nix;
+  schemaVersion = 3;
   mkOption = type: lib.mkOption { inherit type; };
-
-  realityModule = mkSubmodule {
-    serverName = mkOption nonEmptyStr;
-    serverNames = mkOption (nonEmptyListOf nonEmptyStr);
-    target = mkOption nonEmptyStr;
-    shortIdsByProfile = mkOption (types.attrsOf nonEmptyStr);
-    publicKey = mkOption nonEmptyStr;
-    supportX25519MLKEM768 = lib.mkOption {
-      type = types.bool;
-      default = false;
-    };
-  };
-  xhttpModule = mkSubmodule {
-    path = mkOption nonEmptyStr;
-    mode = mkOption (fixed "auto");
-  };
-  dohModule = mkSubmodule {
-    domain = mkOption nonEmptyStr;
-    ipv4 = mkOption nonEmptyStr;
-  };
-  awgPeerModule = mkSubmodule {
-    name = mkOption safeIdentityType;
-    publicKey = mkOption nonEmptyStr;
-    allowedIPs = mkOption (nonEmptyListOf nonEmptyStr);
-    clientPersistentKeepalive = lib.mkOption {
-      type = types.nullOr types.int;
-      default = null;
-    };
-    serverPersistentKeepalive = lib.mkOption {
-      type = types.nullOr types.int;
-      default = null;
-    };
-  };
-  awgPaddingModule = mkSubmodule {
-    min = mkOption types.int;
-    max = mkOption types.int;
-  };
-  awgProfileModule = mkSubmodule {
-    s1 = mkOption types.int;
-    s2 = mkOption types.int;
-    s3 = mkOption types.int;
-    s4 = mkOption types.int;
-    h1 = mkOption types.int;
-    h2 = mkOption types.int;
-    h3 = mkOption types.int;
-    h4 = mkOption types.int;
-    contentPaddingAddition = mkOption (types.submodule awgPaddingModule);
-    randomTrailers = mkOption types.bool;
-    disableCookies = mkOption types.bool;
-  };
-
-  metadataModule =
-    expectedProtocol:
+  # Preserve the module system's closed defaults. Validate each native option
+  # on consumption, while documentation may still inspect options with its
+  # intentional check=false module without evaluating payload values.
+  closedOptions =
+    config: nativeOptions: declaredOptions:
     let
-      fixedPolicy = providerEnvelope.fixedTransportMetadata.${expectedProtocol};
-      policyType =
-        name: fallback:
-        if builtins.hasAttr name fixedPolicy then fixed (builtins.getAttr name fixedPolicy) else fallback;
+      allowedNames = [ "_module" ] ++ builtins.attrNames declaredOptions;
     in
-    {
-      options = {
-        protocol = mkOption (fixed expectedProtocol);
-        tlsServerName = lib.mkOption {
-          type = nullableNonEmptyStr;
-          default = null;
-        };
-        userNames = lib.mkOption {
-          type = types.nullOr (nonEmptyListOf safeIdentityType);
-          default = null;
-        };
-        port = lib.mkOption {
-          type = types.nullOr types.port;
-          default = null;
-        };
-        reality = lib.mkOption {
-          type = types.nullOr (types.submodule realityModule);
-          default = null;
-        };
-        xhttp = lib.mkOption {
-          type = types.nullOr (types.submodule xhttpModule);
-          default = null;
-        };
-        fingerprint = lib.mkOption {
-          type = nullableNonEmptyStr;
-          default = null;
-        };
-        doh = lib.mkOption {
-          type = types.nullOr (types.submodule dohModule);
-          default = null;
-        };
-        tlsVerify = lib.mkOption {
-          type = policyType "tlsVerify" (types.nullOr types.bool);
-          default = null;
-        };
-        tlsMinVersion = lib.mkOption {
-          type = policyType "tlsMinVersion" nullableNonEmptyStr;
-          default = null;
-        };
-        credentialEncoding = lib.mkOption {
-          type = policyType "credentialEncoding" nullableNonEmptyStr;
-          default = null;
-        };
-        upstreamProtocol = lib.mkOption {
-          type = policyType "upstreamProtocol" nullableNonEmptyStr;
-          default = null;
-        };
-        generation = lib.mkOption {
-          type = policyType "generation" (types.nullOr types.int);
-          default = null;
-        };
-        profile = lib.mkOption {
-          type = policyType "profile" (types.nullOr (types.submodule awgProfileModule));
-          default = null;
-        };
-        serverPublicKey = lib.mkOption {
-          type = nullableNonEmptyStr;
-          default = null;
-        };
-        interfaceName = lib.mkOption {
-          type = nullableNonEmptyStr;
-          default = null;
-        };
-        address = lib.mkOption {
-          type = nullableNonEmptyStr;
-          default = null;
-        };
-        mtu = lib.mkOption {
-          type = types.nullOr types.int;
-          default = null;
-        };
-        peers = lib.mkOption {
-          type = types.listOf (types.submodule awgPeerModule);
-          default = [ ];
-        };
-      };
+    lib.mapAttrs (
+      _name: option:
+      option
+      // {
+        apply =
+          value:
+          if
+            !config._module.check
+            || nativeOptions._module.check.highestPrio != (lib.mkOptionDefault true).priority
+            || builtins.length nativeOptions._module.check.definitionsWithLocations != 1
+            || lib.subtractLists allowedNames (builtins.attrNames nativeOptions) != [ ]
+            || lib.subtractLists allowedNames (builtins.attrNames config) != [ ]
+          then
+            throw "vpnProvider cannot extend its closed schema or override native option checking"
+          else
+            (option.apply or lib.id) value;
+      }
+    ) declaredOptions
+    // {
+      _module.freeformType = lib.mkOption { readOnly = true; };
     };
-  protocolMetadataFields = {
-    naiveproxy = [
-      "protocol"
-      "tlsServerName"
-      "userNames"
-      "port"
-    ];
-    vless-xhttp = [
-      "protocol"
-      "reality"
-      "xhttp"
-      "fingerprint"
-      "doh"
-    ];
-    amneziawg = [
-      "protocol"
-      "serverPublicKey"
-      "interfaceName"
-      "address"
-      "mtu"
-      "peers"
-      "generation"
-      "profile"
-    ];
-    mieru = [
-      "protocol"
-      "userNames"
-      "credentialEncoding"
-    ];
-    anytls = [
-      "protocol"
-      "tlsServerName"
-      "userNames"
-      "tlsVerify"
-      "tlsMinVersion"
-      "credentialEncoding"
-    ];
-    trusttunnel = [
-      "protocol"
-      "userNames"
-      "tlsServerName"
-      "tlsVerify"
-      "credentialEncoding"
-      "upstreamProtocol"
-    ];
-  };
-  validMetadataShape =
-    value:
-    builtins.isAttrs value
-    && builtins.isString (value.protocol or null)
-    && builtins.hasAttr value.protocol protocolMetadataFields
-    && attrsHaveExactly protocolMetadataFields.${value.protocol} value;
-  metadataType =
-    protocol: types.addCheck (types.submodule (metadataModule protocol)) validMetadataShape;
-
-  secretNamesModule = {
-    options = {
-      password = lib.mkOption {
-        type = types.nullOr (types.attrsOf safeSecretNameType);
-        default = null;
-      };
-      realityPrivateKey = lib.mkOption {
-        type = types.nullOr safeSecretNameType;
-        default = null;
-      };
-      vlessUuid = lib.mkOption {
-        type = types.nullOr (types.attrsOf safeSecretNameType);
-        default = null;
-      };
-      users = lib.mkOption {
-        type = types.nullOr (types.attrsOf safeSecretNameType);
-        default = null;
-      };
-      clientPrivateKey = lib.mkOption {
-        type = types.nullOr (types.attrsOf safeSecretNameType);
-        default = null;
-      };
-      headerProtectionKey = lib.mkOption {
-        type = types.nullOr safeSecretNameType;
-        default = null;
-      };
-    };
-  };
-  protocolSecretNameFields = {
-    naiveproxy = [ "password" ];
-    vless-xhttp = [
-      "realityPrivateKey"
-      "vlessUuid"
-    ];
-    amneziawg = [
-      "clientPrivateKey"
-      "headerProtectionKey"
-    ];
-    mieru = [ "users" ];
-    anytls = [ "users" ];
-    trusttunnel = [ "users" ];
-  };
-  validSecretNamesShape =
-    value:
-    builtins.isAttrs value
-    && builtins.any (fields: attrsHaveExactly fields value) (
-      builtins.attrValues protocolSecretNameFields
+  submodule =
+    declaredOptions:
+    types.submodule (
+      { config, options, ... }: {
+        options = closedOptions config options declaredOptions;
+      }
     );
-  secretNamesType = types.addCheck (types.submodule secretNamesModule) validSecretNamesShape;
 
-  endpointModule =
-    protocol:
-    mkSubmodule {
-      domain = mkOption (if protocol == "mieru" then fixed null else nonEmptyStr);
-      ipv4 = mkOption (
-        if
-          builtins.elem protocol [
-            "mieru"
-            "anytls"
-            "trusttunnel"
-          ]
-        then
-          types.addCheck nonEmptyStr validIPv4
-        else
-          nullableNonEmptyStr
-      );
-      port = mkOption types.port;
-      transport = mkOption (fixed protocolTransports.${protocol});
+  inherit (import ./address-validation.nix { inherit lib; }) validHostname validIPv4;
+  hostnameType = types.addCheck types.nonEmptyStr validHostname;
+  ipv4Type = types.addCheck types.nonEmptyStr validIPv4;
+  realityPublicKeyType = types.strMatching "[A-Za-z0-9_-]{43}";
+  wireguardPublicKeyType = types.strMatching "[A-Za-z0-9+/]{42}[AEIMQUYcgkosw048]=";
+  shortIdType = types.strMatching "[0-9a-f]{16}";
+  httpPathType = types.strMatching "/[^[:space:]]*";
+  ipEndpointOptions = {
+    ipv4 = mkOption ipv4Type;
+    port = mkOption (types.ints.between 1 65535);
+  };
+  endpointType = submodule (ipEndpointOptions // { hostname = mkOption hostnameType; });
+  allUnique = values: builtins.length values == builtins.length (lib.unique values);
+
+  # Check the effective merged map, so split definitions cannot share one
+  # credential, short ID or AWG address between distinct device identities.
+  checkClients =
+    uniqueFields: clients:
+    builtins.deepSeq clients (
+      if
+        clients != { }
+        && builtins.all identities.safeIdentity (builtins.attrNames clients)
+        && builtins.all (
+          field: allUnique (map (client: client.${field}) (builtins.attrValues clients))
+        ) uniqueFields
+      then
+        clients
+      else
+        throw "vpnProvider clients require safe nonempty identities and distinct credential bindings and device identifiers"
+    );
+  clientsOption =
+    clientOptions: uniqueFields:
+    lib.mkOption {
+      type = types.attrsOf (submodule clientOptions);
+      apply = checkClients uniqueFields;
     };
+  passwordClients = clientsOption {
+    passwordSecret = mkOption identities.safeSecretNameType;
+  } [ "passwordSecret" ];
+  passwordPayload =
+    endpoint:
+    submodule {
+      inherit endpoint;
+      clients = passwordClients;
+    };
+  connectionType = types.attrTag {
+    naiveproxy = mkOption (passwordPayload (mkOption endpointType));
+    mieru = mkOption (passwordPayload (mkOption (submodule ipEndpointOptions)));
+    anytls = mkOption (passwordPayload (mkOption endpointType));
+    trusttunnel = mkOption (passwordPayload (mkOption endpointType));
+    vless-xhttp = mkOption (submodule {
+      endpoint = mkOption endpointType;
+      clients =
+        clientsOption
+          {
+            uuidSecret = mkOption identities.safeSecretNameType;
+            shortId = mkOption shortIdType;
+          }
+          [
+            "uuidSecret"
+            "shortId"
+          ];
+      reality = mkOption (submodule {
+        serverName = mkOption hostnameType;
+        publicKey = mkOption realityPublicKeyType;
+        fingerprint = mkOption types.nonEmptyStr;
+        supportX25519MLKEM768 = mkOption types.bool;
+      });
+      xhttp = mkOption (submodule {
+        path = mkOption httpPathType;
+      });
+      doh = mkOption (submodule {
+        hostname = mkOption hostnameType;
+        ipv4 = mkOption ipv4Type;
+      });
+    });
+    amneziawg = mkOption (
+      types.submodule (
+        { config, options, ... }:
+        {
+          options = closedOptions config options {
+            endpoint = mkOption endpointType;
+            serverPublicKey = mkOption wireguardPublicKeyType;
+            headerProtectionKeySecret = mkOption identities.safeSecretNameType;
+            clients =
+              (clientsOption
+                {
+                  ipv4 = mkOption ipv4Type;
+                  privateKeySecret = mkOption identities.safeSecretNameType;
+                  keepaliveSeconds = lib.mkOption {
+                    type = types.nullOr (types.ints.between 1 65535);
+                    default = null;
+                  };
+                }
+                [
+                  "privateKeySecret"
+                  "ipv4"
+                ]
+              )
+              // {
+                apply =
+                  clients:
+                  let
+                    checked = checkClients [ "privateKeySecret" "ipv4" ] clients;
+                  in
+                  if
+                    builtins.elem config.headerProtectionKeySecret (
+                      map (client: client.privateKeySecret) (builtins.attrValues checked)
+                    )
+                  then
+                    throw "vpnProvider AWG header and client private keys require distinct secret bindings"
+                  else
+                    checked;
+              };
+          };
+        }
+      )
+    );
+  };
 
   vpnProviderModule =
-    { config, ... }:
+    { config, options, ... }:
     {
-      options = {
-        schemaVersion = mkOption (fixed providerEnvelope.schemaVersion);
-        instanceId = mkOption safeIdentityType;
-        machine = mkOption safeIdentityType;
-        role = mkOption (fixed protocolRoles.${config.protocol});
-        protocol = mkOption (
-          types.enum [
-            "naiveproxy"
-            "vless-xhttp"
-            "amneziawg"
-            "mieru"
-            "anytls"
-            "trusttunnel"
-          ]
-        );
-        enabled = mkOption (fixed true);
-        endpoint = mkOption (types.submodule (endpointModule config.protocol));
-        transportMetadata = mkOption (metadataType config.protocol);
-        profileNames = mkOption (nonEmptyListOf safeIdentityType);
-        secretNames = mkOption secretNamesType;
+      options = closedOptions config options {
+        schemaVersion = (mkOption (types.enum [ schemaVersion ])) // {
+          # Reading the version must also check the complete closed payload.
+          apply = value: builtins.deepSeq config.connection value;
+        };
+        connection = (mkOption connectionType) // {
+          apply = value: builtins.deepSeq value value;
+        };
       };
     };
-
-  fail =
-    {
-      providerMachine,
-      providerInstanceId,
-      protocol,
-      consumerInstanceId,
-    }:
-    reason:
-    throw (
-      "vpn integration requires enabled provider with machine='${providerMachine}', "
-      + "instance='${providerInstanceId}', protocol='${protocol}', consumer='${consumerInstanceId}': ${reason}"
-    );
-
-  isNonEmptyString = value: builtins.isString value && value != "";
-  dropNullAttrs =
-    value: if builtins.isAttrs value then lib.filterAttrs (_name: item: item != null) value else value;
-  attrsHaveOnly =
-    allowed: value:
-    builtins.isAttrs value && lib.subtractLists allowed (builtins.attrNames value) == [ ];
-  attrsHaveExactly =
-    required: value:
-    builtins.isAttrs value
-    && lib.subtractLists (builtins.attrNames value) required == [ ]
-    && lib.subtractLists required (builtins.attrNames value) == [ ];
-  allStrings =
-    values: builtins.isList values && values != [ ] && builtins.all isNonEmptyString values;
-  allSafeIdentities =
-    values:
-    builtins.isList values
-    && values != [ ]
-    && builtins.all safeIdentity values
-    && values == lib.unique values;
-  validIPv4Octet =
-    value: builtins.match "(0|[1-9][0-9]{0,2})" value != null && lib.toInt value <= 255;
-  validIPv4 =
+  evalProvider =
     value:
-    builtins.isString value
-    && (
-      let
-        octets = lib.splitString "." value;
-      in
-      builtins.length octets == 4 && builtins.all validIPv4Octet octets
-    );
-
-  validAwgProfile =
-    value:
-    builtins.isAttrs value
-    && attrsHaveExactly [
-      "s1"
-      "s2"
-      "s3"
-      "s4"
-      "h1"
-      "h2"
-      "h3"
-      "h4"
-      "contentPaddingAddition"
-      "randomTrailers"
-      "disableCookies"
-    ] value
-    && builtins.all (name: builtins.isInt (builtins.getAttr name value)) [
-      "s1"
-      "s2"
-      "s3"
-      "s4"
-      "h1"
-      "h2"
-      "h3"
-      "h4"
-    ]
-    && builtins.isAttrs value.contentPaddingAddition
-    && attrsHaveExactly [ "min" "max" ] value.contentPaddingAddition
-    && builtins.isInt value.contentPaddingAddition.min
-    && builtins.isInt value.contentPaddingAddition.max
-    && builtins.isBool value.randomTrailers
-    && builtins.isBool value.disableCookies
-    && value == providerEnvelope.fixedTransportMetadata.amneziawg.profile;
-
-  validReality =
-    value:
-    builtins.isAttrs value
-    && attrsHaveExactly [ "serverName" "serverNames" "target" "shortIdsByProfile" "publicKey" ] (
-      builtins.removeAttrs value [ "supportX25519MLKEM768" ]
-    )
-    && builtins.isBool (value.supportX25519MLKEM768 or false)
-    && isNonEmptyString (value.serverName or null)
-    && allStrings (value.serverNames or [ ])
-    && isNonEmptyString (value.target or null)
-    && builtins.match ".+:443" value.target != null
-    && builtins.elem value.serverName value.serverNames
-    && builtins.isAttrs value.shortIdsByProfile
-    && builtins.all (name: isNonEmptyString (builtins.getAttr name value.shortIdsByProfile)) (
-      builtins.attrNames value.shortIdsByProfile
-    )
-    && isNonEmptyString (value.publicKey or null);
-
-  validXhttp =
-    value:
-    builtins.isAttrs value
-    && attrsHaveExactly [ "path" "mode" ] value
-    && isNonEmptyString (value.path or null)
-    && (value.mode or null) == "auto";
-
-  validDoh =
-    value:
-    builtins.isAttrs value
-    && attrsHaveExactly [ "domain" "ipv4" ] value
-    && isNonEmptyString (value.domain or null)
-    && isNonEmptyString (value.ipv4 or null);
-
-  validAwgPeer =
-    value:
-    builtins.isAttrs value
-    && attrsHaveOnly [
-      "name"
-      "publicKey"
-      "allowedIPs"
-      "clientPersistentKeepalive"
-      "serverPersistentKeepalive"
-    ] value
-    && isNonEmptyString (value.name or null)
-    && isNonEmptyString (value.publicKey or null)
-    && allStrings (value.allowedIPs or [ ])
-    && (
-      builtins.isNull (value.clientPersistentKeepalive or null)
-      || builtins.isInt (value.clientPersistentKeepalive or null)
-    )
-    && (
-      builtins.isNull (value.serverPersistentKeepalive or null)
-      || builtins.isInt (value.serverPersistentKeepalive or null)
-    );
-
-  credentialMapExact =
-    profileNames: value:
-    builtins.isAttrs value
-    && attrsHaveExactly profileNames value
-    && builtins.all (
-      name: builtins.hasAttr name value && safeSecretName (builtins.getAttr name value)
-    ) profileNames;
-
-  validateMetadata =
-    context: protocol: value:
-    let
-      rawMetadata = if builtins.isAttrs value then value else { };
-      allowedKeys = protocolMetadataFields.${protocol} or [ ];
-      fixedPolicy = providerEnvelope.fixedTransportMetadata.${protocol} or { };
-      schemaFields = lib.unique (lib.concatLists (builtins.attrValues protocolMetadataFields));
-      metadata = lib.filterAttrs (
-        name: item:
-        builtins.elem name allowedKeys
-        || !(builtins.elem name schemaFields && (item == null || item == [ ] || item == { }))
-      ) rawMetadata;
-    in
-    if !builtins.isAttrs metadata then
-      fail context "transportMetadata must be an attrset"
-    else if !(attrsHaveOnly protocolMetadataFields.${protocol} metadata) then
-      fail context "transportMetadata contains an unsupported field"
-    else if (metadata.protocol or null) != protocol then
-      fail context "transportMetadata.protocol does not match the requested protocol"
-    else if
-      protocol == "naiveproxy"
-      && (
-        !isNonEmptyString (metadata.tlsServerName or null)
-        || !allStrings (metadata.userNames or [ ])
-        || !builtins.isInt (metadata.port or null)
-        || metadata.port <= 0
-      )
-    then
-      fail context "NaiveProxy public transport metadata is incomplete"
-    else if
-      protocol == "vless-xhttp"
-      && (
-        !validReality (metadata.reality or null)
-        || !validXhttp (metadata.xhttp or null)
-        || !isNonEmptyString (metadata.fingerprint or null)
-        || !validDoh (metadata.doh or null)
-      )
-    then
-      fail context "VLESS/XHTTP public transport metadata is incomplete"
-    else if
-      protocol == "amneziawg"
-      && (
-        !isNonEmptyString (metadata.serverPublicKey or null)
-        || !isNonEmptyString (metadata.interfaceName or null)
-        || !(builtins.isNull (metadata.address or null) || isNonEmptyString (metadata.address or null))
-        || !builtins.isList (metadata.peers or [ ])
-        || !(builtins.all validAwgPeer (metadata.peers or [ ]))
-        || !(builtins.isNull (metadata.mtu or null) || builtins.isInt (metadata.mtu or null))
-        || (metadata.generation or null) != fixedPolicy.generation
-        || !validAwgProfile (metadata.profile or null)
-      )
-    then
-      fail context "AmneziaWG public transport metadata is incomplete"
-    else if
-      protocol == "mieru"
-      && (
-        !allSafeIdentities (metadata.userNames or [ ])
-        || (metadata.credentialEncoding or null) != fixedPolicy.credentialEncoding
-      )
-    then
-      fail context "Mieru public transport metadata is incomplete"
-    else if
-      protocol == "anytls"
-      && (
-        !isNonEmptyString (metadata.tlsServerName or null)
-        || !allSafeIdentities (metadata.userNames or [ ])
-        || (metadata.tlsVerify or null) != fixedPolicy.tlsVerify
-        || (metadata.tlsMinVersion or null) != fixedPolicy.tlsMinVersion
-        || (metadata.credentialEncoding or null) != fixedPolicy.credentialEncoding
-      )
-    then
-      fail context "AnyTLS public transport metadata is incomplete"
-    else if
-      protocol == "trusttunnel"
-      && (
-        !allSafeIdentities (metadata.userNames or [ ])
-        || !isNonEmptyString (metadata.tlsServerName or null)
-        || (metadata.tlsVerify or null) != fixedPolicy.tlsVerify
-        || (metadata.credentialEncoding or null) != fixedPolicy.credentialEncoding
-        || (metadata.upstreamProtocol or null) != fixedPolicy.upstreamProtocol
-      )
-    then
-      fail context "TrustTunnel public transport metadata is incomplete"
-    else
-      metadata;
-
-  validateProvider =
-    {
-      providerMachine,
-      providerInstanceId,
-      protocol,
-      consumerInstanceId,
-    }:
-    raw:
-    let
-      context = {
-        inherit
-          providerMachine
-          providerInstanceId
-          protocol
-          consumerInstanceId
-          ;
-      };
-      requiredFields = [
-        "schemaVersion"
-        "instanceId"
-        "machine"
-        "role"
-        "protocol"
-        "enabled"
-        "endpoint"
-        "transportMetadata"
-        "profileNames"
-        "secretNames"
+    (lib.evalModules {
+      modules = [
+        { options.provider = mkOption (types.submodule vpnProviderModule); }
+        { config.provider = value; }
       ];
-      endpoint = raw.endpoint or { };
-      metadata = dropNullAttrs (
-        if builtins.isAttrs (raw.transportMetadata or null) then raw.transportMetadata else { }
-      );
-      secretNames = dropNullAttrs (
-        if builtins.isAttrs (raw.secretNames or null) then raw.secretNames else { }
-      );
-      normalizedRaw = raw // {
-        inherit secretNames;
-        transportMetadata = metadata;
-      };
-      expectedRole = protocolRoles.${protocol};
-      validSecretNames =
-        builtins.isAttrs secretNames
-        && attrsHaveExactly protocolSecretNameFields.${protocol} secretNames
-        && (
-          if protocol == "naiveproxy" then
-            credentialMapExact metadata.userNames secretNames.password
-          else if protocol == "vless-xhttp" then
-            safeSecretName (secretNames.realityPrivateKey or null)
-            && credentialMapExact (raw.profileNames or [ ]) secretNames.vlessUuid
-          else if protocol == "amneziawg" then
-            credentialMapExact (raw.profileNames or [ ]) secretNames.clientPrivateKey
-            && safeSecretName (secretNames.headerProtectionKey or null)
-          else if protocol == "mieru" then
-            credentialMapExact metadata.userNames secretNames.users
-          else if protocol == "anytls" then
-            credentialMapExact metadata.userNames secretNames.users
-          else if protocol == "trusttunnel" then
-            credentialMapExact metadata.userNames secretNames.users
-          else
-            false
-        );
-      validShape =
-        builtins.isAttrs raw
-        && attrsHaveExactly requiredFields raw
-        && raw.schemaVersion == providerEnvelope.schemaVersion
-        && raw.instanceId == providerInstanceId
-        && raw.machine == providerMachine
-        && raw.role == expectedRole
-        && raw.protocol == protocol
-        && raw.enabled == true
-        && builtins.isAttrs endpoint
-        && attrsHaveExactly [ "domain" "ipv4" "port" "transport" ] endpoint
-        && (
-          if protocol == "mieru" then
-            builtins.isNull endpoint.domain && validIPv4 endpoint.ipv4
-          else if protocol == "anytls" then
-            isNonEmptyString endpoint.domain && validIPv4 endpoint.ipv4
-          else if protocol == "trusttunnel" then
-            isNonEmptyString endpoint.domain && validIPv4 endpoint.ipv4
-          else
-            isNonEmptyString endpoint.domain
-            && (builtins.isNull endpoint.ipv4 || isNonEmptyString endpoint.ipv4)
-        )
-        && builtins.isInt endpoint.port
-        && endpoint.port > 0
-        && endpoint.port <= 65535
-        && endpoint.transport == protocolTransports.${protocol}
-        && safeIdentity (raw.instanceId or null)
-        && safeIdentity (raw.machine or null)
-        && allSafeIdentities (raw.profileNames or [ ])
-        && (
-          protocol != "amneziawg"
-          || (
-            let
-              peerNames = map (peer: peer.name) (metadata.peers or [ ]);
-            in
-            peerNames == raw.profileNames && peerNames == lib.unique peerNames
-          )
-        )
-        && (protocol != "mieru" || metadata.userNames == raw.profileNames)
-        && (protocol != "anytls" || metadata.userNames == raw.profileNames)
-        && (protocol != "anytls" || metadata.tlsServerName == endpoint.domain)
-        && (protocol != "trusttunnel" || metadata.userNames == raw.profileNames)
-        && (protocol != "trusttunnel" || metadata.tlsServerName == endpoint.domain)
-        && (protocol != "naiveproxy" || metadata.userNames == raw.profileNames)
-        && (
-          protocol != "vless-xhttp"
-          || credentialMapExact (raw.profileNames or [ ]) ((metadata.reality or { }).shortIdsByProfile or { })
-        )
-        && validSecretNames;
-    in
-    if !builtins.isAttrs raw then
-      fail context "provider exports are missing"
-    else if !(attrsHaveExactly requiredFields raw) then
-      fail context "provider export shape is not the closed allowlist"
-    else if !validShape then
-      fail context "provider export metadata does not match the requested provider"
-    else
-      normalizedRaw
-      // {
-        transportMetadata = validateMetadata context protocol metadata;
-      };
-
+    }).config.provider;
 in
 {
-  inherit vpnProviderModule;
+  inherit schemaVersion vpnProviderModule;
 
   selectVpnProvider =
     {
       providerInstanceId,
       providerMachine,
-      protocol,
       selectExports,
       exports,
       consumerInstanceId ? "unknown-consumer",
     }:
     let
-      context = {
-        inherit
-          providerMachine
-          providerInstanceId
-          protocol
-          consumerInstanceId
-          ;
-      };
-      expectedRole = protocolRoles.${protocol} or null;
-      selected =
-        if expectedRole == null then
-          null
+      fail =
+        reason:
+        throw (
+          "vpn integration requires an active provider with machine='${providerMachine}', "
+          + "instance='${providerInstanceId}', consumer='${consumerInstanceId}': ${reason}"
+        );
+      selectedScopes = lib.concatMap (
+        tag:
+        let
+          metadata = policy.protocols.${tag};
+          matching = selectExports (
+            scope:
+            scope.serviceName == metadata.service
+            && scope.roleName == metadata.role
+            && scope.machineName == providerMachine
+            && scope.instanceName == providerInstanceId
+          ) exports;
+        in
+        if !builtins.isAttrs matching then
+          fail "Clan selectExports did not return a scoped attrset"
         else
-          let
-            selectedScopes =
-              if !builtins.isFunction selectExports then
-                fail context "Clan selectExports selector is unavailable"
-              else if !builtins.isAttrs exports then
-                fail context "Clan provider exports are unavailable"
-              else
-                selectExports (
-                  scope:
-                  scope.serviceName == protocolServices.${protocol}
-                  && scope.instanceName == providerInstanceId
-                  && scope.roleName == expectedRole
-                  && scope.machineName == providerMachine
-                ) exports;
-            selectedScopeNames =
-              if builtins.isAttrs selectedScopes then
-                builtins.attrNames selectedScopes
-              else
-                fail context "Clan selectExports did not return a scoped attrset";
-          in
-          if builtins.length selectedScopeNames != 1 then
-            fail context "provider scope selection matched ${toString (builtins.length selectedScopeNames)} exports; expected exactly one"
-          else
-            builtins.getAttr (builtins.head selectedScopeNames) selectedScopes;
+          map (name: {
+            inherit tag;
+            export = matching.${name};
+          }) (builtins.attrNames matching)
+      ) (builtins.attrNames policy.protocols);
+      selected = builtins.head selectedScopes;
       raw =
-        if selected == null then
-          null
-        else if builtins.isAttrs selected && selected ? vpnProvider then
-          selected.vpnProvider
+        if builtins.isAttrs selected.export && selected.export ? vpnProvider then
+          selected.export.vpnProvider
         else
-          fail context "selected provider export is missing the declared vpnProvider interface";
+          fail "selected provider export is missing the declared vpnProvider interface";
+      provider = evalProvider raw;
     in
-    if expectedRole == null then
-      fail context "unsupported provider protocol"
-    else if raw == null then
-      fail context "provider is missing, disabled or has no active export"
+    if !identities.safeIdentity providerMachine || !identities.safeIdentity providerInstanceId then
+      fail "provider machine and instance identities are unsafe"
+    else if !builtins.isFunction selectExports then
+      fail "Clan selectExports selector is unavailable"
+    else if !builtins.isAttrs exports then
+      fail "Clan provider exports are unavailable"
+    else if builtins.length selectedScopes != 1 then
+      fail "provider scope selection matched ${toString (builtins.length selectedScopes)} exports; expected exactly one"
     else
-      validateProvider context raw;
-
+      builtins.deepSeq provider (
+        if builtins.attrNames provider.connection != [ selected.tag ] then
+          fail "connection tag does not match the selected native service and role"
+        else
+          {
+            machine = providerMachine;
+            instanceId = providerInstanceId;
+            inherit (provider) connection;
+          }
+      );
 }

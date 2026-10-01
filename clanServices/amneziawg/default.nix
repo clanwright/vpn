@@ -5,7 +5,7 @@
 }:
 let
   identities = import ../../modules/contracts/identities.nix { inherit lib; };
-  providerEnvelope = import ../../modules/contracts/provider-envelope.nix { inherit lib; };
+  protocolPolicy = import ../../modules/contracts/protocol-policy.nix;
   validation = import ./validation.nix { inherit lib; };
 in
 {
@@ -116,57 +116,35 @@ in
     perInstance =
       {
         settings,
-        instanceName ? "amneziawg",
-        machine ? {
-          name = null;
-        },
         mkExports ? (value: value),
         ...
       }:
       let
         active = settings.enable;
-        providerMachine =
-          if machine ? name && machine.name != null && machine.name != "" then
-            machine.name
-          else
-            builtins.head (lib.splitString "--" instanceName);
-        profileNames = map (peer: peer.name) settings.peers;
-        secretNames = {
-          headerProtectionKey = settings.headerProtectionKeySecretName;
-          clientPrivateKey = lib.listToAttrs (
-            map (peer: {
-              inherit (peer) name;
-              value = peer.clientPrivateKeySecretName;
-            }) settings.peers
-          );
-        };
       in
       {
         exports = lib.optionalAttrs active (mkExports {
-          vpnProvider = providerEnvelope.mkProvider {
-            protocol = "amneziawg";
-            instanceId = instanceName;
-            machine = providerMachine;
-            endpoint = {
-              domain = settings.endpointDomain;
-              ipv4 = settings.listenIPv4;
-              port = settings.listenPort;
-            };
-            transportMetadata = {
+          vpnProvider = {
+            schemaVersion = 3;
+            connection.amneziawg = {
+              endpoint = {
+                hostname = settings.endpointDomain;
+                ipv4 = settings.listenIPv4;
+                port = settings.listenPort;
+              };
               inherit (settings) serverPublicKey;
-              inherit (settings) interfaceName;
-              inherit (settings) address;
-              mtu = 1280;
-              peers = map (peer: {
-                inherit (peer)
-                  name
-                  publicKey
-                  allowedIPs
-                  clientPersistentKeepalive
-                  ;
-              }) settings.peers;
+              headerProtectionKeySecret = settings.headerProtectionKeySecretName;
+              clients = lib.listToAttrs (
+                map (peer: {
+                  inherit (peer) name;
+                  value = {
+                    ipv4 = lib.removeSuffix "/32" (builtins.head peer.allowedIPs);
+                    privateKeySecret = peer.clientPrivateKeySecretName;
+                    keepaliveSeconds = peer.clientPersistentKeepalive or null;
+                  };
+                }) settings.peers
+              );
             };
-            inherit profileNames secretNames;
           };
         });
         nixosModule =
@@ -256,27 +234,13 @@ in
                 assertion = !active || validation.packageFamiliesValid appsPkgs;
                 message = "amneziawg: amneziawg-go and amneziawg-tools must both be in the 3.1.* family.";
               }
-              {
-                assertion = !active || pkgs.amneziawg-go == appsPkgs.amneziawg-go;
-                message = "amneziawg: amneziawg-go must come from the VPN domain application pin.";
-              }
-              {
-                assertion = !active || pkgs.amneziawg-tools == appsPkgs.amneziawg-tools;
-                message = "amneziawg: amneziawg-tools must come from the VPN domain application pin.";
-              }
             ];
 
           }
           // lib.optionalAttrs active {
-            nixpkgs.overlays = [
-              (_final: _prev: {
-                inherit (appsPkgs) amneziawg-go amneziawg-tools;
-              })
-            ];
-
-            environment.systemPackages = lib.filter (pkg: pkg != null) [
-              (appsPkgs.amneziawg-tools or null)
-              (appsPkgs.amneziawg-go or null)
+            environment.systemPackages = [
+              appsPkgs.amneziawg-tools
+              appsPkgs.amneziawg-go
             ];
 
             networking = {
@@ -379,7 +343,7 @@ in
                 fi
 
                 ${pkgs.iproute2}/bin/ip address add ${lib.escapeShellArg settings.address} dev ${interfaceNameArgument}
-                ${pkgs.iproute2}/bin/ip link set dev ${interfaceNameArgument} mtu 1280
+                ${pkgs.iproute2}/bin/ip link set dev ${interfaceNameArgument} mtu ${toString protocolPolicy.awgMtu}
                 ${pkgs.iproute2}/bin/ip link set up dev ${interfaceNameArgument}
                 ${peerRouteCommands}
 

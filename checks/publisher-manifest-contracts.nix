@@ -2,14 +2,77 @@
 let
   inherit (pkgs) lib;
   manifestLib = import ../clanServices/vpn-client-profiles/artifact-manifest.nix { inherit lib; };
+  integrationModule = import ../clanServices/vpn-client-profiles/integration.nix { inherit lib; };
+  publisherType = integrationModule.options.clanwright.vpn.publishers.type.nestedTypes.elemType;
+  publisherFieldOptions = publisherType.getSubOptions [ ];
+  publisherContext = pkgs.writeText "publisher-integration-context" "synthetic fixture\n";
+  publisher = {
+    schemaVersion = 2;
+    profileRoot = "/run/vpn-client-profiles/fixture/published/current";
+    assetRoot = "/var/lib/vpn-client-profiles/fixture/assets";
+    configGatewayDomain = "profiles.example.invalid";
+    linksRoot = "/run/vpn-client-profiles/fixture/published/current/links";
+    logConfig = "log_skip\n";
+    routeConfig = ''
+      # ${publisherContext}
+      route {
+        @fixture host profiles.example.invalid
+        respond @fixture "fixture" 200
+      }
+    '';
+    publicationUnit = "vpn-client-profiles-publish-fixture.service";
+    refreshUnit = "vpn-client-profiles-public-assets-fixture.service";
+    statusPath = "/var/lib/vpn-client-profiles/fixture/status.json";
+    readerGroup = "vpn-client-profiles";
+  };
+  evaluatePublisherWith =
+    extraModules: raw:
+    (lib.evalModules {
+      modules = [
+        integrationModule
+        { config.clanwright.vpn.publishers.fixture = raw; }
+      ]
+      ++ extraModules;
+    }).config.clanwright.vpn.publishers.fixture;
+  evaluatePublisher = evaluatePublisherWith [ ];
+  publisherAcceptedWith =
+    extraModules: raw:
+    (builtins.tryEval (builtins.deepSeq (evaluatePublisherWith extraModules raw) true)).success;
+  publisherAccepted = publisherAcceptedWith [ ];
+  publisherTypeDeclaration.options.clanwright.vpn.publishers = lib.mkOption {
+    type = integrationModule.options.clanwright.vpn.publishers.type;
+  };
+  duplicatePublisherField.config.clanwright.vpn.publishers.fixture.readerGroup =
+    publisher.readerGroup;
+  evaluatedPublisher = evaluatePublisher publisher;
+  evaluatedPublisherAfterTypeMerge = evaluatePublisherWith [ publisherTypeDeclaration ] publisher;
+  publisherNegativeInputs = {
+    extraField = publisher // {
+      unexpected = true;
+    };
+    callableExtra = _: {
+      options.unexpected = lib.mkOption { type = lib.types.bool; };
+      config = publisher // {
+        unexpected = true;
+      };
+    };
+    callableKnownFields = _: { config = publisher; };
+    checkingDisabled = publisher // {
+      _module.check = false;
+      unexpected = true;
+    };
+    freeformMetadata = publisher // {
+      _module.freeformType = lib.types.attrsOf lib.types.raw;
+      unexpected = true;
+    };
+    pathDefinition = ../clanServices/vpn-client-profiles/integration.nix;
+  };
   placeholderA = "__SECRET_A__";
   placeholderB = "__SECRET_B__";
   asset = {
     id = "fixture-asset";
     filename = "fixture.srs";
     publicPath = "/assets/v1/catalog/fixture.srs";
-    legacyPublicPaths = [ "/assets/v1/catalog/fixture-legacy.srs" ];
-    routePriority = 0;
     contentType = "application/octet-stream";
     validator = "srs";
     source = {
@@ -67,7 +130,6 @@ let
         artifacts = [ artifact ];
       }
     ];
-    publicationPhases = manifestLib.expectedPublicationPhases;
   };
   publicationSource = builtins.readFile ../clanServices/vpn-client-profiles/runtime-publication.nix;
   assetLifecycleSource = builtins.readFile ../clanServices/vpn-client-profiles/public-assets.nix;
@@ -86,8 +148,39 @@ let
     go 0 (lib.splitString "\n" assetLifecycleSource);
   invalid = change: !(manifestLib.validateManifest (lib.recursiveUpdate manifest change));
   results = {
+    publisherLiteralDataAccepted =
+      publisherAccepted publisher
+      && builtins.attrNames evaluatedPublisher == builtins.attrNames publisher;
+    publisherFieldsRemainReadOnly = builtins.all (name: publisherFieldOptions.${name}.readOnly) (
+      builtins.attrNames publisher
+    );
+    publisherFieldDiscoveryPreserved =
+      builtins.attrNames (builtins.removeAttrs publisherFieldOptions [ "_module" ])
+      == builtins.attrNames publisher;
+    publisherRouteContextPreserved =
+      builtins.getContext publisher.routeConfig != { }
+      && builtins.getContext evaluatedPublisher.routeConfig == builtins.getContext publisher.routeConfig;
+    publisherMetadataInputsRejected = builtins.mapAttrs (
+      _name: raw: !publisherType.check raw && !publisherAccepted raw
+    ) publisherNegativeInputs;
+    publisherLiteralDataAcceptedAfterTypeMerge =
+      publisherAcceptedWith [ publisherTypeDeclaration ] publisher
+      && builtins.attrNames evaluatedPublisherAfterTypeMerge == builtins.attrNames publisher
+      &&
+        builtins.getContext evaluatedPublisherAfterTypeMerge.routeConfig
+        == builtins.getContext publisher.routeConfig;
+    publisherMetadataInputsRejectedAfterTypeMerge = builtins.mapAttrs (
+      _name: raw: !publisherType.check raw && !publisherAcceptedWith [ publisherTypeDeclaration ] raw
+    ) publisherNegativeInputs;
+    publisherReadOnlyDuplicateDefinitionsRejected = {
+      singleTypeDeclaration = !publisherAcceptedWith [ duplicatePublisherField ] publisher;
+      mergedTypeDeclarations =
+        !publisherAcceptedWith [
+          publisherTypeDeclaration
+          duplicatePublisherField
+        ] publisher;
+    };
     validManifestAccepted = manifestLib.validateManifest manifest;
-    sameSecretMayBindDistinctTargets = manifestLib.validateManifest manifest;
     unboundPlaceholderRejected = invalid {
       profiles = [
         (
@@ -332,24 +425,14 @@ let
     unsafePublicPathRejected = invalid {
       assetCatalog.fixture-asset.publicPath = "/assets/v1/catalog/../fixture.srs";
     };
-    unsafeLegacyPublicPathRejected = invalid {
-      assetCatalog.fixture-asset.legacyPublicPaths = [ "/assets/v1/catalog/../fixture.srs" ];
+    unknownLegacyAssetFieldRejected = invalid {
+      assetCatalog.fixture-asset.legacyPublicPaths = [ "/assets/v1/catalog/fixture-legacy.srs" ];
     };
-    canonicalPathRepeatedAsLegacyRejected = invalid {
-      assetCatalog.fixture-asset.legacyPublicPaths = [ asset.publicPath ];
-    };
-    duplicateLegacyPublicPathRejected = invalid {
-      assetCatalog.fixture-asset.legacyPublicPaths = [
-        "/assets/v1/catalog/fixture-legacy.srs"
-        "/assets/v1/catalog/fixture-legacy.srs"
-      ];
-    };
-    canonicalAndLegacyPathCollisionRejected = invalid {
+    canonicalPathCollisionRejected = invalid {
       assetCatalog.second-asset = asset // {
         id = "second-asset";
         filename = "second.srs";
-        publicPath = "/assets/v1/catalog/fixture-legacy.srs";
-        legacyPublicPaths = [ ];
+        inherit (asset) publicPath;
       };
       profiles = [
         (
@@ -376,7 +459,6 @@ let
           validator = "mrs-domain";
           filename = "fixture.mrs";
           publicPath = "/assets/v1/catalog/fixture.mrs";
-          legacyPublicPaths = [ ];
         };
       }
     );
@@ -386,30 +468,14 @@ let
           validator = "mrs-ipcidr";
           filename = "fixture.mrs";
           publicPath = "/assets/v1/catalog/fixture.mrs";
-          legacyPublicPaths = [ ];
         };
       }
     );
     arbitraryMrsValidatorRejected = invalid {
       assetCatalog.fixture-asset.validator = "mrs";
     };
-    reorderedPhasesRejected = invalid {
-      publicationPhases = builtins.tail manifest.publicationPhases ++ [
-        (builtins.head manifest.publicationPhases)
-      ];
-    };
-    missingPhaseRejected = invalid {
-      publicationPhases = builtins.tail manifest.publicationPhases;
-    };
-    changedPrerequisiteRejected = invalid {
-      publicationPhases = map (
-        phase:
-        if phase.id == "expose-generation" then
-          phase // { prerequisites = [ "render-artifacts" ]; }
-        else
-          phase
-      ) manifest.publicationPhases;
-    };
+    legacyPublicationPhasesRejected = invalid { publicationPhases = [ ]; };
+    unknownRootFieldRejected = invalid { unexpected = true; };
     publicationHasNoProtocolBranches = builtins.all (token: !(lib.hasInfix token publicationSource)) [
       "vless-xhttp"
       "amneziawgCredentials"
@@ -438,7 +504,15 @@ let
         sourceIndex ''mihomo convert-ruleset "$mrs_behavior" mrs "$tmp" "$mrs_output"''
         < sourceIndex ''publish_file "$tmp" "$name"'';
   };
-  contract = builtins.all (value: value) (builtins.attrValues results);
+  allBooleansTrue =
+    value:
+    if builtins.isBool value then
+      value
+    else if builtins.isAttrs value then
+      builtins.all allBooleansTrue (builtins.attrValues value)
+    else
+      false;
+  contract = allBooleansTrue results;
 in
 if !contract then
   throw "Publisher artifact manifest contract failed: ${builtins.toJSON results}"

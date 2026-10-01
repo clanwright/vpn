@@ -1,383 +1,62 @@
-# Backlog
+# Open decisions
 
-## По итогам сравнения со Skala — 28 сентября 2026
+Actionable implementation work belongs in GitHub Issues under the
+[issue-tracker rules](agents/issue-tracker.md). Current behavior belongs in
+[architecture](architecture.md), [contracts](contracts.md) and module pages.
+Research in [references](../references/README.md) informs decisions without
+changing configuration or proving consumer adoption.
 
-Здесь сохраняются открытые вопросы сравнения; краткий референс и источники —
-в [references](../references/README.md). Это направления для дальнейшего
-исследования, не согласованные изменения конфигурации. При переходе к выполнению
-объём и приёмку выносим в GitHub Issue по правилам проекта.
+## IPv6 routing
 
-### IPv6 при выборочной маршрутизации
+Current clients use IPv4 for external resolution and reject external IPv6 while
+preserving local IPv6 exceptions. A dual-family policy needs a separate decision
+covering DIRECT destinations, protected destinations, protocol/server support,
+A/AAAA and FakeIP precedence, TUN capture and failure behavior. Protected traffic
+must not silently fall back to DIRECT. Runtime qualification would belong to the
+consumer on an IPv6-capable network.
 
-Сейчас клиентские профили используют IPv4 для внешнего DNS-разрешения и явно
-отклоняют внешний IPv6; локальные IPv6-исключения сохраняются. Это консервативная
-граница поддержки, а не установленное требование обхода блокировок в России.
+## External subscriptions and client acceptance
 
-Стоит исследовать единую политику для обеих IP-семей: DIRECT-ресурсы, включая
-`.ru`, могут использовать IPv4/IPv6 напрямую; защищённые ресурсы — только через
-совместимый VPN, без автоматического перехода на DIRECT при отсутствии поддержки.
-До отдельного решения текущий запрет сохраняется.
+External Xray import is implemented; see [issue #7](https://github.com/clanwright/vpn/issues/7)
+and the [publisher contract](../clanServices/vpn-client-profiles/README.md#external-subscriptions).
+Connecting real subscription secrets and accepting profiles on devices remain
+consumer work. Supported protocols and exact-core limitations are recorded in
+[client comparison](../references/client-comparison.md); expanding unsupported
+combinations needs a separate decision.
 
-Вопросы исследования:
+Runtime protocol and client scenarios have one owner in
+[verification](operations/verify.md#evidence-and-runtime-acceptance) and its linked
+runbooks. These checks do not establish consumer adoption or intended-network
+availability.
 
-- Поддержка IPv6-назначений в точных версиях Mihomo/sing-box, используемых
-  протоколах и серверных egress-ограничениях; отдельно от IP-семьи соединения
-  клиента с VPN-сервером.
-- Согласованность A/AAAA, FakeIP, доменных и IP-списков, TUN-захвата и порядка
-  правил; поведение при отсутствии IPv6 у сети или выбранного выхода.
-- Польза и ограничения для реальных пользовательских сетей и приложений.
-  Наличие поддержки в документации не доказывает работоспособность на этих путях.
+## Sudoku package and design boundary
 
-Для возможного внедрения нужна отдельная consumer-проверка в IPv6-сети:
-прямые и защищённые назначения, IPv6 literal, TCP/UDP, LAN/Tailscale,
-переподключение и смена сети. Проверки этого репозитория остаются pure Nix
-и статическими; runtime-проверки на устройствах сюда не переносятся.
+Sudoku is deferred. Support requires a reviewed official stock nixpkgs package
+with a cached exact `x86_64-linux` output under [package authority](package-authority.md).
+A local derivation, override or upstream-binary wrapper is not an alternative.
+The canonical protocol is [SUDOKU-ASCII/sudoku](https://github.com/SUDOKU-ASCII/sudoku),
+not Xray `finalmask`.
 
-### Единая подписка и полнота клиентских профилей
+Before implementation, resolve individual credential revocation, direct TCP
+versus consumer-owned TLS/WSS, decoy placement, client compatibility and manual
+versus Auto inclusion. The retained research found a single server master key,
+wildcard listener, client-side TLS setting and consumer-owned fallback/DNS;
+these findings require current upstream verification before reuse. The
+[upstream configuration reference](https://github.com/SUDOKU-ASCII/sudoku/blob/v0.5.0/configs/README.md)
+is research, not an approved module specification. No module or deployment is
+implied by this backlog entry.
 
-Импорт внешних Xray-подписок выделен в согласованную задачу
-[#7](https://github.com/clanwright/vpn/issues/7). Consumer выбирает источники
-через secret binding и явный список профилей; совместимые узлы участвуют в Auto
-по умолчанию. Период обновления — час, повтор после ошибки — пять минут,
-предельный возраст принятой копии — сутки; значения настраиваются для источника.
-Контракт и ограничения описаны в
-[документации publisher](../clanServices/vpn-client-profiles/README.md#external-subscriptions).
-DNS и маршрутизация остаются нашими. Подключение реального секрета и проверка
-подписки на устройствах остаются работой consumer; URL и исходные ответы не
-сохраняются в репозитории.
+## Consumer endpoint composition
 
-Аудит полноты экспорта выполнен 28 сентября: для наших шести providers и
-закреплённых Mihomo 1.19.31 / sing-box 1.14.1 пропущенных поддерживаемых
-протоколов не обнаружено. [Матрица и сравнение клиентов](../references/client-comparison.md)
-содержат exact-tag источники и ограничения GUI. Внешний TCP/REALITY/Vision
-поддерживается обоими ядрами; внешний XHTTP/TLS — Mihomo. Их добавление входит
-в импорт подписок, а не исправление собственного exporter.
+New protocol adoption requires an explicit endpoint, address/port availability
+and certificate or decoy ownership. Independent TCP servers cannot share the
+same address and port without an approved composition. Address purchase,
+listener multiplexing and replacement of existing services are separate scope
+decisions. Native Caddy/ACME producer compatibility and runtime evidence are
+qualified through [verification](operations/verify.md#evidence-and-runtime-acceptance).
 
-Работа профилей на устройствах остаётся отдельной consumer-приёмкой;
-существующий разбор и ссылка на задачу — в
-[документации профилей](../clanServices/vpn-client-profiles/README.md).
-Pure Nix проверки подтверждают генерацию, но не заменяют импорт в приложение,
-длительную передачу, UDP, переподключение и совместимость с Tailscale.
+## TCP tuning ownership
 
-## Новые VPN-протоколы — сентябрь 2026
-
-Пользователь запросил добавить реализацию Mieru, AnyTLS, TrustTunnel и Sudoku
-в бэклог. Mieru реализован в этой ветке на stock 3.36.0, AnyTLS — на stock
-sing-box 1.14.1 (исходно 1.14.0) по решениям 12 сентября 2026. Профиль TrustTunnel согласован
-13 сентября; реализация и критерии приёмки отслеживаются в
-[#1](https://github.com/clanwright/vpn/issues/1). Sudoku остаётся
-**отложенным до появления stock-пакета в nixpkgs и подтверждения его кешированного
-выхода**; по решению владельца от 13 сентября дальнейшая работа остановлена.
-Release и активация сервисов не входят в согласованный объём.
-Исследование upstream — 8 сентября, уточнение Mieru, AnyTLS и TrustTunnel —
-12 сентября 2026; дополнительное исследование Sudoku — 13 сентября 2026.
-
-Серверная архитектура проектируется первой; старые клиенты не ограничивают
-выбор. При этом клиентский экспорт и проверка совместимости входят в результат
-каждой задачи, а не считаются автоматически доступными. Проектирование
-согласованного DNS-каскада не блокирует эти задачи.
-
-### Общие требования к четырем задачам
-
-- Каждый протокол — независимо включаемый модуль и отдельный systemd process;
-  не добавлять их в общий runtime существующих VPN. Сохранить существующие
-  module IDs. Новые IDs и расширение закрытого provider/export contract
-  оформляются явно, без ослабления schema до произвольных attrs.
-- Пакет и исходники закрепить точно; проверить toolchain и применимость
-  advisories, а перед реализацией повторить проверку актуальных релизов.
-  Не использовать установочные скрипты с автоматическим изменением хоста.
-- Credentials генерируются и подставляются только через runtime-secret путь.
-  Значения, ключи и рабочие URL не попадают в Git/Nix store/артефакты checks.
-  Проверить доступ к публичным назначениям и запрет внутренних/metadata сетей
-  по literal IP и результатам DNS. Доступ к LAN остается отдельной policy.
-- Consumer выбирает адрес/порт, сертификат при необходимости и exposure.
-  Несколько standalone процессов не могут одновременно занять один TCP endpoint.
-  Не добавлять скрытый L4 multiplexer, новые IP или HTTP/3 как побочный эффект.
-- Отдельная consumer-приемка: parser точного пакета, положительная/отрицательная auth, listener
-  scope, download/upload, reconnect/idle, sustained transfer и CPU/RAM;
-  UDP relay — только при подтвержденной поддержке. GUI health не заменяет эти
-  проверки. Финальная доступность проверяется с Дом.ру, Т-Мобайл и Yota.
-  Эти runtime-сценарии не выполняются в репозитории: его gate ограничен pure
-  Nix evaluation и статической гигиеной согласно [verify](operations/verify.md).
-- Сохраняются принятые selective/full, видимость всех server–protocol pairs,
-  ручной выбор без автоматической подмены и отсутствие скрытого DIRECT.
-  Новый протокол не получает статус рабочего только из-за наличия в Auto.
-
-Контролируемой сентябрьской матрицы на трех пользовательских сетях пока нет.
-Рекомендуемые реализации ниже — инженерный выбор исходного профиля,
-не обещание обхода IP/ASN allowlist, максимальной скорости или неразличимости.
-
-### Рекомендуемый порядок
-
-| Очередь новых протоколов | Реализация на 08.09.2026 | Зачем добавлять |
-| --- | --- | --- |
-| 1. Mieru | native `mita` 3.36.0 (согласовано 12.09) | Независимый транспорт без TLS и зависимости от сертификата |
-| 2. AnyTLS | отдельный sing-box 1.14.1 (исходно 1.14.0) | TLS-транспорт с padding и повторным использованием сессий |
-| 3. TrustTunnel | официальный endpoint 1.1.0 | Передача TCP и UDP через HTTP/2 |
-| 4. Sudoku | SUDOKU-ASCII/sudoku 0.5.0 | Дополнительный эксперимент с преобразованием трафика и HTTPMask |
-
-Это предложение порядка по разнообразию транспорта и стоимости сопровождения,
-а не рейтинг обхода блокировок. Новые протоколы не вытесняют исправления
-безопасности Unbound и уже согласованную работу над существующими протоколами.
-Выбор ниже — рекомендация для обсуждения, не уже утвержденная конфигурация.
-
-### Mieru: отдельный native mita
-
-**Согласованный объём:** модуль для `mita` из stock Mieru **v3.36.0**,
-с точным кешированным пакетом, типизированным конфигом и самостоятельным unit.
-Пользователь разрешил эту версию 12.09.2026, чтобы не блокировать интеграцию
-ожиданием NixOS cache для v3.36.1. Это историческое решение: upstream уже выпустил
-3.38.0, но выбранный stock nixpkgs по-прежнему содержит 3.36.0. Последующее
-обновление требует stock-пакета и подтверждённого кешированного выхода.
-Stock-пакет 3.36.0 берётся из уже закреплённого `modern-apps-nixpkgs`.
-Реализация и настройки: [модуль Mieru](../clanServices/mieru/README.md).
-Runtime-приёмка consumer остаётся отдельной работой.
-
-Согласованный исходный профиль:
-
-- Один внешний TCP listener через `portBindings`; внешний UDP listener пока
-  не включать. Поддержку UDP relay внутри TCP проверять отдельно от транспорта.
-- Отдельный пользователь и пароль на устройство через `users`; синхронизация
-  времени обязательна для протокольной аутентификации.
-- Оставить штатный `trafficPattern`: не включать low-entropy shaping,
-  пользовательские шаблоны и дополнительный padding без измеренной пользы.
-  `mtu` относится к внешнему UDP и не нужен для выбранного TCP профиля.
-- Не разрешать private/loopback/link-local/metadata назначения. Native flags
-  проверяют TCP до DNS-разрешения и не проверяют назначения отдельных UDP
-  датаграмм, поэтому модуль добавляет nftables guard для своего процесса.
-  Разрешены узкие DNS-исключения по адресам resolver consumer. Начальный
-  серверный egress IPv4-only согласован с текущими профилями; IPv6 на машине
-  целиком не отключается. DNS хоста остаётся consumer-owned.
-- Не требовать TLS-сертификат или домен: это собственный зашифрованный протокол,
-  а не имитация HTTPS. Не добавлять обязательный user hint без проверки
-  совместимости выбранного клиентского протокола.
-- Экспорт — только Mihomo YAML selective/full; pinned Mihomo поддерживает
-  Mieru/TCP и UDP relay. Consumer выбирает providers; выбранный Mieru участвует
-  в ручных selectors и Auto на общих основаниях, без отдельного trial-only
-  ограничения. Official sing-box не получает Mieru outbound.
-- Штатные клиентские `MULTIPLEXING_LOW` и `HANDSHAKE_STANDARD`, без custom
-  traffic pattern. Native Mieru JSON/URI не входит в первую реализацию.
-- `mita` не умеет привязку к выбранному IP: wildcard TCP listener ограничивается
-  модульными ingress rules по заданному consumer IPv4. Конфликт порта и
-  размещение процесса остаются обязанностью consumer.
-
-Приемка сверх общих проверок: отзыв одного пользователя без отзыва остальных,
-ошибка при неверном пароле, поведение при рассинхронизации часов, TCP и UDP
-relay, idle/reconnect и расход CPU. Российские пользовательские сообщения
-служат основанием попробовать Mieru, но не доказывают работу на трех наших сетях.
-
-Источники: [реализуемый релиз 3.36.0](https://github.com/enfein/mieru/releases/tag/v3.36.0),
-[последующий релиз 3.36.1](https://github.com/enfein/mieru/releases/tag/v3.36.1),
-[серверная схема точного тега](https://github.com/enfein/mieru/blob/v3.36.0/docs/server-install.md),
-[протокол](https://github.com/enfein/mieru/blob/main/docs/protocol.md),
-[traffic patterns](https://github.com/enfein/mieru/blob/main/docs/traffic-pattern.md),
-[обсуждение использования в РФ](https://github.com/enfein/mieru/discussions/263).
-
-### AnyTLS: отдельный sing-box inbound
-
-**Согласовано и реализовано 12 сентября 2026:** отдельный модуль AnyTLS на
-stock **sing-box v1.14.0**, независимо от Naive и остальных runtime.
-Текущая выбранная версия после обновления зависимостей — **1.14.1**.
-Реализация и настройки: [модуль AnyTLS](../clanServices/anytls/README.md).
-Предпочтение sing-box основано на документированной конфигурации и интеграции
-с пакетной базой проекта; это не утверждение об уязвимости reference-сервера
-anytls-go. Release, consumer adoption и runtime-приёмка остаются отдельно.
-
-Согласованный исходный профиль:
-
-- Inbound `type = "anytls"`, явные `listen`/`listen_port`, отдельные `users`
-  и обычный проверяемый TLS-сертификат, **только TLS 1.3** по решению владельца.
-  TCP 443 предпочтителен только при
-  наличии свободного согласованного endpoint.
-- Штатный padding: `padding_scheme` не переопределять. Не добавлять REALITY,
-  произвольные padding-рецепты или незапрошенный fallback.
-- Сохранить штатную работу сессий. `idle_session_check_interval`,
-  `idle_session_timeout`, `min_idle_session` — клиентские параметры,
-  не серверные настройки inbound.
-- Внешний транспорт — TLS/TCP; UDP передается внутри TCP через UoT v2.
-  Входящий UDP-порт не нужен, а задержки UDP при потерях TCP остаются ограничением.
-- Серверный egress IPv4-only, как у Mieru; IPv6 машины целиком не отключается.
-  Процессный guard запрещает private/metadata назначения, включая результаты
-  DNS, без исключений для приватных DNS-адресов.
-- DNS AnyTLS использует только свой AdGuard через публичный DoH endpoint,
-  заданный consumer: hostname, публичный IPv4, port и path. Числовой адрес
-  обеспечивает bootstrap, hostname сохраняется для проверки TLS и HTTP.
-  Системный DNS машины не меняется; системного или стороннего DNS fallback нет.
-- Экспорт в Mihomo YAML selective/full и sing-box JSON. Выбранные consumer
-  providers участвуют в ручном выборе и Auto как остальные протоколы;
-  существующий `autoProtocols` управляет автоматическим выбором.
-- Не добавлять клиентские metadata, TCP Fast Open или произвольные TLS/ALPN
-  настройки. Прямой listener не имеет HTTP fallback: успешный TLS handshake
-  не означает, что endpoint отвечает как обычный сайт при active probing.
-
-Историческая проверка upstream 12 сентября подтвердила схемы sing-box 1.14.0 и
-совместимость формата Mihomo 1.19.30. Сейчас выбраны sing-box 1.14.1 и Mihomo
-1.19.31. Контролируемых измерений AnyTLS за
-август–сентябрь на наших трёх операторах не найдено; это основание для отдельной
-приёмки, а не обещание обхода блокировок.
-
-Приемка: проверка TLS identity и отрицательная проверка неправильного
-сертификата на контрольном клиенте, пользовательская auth, повторное
-использование сессий, длительные соединения и UoT v2. Не считать наличие
-AnyTLS в клиенте доказательством корректного UDP relay.
-
-Исторические источники исходного решения: [sing-box 1.14.0](https://github.com/SagerNet/sing-box/releases/tag/v1.14.0),
-[AnyTLS inbound](https://sing-box.sagernet.org/configuration/inbound/anytls/),
-[исходники exact inbound](https://github.com/SagerNet/sing-box/blob/v1.14.0/protocol/anytls/inbound.go),
-[исходники exact outbound](https://github.com/SagerNet/sing-box/blob/v1.14.0/protocol/anytls/outbound.go),
-[Mihomo AnyTLS](https://wiki.metacubex.one/en/config/proxies/anytls/),
-[reference implementation](https://github.com/anytls/anytls-go),
-[протокол v0.0.13](https://github.com/anytls/anytls-go/blob/v0.0.13/docs/protocol.md).
-
-### TrustTunnel: официальный endpoint, HTTP/2
-
-**Согласовано 13 сентября 2026:** отдельный модуль на stock
-**TrustTunnel v1.1.0** (01.09.2026), задача
-[#1](https://github.com/clanwright/vpn/issues/1). Точный кешированный пакет
-берётся из отдельного nixpkgs pin без замены остальных приложений.
-Конфигурация модуля описана в [README](../clanServices/trusttunnel/README.md).
-
-Согласованный исходный профиль:
-
-- Только `listen_protocols.http2`, без `http1` и `quic`.
-  Обычный TLS-сертификат, отдельные отзываемые credentials; один публичный
-  TCP endpoint. HTTP/3 не входит в эту задачу.
-- `allow_private_network_connections = false`; проверить запреты по IP,
-  DNS-именам и после резолвинга. Не включать reverse proxy к внутреннему
-  origin без отдельной потребности.
-- Метрики, ping и speedtest отключены. Начальная приёмка — TCP и UDP через H2.
-  ICMP полностью отключён отсутствием секции `icmp`; `CAP_NET_RAW` не выдаётся.
-- Серверный egress IPv4-only с ограничениями процесса и nftables guard:
-  одного `ipv6_available = false` недостаточно для literal IPv6 TCP/UDP.
-  DNS использует системный resolver; consumer направляет DNS хоста на свой
-  AdGuard и передаёт явный список DNS IPv4 для узких TCP/UDP 53 исключений.
-  Модуль не изменяет DNS хоста и не добавляет fallback.
-- Экспорт — Mihomo selective/full, включая ручной выбор и Auto в соответствии
-  с `autoProtocols`. Выбранный sing-box 1.14.1 не поддерживает этот outbound.
-  ClientRandom-фильтр не включать: он несовместим с выбранным Mihomo.
-- Оба ответа при неверной авторизации — `404`, без `Proxy-Authenticate`.
-  Это не обычный сайт на основном SNI и не гарантия против active probing;
-  challenge-driven Chrome proxy auth не является целевым клиентом.
-- H2 windows, pool и timeout-настройки остаются штатными без случайного tuning.
-  TLS использует штатные версии endpoint: отдельного server TLS-version knob нет.
-- Серверный и TLS-host конфиги согласованы с runtime credentials.
-  `rules.toml` не нужен без входного ClientRandom/source фильтра: это не egress ACL.
-  Отзыв credentials требует restart, поскольку SIGHUP перечитывает только hosts.
-
-Приемка: длительная передача более 1 GiB, ограниченный рост RSS и числа sockets,
-UDP timeout cleanup, reconnect после обрыва H2, отрицательная auth и запрет
-private/metadata назначений. Отчёты #140/#144 о panic/reconnect остаются
-открытыми; endpoint 1.1.0 всё ещё использует `h2 0.3.27`. Релиз исправляет
-UDP timeout cleanup и global IPv6 classification, но не заявляет исправление
-этих двух отчётов. Они служат сценариями приёмки, а не доказательством
-блокировки операторами РФ. Актуальной контролируемой матрицы на Дом.ру,
-Т-Мобайл и Yota не найдено.
-Проверить оба security advisory; исправления вышли в 0.9.114 и 0.9.115,
-поэтому не помечать 1.1.0 затронутым только по наличию advisory.
-
-Источники: [релиз 1.1.0](https://github.com/TrustTunnel/TrustTunnel/releases/tag/v1.1.0),
-[конфигурация](https://github.com/TrustTunnel/TrustTunnel/blob/master/CONFIGURATION.md),
-[протокол](https://github.com/TrustTunnel/TrustTunnel/blob/master/PROTOCOL.md),
-[SSRF advisory](https://github.com/TrustTunnel/TrustTunnel/security/advisories/GHSA-hgr9-frvw-5r76),
-[prefix-rule advisory](https://github.com/TrustTunnel/TrustTunnel/security/advisories/GHSA-fqh7-r5gf-3r87),
-[отчет о памяти/panic](https://github.com/TrustTunnel/TrustTunnel/issues/140),
-[отчет о reconnect](https://github.com/TrustTunnel/TrustTunnel/issues/144).
-
-### Sudoku: самостоятельный сервер, ограниченное испытание
-
-**Отложено по решению владельца от 13.09.2026.** При проверке трёх текущих
-nixpkgs-пинов репозитория и официального nixpkgs `master` пакет прокси
-SUDOKU-ASCII/sudoku не найден (пакет игры `gnome-sudoku` к нему не относится).
-Подходящий stock output из NixOS cache не установлен. По
-[package authority](package-authority.md) собственная derivation, override
-или обёртка upstream-бинарника не являются допустимым обходом.
-
-Условие возобновления: официальный stock-пакет нужной версии в nixpkgs,
-точная ревизия и подтверждённый кешированный output для `x86_64-linux`.
-Подготовка upstream-пакета остаётся возможным следующим шагом, но сейчас
-не выполняется. Реализация модуля, публикация и развёртывание не начаты.
-При возобновлении перепроверить версии и завершить обсуждение решений ниже.
-
-**Задача:** добавить canonical **SUDOKU-ASCII/sudoku v0.5.0** (05.09.2026).
-Не подменять его несовместимым Xray `finalmask`. В 0.5.0 исправлены обрывы
-mux при высокой конкуренции и удалены устаревшие реализации HTTPMask.
-
-Рекомендуемый исходный профиль по текущему upstream server template:
-
-- `mode = "server"`, `transport = "tcp"`, один `local_port`;
-  `aead = "chacha20-poly1305"`, никогда `none`.
-- `padding_min = 5`, `padding_max = 15`, `ascii = "prefer_entropy"`,
-  `enable_pure_downlink = true`; без пользовательских таблиц.
-- `multiplex = "off"` для исходного профиля. Исправление mux в новом релизе
-  само по себе не доказывает пользу его включения на наших путях.
-- HTTPMask: `disable = false`, `mode = "auto"`;
-  `suspicious_action = "fallback"`, fallback только на локальный decoy.
-  Подготовка decoy и возможная TLS termination должны быть явными частями
-  consumer composition. Не предполагать наличие серверных TLS-полей по
-  клиентскому полю `tls` и не обещать HTTPS-маскировку голого TCP endpoint.
-- TCP relay и UDP через UoT; отдельный публичный UDP listener не нужен.
-
-Исследование исходников тега 0.5.0 от 13.09.2026 уточнило ограничения:
-
-- Один сервер принимает один master public key. Разные клиентские private keys
-  не дают индивидуального отзыва: смена master требует обновить все клиенты.
-  Допустимость общей ротации остаётся несогласованной.
-- `httpmask.tls` — клиентская настройка; сервер не завершает TLS и слушает
-  wildcard `:<local_port>` без настройки bind address. WSS требует внешнего
-  consumer-owned TLS proxy. Выбор direct TCP, WSS или обоих режимов не сделан.
-  Модуль должен ограничивать ingress и доступ к private/metadata/IPv6-назначениям
-  по образцу Mieru; upstream не предоставляет нужной фильтрации назначений.
-- Fallback должен вести на отдельный локальный decoy, а не обратно в Sudoku
-  или frontend-маршрут, возвращающий запрос в него. Consumer задаёт decoy и DNS;
-  модуль ограничивает соответствующие исключения сетевой защиты.
-- `path_root` требует одинакового допустимого сегмента на клиенте и сервере;
-  неверное значение upstream молча превращает в пустое. Контракт должен
-  отклонять такие значения.
-- Server template использует HTTPMask `auto`, client example — `ws`.
-  Исторически закреплённый Mihomo 1.19.30 использовал Sudoku 0.4.8; совместимость с сервером
-  0.5.0 остаётся предметом consumer runtime-приёмки. Клиентский охват и изменение
-  политики Auto не согласованы; исходная рекомендация ручного trial сохраняется.
-- Подробных испытаний с указанием российского оператора, региона и версии
-  в исследованных источниках не найдено. Заявления upstream не подтверждают
-  доступность на Дом.ру, Т-Мобайл и Yota.
-
-Приемка: неправильный ключ/AEAD, устойчивость fallback к probing без раскрытия
-служебных ошибок, HTTPMask interop, UDP relay, reconnect и длительная нагрузка.
-Теория энтропии и заявления upstream не заменяют измерение доступности в РФ.
-До приемки держать отдельным испытательным профилем, не включать в рабочий Auto.
-
-Источники: [релиз 0.5.0](https://github.com/SUDOKU-ASCII/sudoku/releases/tag/v0.5.0),
-[canonical upstream](https://github.com/SUDOKU-ASCII/sudoku),
-[configuration guide 0.5.0](https://github.com/SUDOKU-ASCII/sudoku/blob/v0.5.0/configs/README.md),
-[server template 0.5.0](https://github.com/SUDOKU-ASCII/sudoku/blob/v0.5.0/configs/server.config.json),
-[server source](https://github.com/SUDOKU-ASCII/sudoku/blob/v0.5.0/internal/app/server.go),
-[fallback source](https://github.com/SUDOKU-ASCII/sudoku/blob/v0.5.0/internal/handler/fallback.go),
-[Mihomo Sudoku schema](https://wiki.metacubex.one/en/config/proxies/sudoku/),
-[Mihomo upstream sync](https://github.com/MetaCubeX/mihomo/pull/2966),
-[официальный nixpkgs](https://github.com/NixOS/nixpkgs).
-
-### Что решить при подключении к consumer
-
-Для выбранного протокола определить конкретный consumer endpoint: доступный
-IP/порт, сертификат или decoy при необходимости. Это реальная граница решения:
-на одном IP несколько независимых TCP-серверов не займут одновременно 443.
-Сейчас не предполагается покупка IP, скрытый multiplexer или замена рабочего
-сервиса. Для Sudoku отдельно закрыть TLS termination и отзыв ключей, для
-TrustTunnel — настройки системного DNS через свой AdGuard; ICMP в начальном
-модуле отключён по решению владельца. Остальные обратимые детали пакета,
-systemd и checks решаются при реализации внутри утвержденного профиля.
-
-## TCP performance policy
-
-BBR, FQ and the existing TCP sysctl policy remain in the consumer's common
-machine layer. A future change may evaluate moving that policy into this domain,
-but it requires a separate ownership decision, public contract, checks and
-release. It must preserve host applicability and must not silently alter VPN
-protocol behavior.
-
-## Package-source cleanup — resolved in the September candidate
-
-The unused standalone NaiveProxy wrapper is removed. The client uses stock
-sing-box with native Naive support and stock Cronet; Network's Caddy remains
-the explicitly approved custom-package exception. Consumer adoption remains
-separate from repository verification.
+BBR, FQ and TCP sysctls belong to the consumer common machine layer. Moving them
+requires a separate ownership decision, public contract, checks and release;
+it must preserve host applicability and protocol behavior.

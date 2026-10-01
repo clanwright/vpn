@@ -13,11 +13,11 @@ in
   extraModule ? { },
   includeNetwork ? false,
   fixtureName ? "vpn-consumer-fixture",
+  evaluateOnly ? false,
 }:
 let
   lib = inputs.nixpkgs.lib;
   supportInstances = [
-    "edge-wildcard-certificate"
     "network-caddy"
     "network-certificates"
   ];
@@ -67,8 +67,9 @@ let
     builtins.seq machine.system.build.toplevel.drvPath assertionsPass
   );
 in
-assert evaluated;
+assert evaluateOnly || evaluated;
 {
   inherit machine;
+  inherit (consumer.config.nixosConfigurations.vpn-fixture) options;
   inherit (consumer) config;
 }

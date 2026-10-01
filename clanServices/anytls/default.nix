@@ -5,40 +5,18 @@
 }:
 let
   identities = import ../../modules/contracts/identities.nix { inherit lib; };
-  providerEnvelope = import ../../modules/contracts/provider-envelope.nix { inherit lib; };
-  decimalPattern = "(0|[1-9][0-9]{0,2})";
-  validIPv4 =
-    value:
-    let
-      octets = lib.splitString "." value;
-      validOctet =
-        octet:
-        builtins.match decimalPattern octet != null
-        && builtins.fromJSON octet >= 0
-        && builtins.fromJSON octet <= 255;
-    in
-    lib.length octets == 4 && builtins.all validOctet octets;
+  inherit (import ../../modules/contracts/address-validation.nix { inherit lib; })
+    validHostname
+    validIPv4
+    ;
   validBindIPv4 = value: validIPv4 value && value != "0.0.0.0";
-  validDnsName =
-    value:
-    value != ""
-    && builtins.match "[A-Za-z0-9]([A-Za-z0-9.-]*[A-Za-z0-9])?" value != null
-    && lib.hasInfix "." value;
+  validDnsName = value: builtins.isString value && validDnsEndpointDomain (lib.toLower value);
   validDnsEndpointDomain =
     value:
-    let
-      labels = lib.splitString "." value;
-      validLabel =
-        label:
-        builtins.stringLength label >= 1
-        && builtins.stringLength label <= 63
-        && builtins.match "[a-z0-9]([a-z0-9-]*[a-z0-9])?" label != null;
-    in
-    value == lib.toLower value
-    && builtins.stringLength value <= 253
-    && builtins.length labels >= 2
-    && builtins.all validLabel labels
-    && builtins.match "[0-9]+(\\.[0-9]+)+" value == null;
+    validHostname value
+    && value == lib.toLower value
+    && builtins.length (lib.splitString "." value) >= 2
+    && !builtins.all (label: builtins.match "[0-9]+" label != null) (lib.splitString "." value);
   validHttpPath = value: builtins.match "/[A-Za-z0-9._~/-]*" value != null;
   ipv4ToInt =
     value:
@@ -170,7 +148,7 @@ in
           };
 
           acmeCertName = lib.mkOption {
-            type = identities.safeIdentityType;
+            type = identities.certificateKeyType;
             description = "Consumer-owned ACME certificate name under /var/lib/acme.";
           };
 
@@ -224,53 +202,42 @@ in
     perInstance =
       {
         settings,
-        instanceName ? "anytls",
-        machine ? {
-          name = null;
-        },
+        instanceName,
         mkExports ? (value: value),
         ...
       }:
       let
         active = settings.enable;
-        providerMachine =
-          if machine ? name && machine.name != null && machine.name != "" then
-            machine.name
-          else
-            builtins.head (lib.splitString "--" instanceName);
         profileNames = map (user: user.name) settings.users;
         userSecretNames = map (user: user.passwordSecretName) settings.users;
-        secretNames.users = lib.listToAttrs (
-          map (user: {
-            inherit (user) name;
-            value = user.passwordSecretName;
-          }) settings.users
-        );
       in
       {
         exports = lib.optionalAttrs active (mkExports {
-          vpnProvider = providerEnvelope.mkProvider {
-            protocol = "anytls";
-            instanceId = instanceName;
-            machine = providerMachine;
-            endpoint = {
-              ipv4 = settings.bindIPv4;
-              inherit (settings) domain port;
+          vpnProvider = {
+            schemaVersion = 3;
+            connection.anytls = {
+              endpoint = {
+                hostname = settings.domain;
+                ipv4 = settings.bindIPv4;
+                inherit (settings) port;
+              };
+              clients = lib.listToAttrs (
+                map (user: {
+                  inherit (user) name;
+                  value.passwordSecret = user.passwordSecretName;
+                }) settings.users
+              );
             };
-            transportMetadata = {
-              userNames = profileNames;
-              tlsServerName = settings.domain;
-              tlsVerify = true;
-              tlsMinVersion = "1.3";
-            };
-            inherit profileNames secretNames;
           };
         });
 
         nixosModule =
           {
             config,
+            modulesPath,
+            options,
             pkgs,
+            utils,
             ...
           }:
           let
@@ -280,17 +247,18 @@ in
               else
                 builtins.currentSystem;
             singBoxPackage = singBoxPackageFor system;
-            serviceName = "anytls";
+            serviceName = "sing-box";
             serviceUnit = "${serviceName}.service";
-            templateName = "${serviceName}.json";
             nftTableName = "vpn_anytls_egress";
-            configPath = config.sops.templates.${templateName}.path;
             sopsUnits = lib.optional config.sops.useSystemdActivation "sops-install-secrets.service";
             certificateSource = "/var/lib/acme/${settings.acmeCertName}/fullchain.pem";
             privateKeySource = "/var/lib/acme/${settings.acmeCertName}/key.pem";
             credentialDirectory = "/run/credentials/${serviceUnit}";
             certificatePath = "${credentialDirectory}/certificate.pem";
             privateKeyPath = "${credentialDirectory}/private-key.pem";
+            passwordCredential = user: "password-${user.name}";
+            passwordPath = user: "${credentialDirectory}/${passwordCredential user}";
+            secretsPresent = builtins.all (secretName: config.sops.secrets ? ${secretName}) userSecretNames;
             distinctUserNames = lib.length (lib.unique profileNames) == lib.length profileNames;
             distinctSecretNames = lib.length (lib.unique userSecretNames) == lib.length userSecretNames;
             activeInstances = config.clanwright.vpn.anytls.activeInstances;
@@ -298,12 +266,15 @@ in
             expectedNftContent = ''
               chain output {
                 type filter hook output priority filter; policy accept;
-                meta skuid "anytls" ip saddr ${settings.bindIPv4} tcp sport ${toString settings.port} ct direction reply accept comment "anytls preserve listener replies"
-                meta skuid "anytls" ip daddr { ${deniedIPv4Set} } drop comment "anytls deny non-public IPv4 egress"
-                meta skuid "anytls" ip6 daddr ::/0 drop comment "anytls deny IPv6 egress"
+                meta skuid "sing-box" ip saddr ${settings.bindIPv4} tcp sport ${toString settings.port} ct direction reply accept comment "anytls preserve listener replies"
+                meta skuid "sing-box" ip daddr { ${deniedIPv4Set} } drop comment "anytls deny non-public IPv4 egress"
+                meta skuid "sing-box" ip6 daddr ::/0 drop comment "anytls deny IPv6 egress"
               }
             '';
-            renderedConfig = builtins.toJSON {
+            expectedIngress = ''
+              ip daddr ${settings.bindIPv4} tcp dport ${toString settings.port} accept comment "anytls destination-scoped ingress"
+            '';
+            expectedSettings = {
               log.level = "info";
               dns = {
                 servers = [
@@ -330,7 +301,7 @@ in
                   listen_port = settings.port;
                   users = map (user: {
                     inherit (user) name;
-                    password = config.sops.placeholder.${user.passwordSecretName};
+                    password._secret = passwordPath user;
                   }) settings.users;
                   tls = {
                     enabled = true;
@@ -374,42 +345,154 @@ in
                 };
               };
             };
-            socketIPv4Hex = lib.concatStrings (
-              lib.reverseList (
-                map (octet: lib.fixedWidthString 2 "0" (lib.toHexString (builtins.fromJSON octet))) (
-                  lib.splitString "." settings.bindIPv4
-                )
-              )
-            );
-            socketPortHex = lib.fixedWidthString 4 "0" (lib.toHexString settings.port);
-            expectedTcpLocal = "${socketIPv4Hex}:${socketPortHex}";
             passwordValidator = pkgs.writeShellScript "anytls-validate-passwords" (
               ''
                 set -eu
+
+                # Native -C reads every JSON in its runtime directory. Reject
+                # another configuration before the native renderer installs ours.
+                for config_file in /run/sing-box/*.json; do
+                  if [ "$config_file" != /run/sing-box/config.json ] && [ -e "$config_file" ]; then
+                    echo "anytls: the sing-box runtime configuration directory is exclusive" >&2
+                    exit 1
+                  fi
+                done
               ''
-              + lib.concatMapStringsSep "\n" (secretName: ''
-                secret_path=${lib.escapeShellArg config.sops.secrets.${secretName}.path}
+              + lib.concatMapStringsSep "\n" (user: ''
+                secret_path=${lib.escapeShellArg (passwordPath user)}
                 byte_count="$(${pkgs.coreutils}/bin/wc -c < "$secret_path")"
                 base64url_byte_count="$(LC_ALL=C ${pkgs.coreutils}/bin/tr -cd 'A-Za-z0-9_-' < "$secret_path" | ${pkgs.coreutils}/bin/wc -c)"
                 if [ "$byte_count" -eq 0 ] || [ "$byte_count" -gt 64 ] || [ "$byte_count" -ne "$base64url_byte_count" ]; then
                   echo "anytls: a device password must be 1..64 raw unpadded base64url bytes" >&2
                   exit 1
                 fi
-              '') userSecretNames
+              '') settings.users
             );
             bindCapabilities = lib.optional (settings.port < 1024) "CAP_NET_BIND_SERVICE";
+            # The package unit grants more capabilities and supplies HUP reload.
+            # Empty assignments reset those inherited directives in the drop-in.
             expectedLoadCredential = [
               "certificate.pem:${certificateSource}"
               "private-key.pem:${privateKeySource}"
+            ]
+            ++ map (
+              user: "${passwordCredential user}:${config.sops.secrets.${user.passwordSecretName}.path}"
+            ) settings.users;
+            nativePreStart = pkgs.writeShellScript "sing-box-pre-start" ''
+              ${utils.genJqSecretsReplacementSnippet expectedSettings "/run/sing-box/config.json"}
+              chown --reference=/run/sing-box /run/sing-box/config.json
+            '';
+            hardening = {
+              Type = "exec";
+              ExecReload = [ "" ];
+              UMask = "0077";
+              AmbientCapabilities = [ "" ] ++ bindCapabilities;
+              CapabilityBoundingSet = [ "" ] ++ bindCapabilities;
+              LoadCredential = expectedLoadCredential;
+              LockPersonality = true;
+              NoNewPrivileges = true;
+              PrivateDevices = true;
+              PrivateTmp = true;
+              ProtectClock = true;
+              ProtectControlGroups = true;
+              ProtectHome = true;
+              ProtectHostname = true;
+              ProtectKernelLogs = true;
+              ProtectKernelModules = true;
+              ProtectKernelTunables = true;
+              ProtectProc = "invisible";
+              ProtectSystem = "strict";
+              RestrictAddressFamilies = [
+                "AF_INET"
+                "AF_UNIX"
+              ];
+              RestrictNamespaces = true;
+              RestrictRealtime = true;
+              RestrictSUIDSGID = true;
+              SystemCallArchitectures = "native";
+            };
+            expectedServiceConfig = hardening // {
+              User = serviceName;
+              Group = serviceName;
+              ConfigurationDirectory = serviceName;
+              StateDirectory = serviceName;
+              StateDirectoryMode = "0700";
+              RuntimeDirectory = serviceName;
+              RuntimeDirectoryMode = "0700";
+              WorkingDirectory = "/var/lib/sing-box";
+              ExecStartPre = [
+                "${passwordValidator}"
+                "+${nativePreStart}"
+              ];
+              ExecStart = [
+                ""
+                "${lib.getExe singBoxPackage} -D \${STATE_DIRECTORY} -C \${RUNTIME_DIRECTORY} run"
+              ];
+            };
+            unit = config.systemd.services.${serviceName};
+            generatedUnit = config.systemd.units.${serviceUnit};
+            # Trust pinned native NixOS package declarations and each service's
+            # package authority. Consumer additions can introduce late vendor
+            # drop-ins. This guards trusted declarative composition, without
+            # inspecting unbuilt outputs or defending against hostile Nix code.
+            nativePackageDefinitions = options.systemd.packages.definitionsWithLocations;
+            nativeSystemdSource = "${toString modulesPath}/system/boot/systemd.nix";
+            nativeSystemdTargets = [
+              "systemd/system"
+              "systemd/system.conf"
             ];
+            nativeSystemdEntry =
+              target:
+              let
+                definitions = builtins.filter (
+                  definition: definition.value ? ${target}
+                ) options.environment.etc.definitionsWithLocations;
+              in
+              definitions != [ ]
+              && builtins.all (definition: definition.file == nativeSystemdSource) definitions
+              && config.environment.etc ? ${target}
+              && config.environment.etc.${target}.enable
+              && config.environment.etc.${target}.target == target;
+            managerDefaultEnvironment = config.systemd.settings.Manager.DefaultEnvironment or "";
+            managerSettingsSafe = builtins.all (
+              name:
+              builtins.match "[A-Za-z][A-Za-z0-9]*" name != null
+              && builtins.all (
+                value:
+                let
+                  rendered = utils.systemdUtils.lib.toOption value;
+                in
+                !(lib.hasInfix "\n" rendered) && !(lib.hasInfix "\r" rendered)
+              ) (lib.toList config.systemd.settings.Manager.${name})
+            ) (builtins.attrNames config.systemd.settings.Manager);
+            nativePath = [
+              pkgs.coreutils
+              pkgs.findutils
+              pkgs.gnugrep
+              pkgs.gnused
+              config.systemd.package
+            ];
+            expectedUnitConfig = {
+              After = toString unit.after;
+              BindsTo = toString unit.bindsTo;
+              Description = "sing-box AnyTLS proxy gateway";
+              PartOf = toString unit.partOf;
+              Requires = toString unit.requires;
+            }
+            // lib.optionalAttrs (unit.wants != [ ]) {
+              Wants = toString unit.wants;
+            };
+            namespacePath =
+              value:
+              builtins.any (path: lib.hasInfix path value) [
+                "/run/sing-box"
+                "/var/lib/sing-box"
+                "/etc/sing-box"
+                "/run/credentials/${serviceUnit}"
+              ];
           in
           {
-            options.clanwright.vpn.anytls.activeInstances = lib.mkOption {
-              type = lib.types.listOf lib.types.str;
-              default = [ ];
-              internal = true;
-              description = "Active AnyTLS instances claiming the singleton runtime.";
-            };
+            imports = [ ./options.nix ];
 
             config = {
               clanwright.vpn.anytls.activeInstances = lib.mkIf active [ instanceName ];
@@ -424,8 +507,30 @@ in
                   message = "anytls: the injected stock sing-box package must be exactly version 1.14.1.";
                 }
                 {
-                  assertion = pkgs.sing-box == singBoxPackage;
-                  message = "anytls: pkgs.sing-box must come from the injected VPN application pin.";
+                  assertion =
+                    config.services.sing-box.enable
+                    && config.services.sing-box.package == singBoxPackage
+                    && config.services.sing-box.settings == expectedSettings;
+                  message = "anytls: the native sing-box singleton must retain the exact package and exclusive AnyTLS settings.";
+                }
+                {
+                  assertion =
+                    builtins.elem singBoxPackage config.systemd.packages
+                    && builtins.all (
+                      definition: lib.hasPrefix "${toString modulesPath}/" definition.file
+                    ) nativePackageDefinitions
+                    && !(builtins.elem serviceUnit config.systemd.suppressedSystemUnits)
+                    && builtins.all nativeSystemdEntry nativeSystemdTargets
+                    && builtins.all (
+                      name:
+                      let
+                        target = config.environment.etc.${name}.target;
+                      in
+                      target != "systemd"
+                      && !(lib.hasPrefix "systemd/system.conf.d" target)
+                      && (!(builtins.elem target nativeSystemdTargets) || name == target)
+                    ) (builtins.attrNames config.environment.etc);
+                  message = "anytls: stock sing-box and native systemd assembly must remain present; consumer package providers, suppression and directory replacement are unsupported.";
                 }
                 {
                   assertion = config.networking.firewall.enable;
@@ -457,24 +562,22 @@ in
                 }
                 {
                   assertion =
-                    config.networking.nftables.tables.${nftTableName}.family == "inet"
+                    config.networking.nftables.tables ? ${nftTableName}
+                    && config.networking.nftables.tables.${nftTableName}.family == "inet"
                     && config.networking.nftables.tables.${nftTableName}.enable
-                    && config.networking.nftables.tables.${nftTableName}.content == expectedNftContent;
+                    && config.networking.nftables.tables.${nftTableName}.content == expectedNftContent
+                    && lib.hasInfix expectedIngress config.networking.firewall.extraInputRules;
                   message = "anytls: the module-owned ingress and process egress guard must not be removed or weakened.";
                 }
                 {
-                  assertion =
-                    config.sops.templates.${templateName}.content == renderedConfig
-                    && config.sops.templates.${templateName}.owner == serviceName
-                    && config.sops.templates.${templateName}.group == serviceName
-                    && config.sops.templates.${templateName}.mode == "0400"
-                    && builtins.elem serviceUnit config.sops.templates.${templateName}.restartUnits;
-                  message = "anytls: the runtime config template, permissions, and restart binding must remain guarded.";
+                  assertion = !(config.sops.templates ? "anytls.json") && !(config.sops.templates ? "sing-box.json");
+                  message = "anytls: native sing-box owns runtime JSON rendering; competing SOPS templates are unsupported.";
                 }
                 {
                   assertion = builtins.all (
                     secretName:
-                    config.sops.secrets.${secretName}.owner == "root"
+                    config.sops.secrets ? ${secretName}
+                    && config.sops.secrets.${secretName}.owner == "root"
                     && config.sops.secrets.${secretName}.group == "root"
                     && config.sops.secrets.${secretName}.mode == "0400"
                     && builtins.elem serviceUnit config.sops.secrets.${secretName}.restartUnits
@@ -483,38 +586,128 @@ in
                 }
                 {
                   assertion =
-                    builtins.elem serviceUnit
-                      config.security.acme.certs.${settings.acmeCertName}.reloadServices;
-                  message = "anytls: ACME renewal must reload the AnyTLS service.";
+                    config.security.acme.certs ? ${settings.acmeCertName}
+                    && builtins.elem serviceUnit config.security.acme.certs.${settings.acmeCertName}.reloadServices;
+                  message = "anytls: ACME renewal must restart sing-box to refresh copied TLS credentials.";
                 }
                 {
                   assertion =
-                    config.systemd.services.${serviceName}.serviceConfig.User == serviceName
-                    && config.systemd.services.${serviceName}.serviceConfig.Group == serviceName
-                    && !(config.systemd.services.${serviceName}.serviceConfig.DynamicUser or false)
-                    && config.systemd.services.${serviceName}.serviceConfig.ExecStartPre == "+${passwordValidator}"
+                    config.services.sing-box.enable
+                    && config.systemd.services ? ${serviceName}
+                    && secretsPresent
+                    && unit.enable
+                    && unit.wantedBy == [ "multi-user.target" ]
+                    && unit.serviceConfig == expectedServiceConfig
+                    && unit.unitConfig == expectedUnitConfig
+                    && unit.path == nativePath
+                    && managerSettingsSafe
+                    && builtins.elem managerDefaultEnvironment [
+                      ""
+                      [ ]
+                      [ "" ]
+                    ]
+                    && builtins.all (
+                      name:
+                      builtins.elem name [
+                        "LOCALE_ARCHIVE"
+                        "TZDIR"
+                      ]
+                    ) (builtins.attrNames config.systemd.globalEnvironment)
                     &&
-                      config.systemd.services.${serviceName}.serviceConfig.ExecStart
-                      == "${lib.getExe singBoxPackage} run -c ${configPath}"
-                    && config.systemd.services.${serviceName}.serviceConfig.LoadCredential == expectedLoadCredential
+                      unit.environment == {
+                        PATH = "${lib.makeBinPath nativePath}:${lib.makeSearchPathOutput "bin" "sbin" nativePath}";
+                      }
+                    && unit.preStart == ""
+                    && unit.postStart == ""
+                    && unit.script == ""
+                    && unit.reload == ""
+                    && !unit.reloadIfChanged
+                    && unit.restartIfChanged
                     &&
-                      config.systemd.services.${serviceName}.serviceConfig.RestrictAddressFamilies == [
-                        "AF_INET"
-                        "AF_UNIX"
-                      ];
-                  message = "anytls: process identity, command, credentials, and IPv4-only address families must remain guarded.";
+                      unit.requires == [
+                        "network-online.target"
+                        "nftables.service"
+                      ]
+                    && unit.bindsTo == [ "nftables.service" ]
+                    && unit.partOf == [ "nftables.service" ]
+                    && builtins.elem "nftables.service" unit.after
+                    && builtins.all (name: builtins.elem name unit.after && builtins.elem name unit.wants) sopsUnits;
+                  message = "anytls: the native unit identity, execution, credentials, hardening, restart and firewall lifecycle must remain guarded.";
+                }
+                {
+                  assertion =
+                    config.services.sing-box.enable
+                    && secretsPresent
+                    && config.systemd.services ? ${serviceName}
+                    && config.systemd.units ? ${serviceUnit}
+                    && config.users.users ? ${serviceName}
+                    && config.users.groups ? ${serviceName}
+                    && generatedUnit.enable
+                    && generatedUnit.text == (utils.systemdUtils.lib.serviceToUnit unit).text
+                    && generatedUnit.unit == utils.systemdUtils.lib.makeUnit serviceUnit generatedUnit
+                    && generatedUnit.wantedBy == unit.wantedBy
+                    && unit.aliases == [ ]
+                    && generatedUnit.aliases == [ ]
+                    && builtins.all (name: !(builtins.elem serviceUnit config.systemd.units.${name}.aliases)) (
+                      builtins.attrNames config.systemd.units
+                    )
+                    && generatedUnit.overrideStrategy == "asDropinIfExists"
+                    && !(config.systemd.services ? anytls)
+                    && builtins.all (name: name == serviceName || !(lib.hasPrefix "sing-box" name)) (
+                      builtins.attrNames config.systemd.services
+                    )
+                    && builtins.all (name: name == serviceUnit || !(lib.hasPrefix "sing-box" name)) (
+                      builtins.attrNames config.systemd.units
+                    )
+                    && builtins.all (
+                      name:
+                      name == serviceName || (config.systemd.services.${name}.serviceConfig.User or null) != serviceName
+                    ) (builtins.attrNames config.systemd.services)
+                    && builtins.all (
+                      name:
+                      let
+                        target = config.environment.etc.${name}.target;
+                      in
+                      !(lib.hasPrefix "sing-box" target) && !(lib.hasPrefix "systemd/system/sing-box" target)
+                    ) (builtins.attrNames config.environment.etc)
+                    && !(builtins.any namespacePath config.systemd.tmpfiles.rules)
+                    && !(builtins.any namespacePath (
+                      lib.concatMap builtins.attrNames (builtins.attrValues config.systemd.tmpfiles.settings)
+                    ))
+                    && config.users.users.${serviceName}.isSystemUser
+                    && config.users.users.${serviceName}.enable
+                    && config.users.users.${serviceName}.name == serviceName
+                    && !config.users.users.${serviceName}.isNormalUser
+                    && config.users.users.${serviceName}.group == serviceName
+                    && config.users.users.${serviceName}.home == "/var/lib/sing-box"
+                    && config.users.users.${serviceName}.uid == null
+                    && config.users.users.${serviceName}.extraGroups == [ ]
+                    && config.users.groups.${serviceName}.gid == null
+                    && config.users.groups.${serviceName}.name == serviceName
+                    && config.users.groups.${serviceName}.members == [ ]
+                    && builtins.all (name: !(builtins.elem serviceName config.users.groups.${name}.members)) (
+                      builtins.attrNames config.users.groups
+                    )
+                    && builtins.all (
+                      name:
+                      name == serviceName
+                      || (
+                        config.users.users.${name}.group != serviceName
+                        && config.users.users.${name}.name != serviceName
+                        && !(builtins.elem serviceName config.users.users.${name}.extraGroups)
+                      )
+                    ) (builtins.attrNames config.users.users)
+                    && builtins.all (name: name == serviceName || config.users.groups.${name}.name != serviceName) (
+                      builtins.attrNames config.users.groups
+                    );
+                  message = "anytls: native sing-box unit, UID, directories and configuration namespace are exclusively owned by this singleton.";
                 }
               ];
 
-              nixpkgs.overlays = lib.optional active (_final: _prev: { sing-box = singBoxPackage; });
-
-              users.groups = lib.optionalAttrs active { ${serviceName} = { }; };
-              users.users = lib.optionalAttrs active {
-                ${serviceName} = {
-                  isSystemUser = true;
-                  group = serviceName;
-                  description = "AnyTLS sing-box server daemon";
-                };
+              services.sing-box = lib.mkIf active {
+                enable = true;
+                package = singBoxPackage;
+                settings = expectedSettings;
               };
 
               sops.secrets = lib.optionalAttrs active (
@@ -525,27 +718,14 @@ in
                   restartUnits = [ serviceUnit ];
                 })
               );
-              sops.templates = lib.optionalAttrs active {
-                ${templateName} = {
-                  content = renderedConfig;
-                  owner = serviceName;
-                  group = serviceName;
-                  mode = "0400";
-                  restartUnits = [ serviceUnit ];
-                };
-              };
 
               networking = {
-                firewall.extraInputRules = lib.mkIf active (
-                  lib.mkAfter ''
-                    ip daddr ${settings.bindIPv4} tcp dport ${toString settings.port} accept comment "anytls destination-scoped ingress"
-                  ''
-                );
+                firewall.extraInputRules = lib.mkIf active (lib.mkAfter expectedIngress);
                 nftables = {
                   # Pure nft syntax checks have no target user database.
                   preCheckRuleset = lib.mkIf active (
                     lib.mkAfter ''
-                      sed 's/meta skuid "anytls"/meta skuid 0/g' -i ruleset.conf
+                      sed 's/meta skuid "sing-box"/meta skuid 0/g' -i ruleset.conf
                     ''
                   );
                   tables = lib.optionalAttrs active {
@@ -565,90 +745,20 @@ in
               systemd.services = lib.optionalAttrs active {
                 ${serviceName} = {
                   description = "sing-box AnyTLS proxy gateway";
-                  wantedBy = [ "multi-user.target" ];
                   after = [
                     "network-online.target"
                     "nftables.service"
                   ]
                   ++ sopsUnits;
-                  wants = [ "network-online.target" ] ++ sopsUnits;
+                  wants = sopsUnits;
                   requires = [ "nftables.service" ];
                   bindsTo = [ "nftables.service" ];
                   partOf = [ "nftables.service" ];
-                  restartTriggers = [ singBoxPackage ];
-                  postStart = ''
-                    set -euo pipefail
-
-                    expected_local=${lib.escapeShellArg expectedTcpLocal}
-                    for attempt in $(${pkgs.coreutils}/bin/seq 1 15); do
-                      if [ -z "''${MAINPID:-}" ]; then
-                        echo "anytls: main process inspection unavailable during TCP listener readiness" >&2
-                        exit 1
-                      fi
-                      tcp_table="$(${pkgs.coreutils}/bin/cat /proc/"$MAINPID"/net/tcp 2>/dev/null)" || {
-                        echo "anytls: main process inspection unavailable during TCP listener readiness" >&2
-                        exit 1
-                      }
-
-                      while read -r slot local_address remote_address state queues timers retransmits uid timeout inode remainder; do
-                        if [ "$local_address" != "$expected_local" ] \
-                          || [ "$remote_address" != "00000000:0000" ] \
-                          || [ "$state" != "0A" ]; then
-                          continue
-                        fi
-
-                        for fd in /proc/"$MAINPID"/fd/*; do
-                          target="$(${pkgs.coreutils}/bin/readlink "$fd" 2>/dev/null || true)"
-                          if [ "$target" = "socket:[$inode]" ]; then
-                            exit 0
-                          fi
-                        done
-                      done <<< "$tcp_table"
-
-                      ${pkgs.coreutils}/bin/sleep 1
-                    done
-
-                    echo "anytls: main process did not own the configured IPv4 TCP listener within 15 seconds" >&2
-                    exit 1
-                  '';
-                  serviceConfig = {
-                    Type = "exec";
-                    User = serviceName;
-                    Group = serviceName;
-                    ExecStartPre = "+${passwordValidator}";
-                    ExecStart = "${lib.getExe singBoxPackage} run -c ${configPath}";
-                    Restart = "on-failure";
-                    RestartSec = "5s";
-                    TimeoutStartSec = "20s";
-                    StateDirectory = serviceName;
-                    StateDirectoryMode = "0750";
-                    RuntimeDirectory = serviceName;
-                    RuntimeDirectoryMode = "0750";
-                    UMask = "0077";
-                    AmbientCapabilities = bindCapabilities;
-                    CapabilityBoundingSet = bindCapabilities;
-                    LoadCredential = expectedLoadCredential;
-                    LockPersonality = true;
-                    NoNewPrivileges = true;
-                    PrivateDevices = true;
-                    PrivateTmp = true;
-                    ProtectClock = true;
-                    ProtectControlGroups = true;
-                    ProtectHome = true;
-                    ProtectHostname = true;
-                    ProtectKernelLogs = true;
-                    ProtectKernelModules = true;
-                    ProtectKernelTunables = true;
-                    ProtectProc = "invisible";
-                    ProtectSystem = "strict";
-                    RestrictAddressFamilies = [
-                      "AF_INET"
-                      "AF_UNIX"
-                    ];
-                    RestrictNamespaces = true;
-                    RestrictRealtime = true;
-                    RestrictSUIDSGID = true;
-                    SystemCallArchitectures = "native";
+                  # sing-box 1.14.1 propagates AnyTLS ListenTCP failure through
+                  # Inbound.Start -> Box.Start -> run(). Native restart handles
+                  # that failure; a separate /proc listener supervisor is redundant.
+                  serviceConfig = hardening // {
+                    ExecStartPre = lib.mkBefore [ "${passwordValidator}" ];
                   };
                 };
               };

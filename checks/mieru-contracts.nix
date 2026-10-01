@@ -40,94 +40,39 @@ let
       ];
     }).config;
   schemaAccepts = value: (builtins.tryEval (builtins.deepSeq (evalSettings value) true)).success;
-  unwrap =
-    value:
-    if builtins.isAttrs value && (value._type or null) == "if" then
-      if value.condition then unwrap value.content else null
-    else if builtins.isAttrs value && (value._type or null) == "order" then
-      unwrap value.content
-    else if builtins.isAttrs value && (value._type or null) == "override" then
-      unwrap value.content
-    else
-      value;
-  packagePkgs = pkgs // {
-    mieru = mieruPackage;
-  };
-  baseConfigFor =
-    settings: activeInstances:
-    let
-      names = map (user: user.passwordSecretName) settings.users;
-    in
-    {
-      clanwright.vpn.mieru = { inherit activeInstances; };
-      networking = {
-        nameservers = settings.dnsResolverIPv4s;
-        firewall = {
-          enable = true;
-          backend = "nftables";
-        };
-        nftables.enable = true;
-      };
-      sops = {
-        useSystemdActivation = true;
-        placeholder = lib.genAttrs names (name: "<SOPS:${name}:PLACEHOLDER>");
-        secrets = lib.genAttrs names (name: {
-          path = "/run/secrets/${name}";
-        });
-        templates."mita.json".path = "/run/secrets-rendered/mita.json";
-      };
-    };
+  nativeEvaluate = import ./lib/provider-evaluation.nix { inherit inputs; };
   evaluateWith =
     {
       rawSettings,
       activeInstances ? [ "fixture--mieru" ],
-      targetPkgs ? packagePkgs,
-      mutateEffectiveConfig ? (value: value),
+      targetSystem ? "x86_64-linux",
+      extraModule ? { },
     }:
     let
       settings = evalSettings rawSettings;
       instance = service.roles.gateway.perInstance {
         inherit settings;
         instanceName = "fixture--mieru";
-        machine.name = "fixture";
       };
-      baseConfig = baseConfigFor settings activeInstances;
-      bootstrap = instance.nixosModule {
-        config = baseConfig;
-        pkgs = targetPkgs;
+      result = nativeEvaluate {
+        inherit instance settings;
+        prefix = "mieru";
+        system = targetSystem;
+
+        extraModule = {
+          imports = [ extraModule ];
+          clanwright.vpn.mieru.activeInstances = lib.mkForce activeInstances;
+        };
       };
-      bootstrapModule = bootstrap.config;
-      effectiveConfig = mutateEffectiveConfig (
-        baseConfig
-        // {
-          networking = baseConfig.networking // {
-            nftables = baseConfig.networking.nftables // {
-              tables.vpn_mieru_egress = unwrap bootstrapModule.networking.nftables.tables.vpn_mieru_egress;
-            };
-          };
-          systemd.services.mita = unwrap bootstrapModule.systemd.services.mita;
-        }
-      );
-      definition = instance.nixosModule {
-        config = effectiveConfig;
-        pkgs = targetPkgs;
-      };
-      module = definition.config;
-      template = unwrap (module.sops.templates."mita.json" or null);
+      inherit (result) module;
+      template = module.sops.templates."mita.json" or null;
     in
-    {
-      inherit
-        definition
-        effectiveConfig
-        instance
-        module
-        settings
-        ;
-      assertionsPass = builtins.all (entry: entry.assertion) module.assertions;
+    result
+    // {
+      inherit instance settings template;
+      table = module.networking.nftables.tables.vpn_mieru_egress or null;
+      unit = module.systemd.services.mita or null;
       rendered = if template == null then null else builtins.fromJSON template.content;
-      table = unwrap (module.networking.nftables.tables.vpn_mieru_egress or null);
-      inherit template;
-      unit = unwrap module.systemd.services.mita;
     };
   enabled = evaluateWith { rawSettings = baseSettings; };
   disabled = evaluateWith {
@@ -172,113 +117,56 @@ let
   };
   wrongNameservers = evaluateWith {
     rawSettings = baseSettings;
-    mutateEffectiveConfig =
-      config:
-      config
-      // {
-        networking = config.networking // {
-          nameservers = [ "1.1.1.1" ];
-        };
-      };
+    extraModule = {
+      networking.nameservers = lib.mkForce [ "1.1.1.1" ];
+    };
   };
   disabledNftables = evaluateWith {
     rawSettings = baseSettings;
-    mutateEffectiveConfig =
-      config:
-      config
-      // {
-        networking = config.networking // {
-          nftables = config.networking.nftables // {
-            enable = false;
-          };
-        };
-      };
+    extraModule = {
+      networking.nftables.enable = lib.mkForce false;
+    };
   };
   weakenedGuard = evaluateWith {
     rawSettings = baseSettings;
-    mutateEffectiveConfig =
-      config:
-      config
-      // {
-        networking = config.networking // {
-          nftables = config.networking.nftables // {
-            tables.vpn_mieru_egress = config.networking.nftables.tables.vpn_mieru_egress // {
-              content = "chain output { type filter hook output priority filter; policy accept; }";
-            };
-          };
-        };
-      };
+    extraModule = {
+      networking.nftables.tables.vpn_mieru_egress.content =
+        lib.mkForce "chain output { type filter hook output priority filter; policy accept; }";
+    };
   };
   disabledGuardTable = evaluateWith {
     rawSettings = baseSettings;
-    mutateEffectiveConfig =
-      config:
-      config
-      // {
-        networking = config.networking // {
-          nftables = config.networking.nftables // {
-            tables.vpn_mieru_egress = config.networking.nftables.tables.vpn_mieru_egress // {
-              enable = false;
-            };
-          };
-        };
-      };
+    extraModule = {
+      networking.nftables.tables.vpn_mieru_egress.enable = lib.mkForce false;
+    };
   };
   wrongIdentity = evaluateWith {
     rawSettings = baseSettings;
-    mutateEffectiveConfig =
-      config:
-      config
-      // {
-        systemd.services.mita = config.systemd.services.mita // {
-          serviceConfig = config.systemd.services.mita.serviceConfig // {
-            User = "root";
-          };
-        };
-      };
+    extraModule = {
+      systemd.services.mita.serviceConfig.User = lib.mkForce "root";
+    };
   };
   dynamicIdentity = evaluateWith {
     rawSettings = baseSettings;
-    mutateEffectiveConfig =
-      config:
-      config
-      // {
-        systemd.services.mita = config.systemd.services.mita // {
-          serviceConfig = config.systemd.services.mita.serviceConfig // {
-            DynamicUser = true;
-          };
-        };
-      };
+    extraModule = {
+      systemd.services.mita.serviceConfig.DynamicUser = lib.mkForce true;
+    };
   };
   wrongCommand = evaluateWith {
     rawSettings = baseSettings;
-    mutateEffectiveConfig =
-      config:
-      config
-      // {
-        systemd.services.mita = config.systemd.services.mita // {
-          serviceConfig = config.systemd.services.mita.serviceConfig // {
-            ExecStart = "/bin/false";
-          };
-        };
-      };
-  };
-  wrongPackage = evaluateWith {
-    rawSettings = baseSettings;
-    targetPkgs = packagePkgs // {
-      mieru = pkgs.hello;
+    extraModule = {
+      systemd.services.mita.serviceConfig.ExecStart = lib.mkForce "/bin/false";
     };
   };
-  armPkgs = packagePkgs // {
-    stdenv = packagePkgs.stdenv // {
-      hostPlatform = packagePkgs.stdenv.hostPlatform // {
-        system = "aarch64-linux";
-      };
+  foreignHostAlias = evaluateWith {
+    rawSettings = baseSettings;
+    extraModule = {
+      nixpkgs.overlays = [ (_final: _prev: { mieru = pkgs.hello; }) ];
     };
   };
   unsupportedPlatform = evaluateWith {
     rawSettings = baseSettings;
-    targetPkgs = armPkgs;
+    targetSystem = "aarch64-linux";
   };
   highPort = evaluateWith {
     rawSettings = baseSettings // {
@@ -295,15 +183,16 @@ let
   source = builtins.readFile ../clanServices/mieru/default.nix;
   disabledResults = {
     exports = disabled.instance.exports == { };
-    assertions = disabled.module.assertions == [ ];
-    users = disabled.module.users.groups == { } && disabled.module.users.users == { };
+    assertions = disabled.assertions == [ ];
+    users = !(disabled.module.users.groups ? mita) && !(disabled.module.users.users ? mita);
     secrets = disabled.module.sops.secrets == { };
     templates = disabled.module.sops.templates == { };
-    tables = disabled.module.networking.nftables.tables == { };
-    services = disabled.module.systemd.services == { };
+    tables = !(disabled.module.networking.nftables.tables ? vpn_mieru_egress);
+    services = !(disabled.module.systemd.services ? mita);
     overlays = disabled.module.nixpkgs.overlays == [ ];
   };
-  disabledContract = builtins.all (value: value) (builtins.attrValues disabledResults);
+  disabledContract =
+    disabled.nativeAssertionsPass && builtins.all (value: value) (builtins.attrValues disabledResults);
   schemaContract =
     schemaAccepts baseSettings
     && schemaAccepts (
@@ -348,16 +237,17 @@ let
       }
     ))
     && !(schemaAccepts (baseSettings // { dnsUpstreamIPv4s = [ "9.9.9.9" ]; }))
-    && !duplicateUsers.assertionsPass
-    && !duplicateSecrets.assertionsPass
-    && !noUsers.assertionsPass
-    && !duplicateInstances.assertionsPass
-    && !noInstanceClaim.assertionsPass
-    && !wrongNameservers.assertionsPass
-    && !disabledNftables.assertionsPass
-    && !unsupportedPlatform.assertionsPass;
+    && duplicateUsers.rejects "device identities must be unique."
+    && duplicateSecrets.rejects "every device must use a distinct SOPS password secret."
+    && noUsers.rejects "at least one per-device user is required."
+    && duplicateInstances.rejects "only one active instance may claim the upstream singleton mita runtime per machine."
+    && noInstanceClaim.rejects "only one active instance may claim the upstream singleton mita runtime per machine."
+    && wrongNameservers.rejects "networking.nameservers must exactly equal dnsResolverIPv4s because stock mita uses the system resolver."
+    && disabledNftables.rejects "the module-owned process egress guard requires networking.nftables.enable."
+    && unsupportedPlatform.rejects "runtime support is restricted to x86_64-linux.";
   configContract =
     enabled.assertionsPass
+    && enabled.nativeAssertionsPass
     &&
       enabled.rendered == {
         dns.dualStack = "ONLY_IPv4";
@@ -373,13 +263,13 @@ let
             allowLoopbackIP = false;
             allowPrivateIP = false;
             name = "phone";
-            password = "<SOPS:fixture/mieru-phone-password:PLACEHOLDER>";
+            password = enabled.module.sops.placeholder."fixture/mieru-phone-password";
           }
           {
             allowLoopbackIP = false;
             allowPrivateIP = false;
             name = "laptop";
-            password = "<SOPS:fixture/mieru-laptop-password:PLACEHOLDER>";
+            password = enabled.module.sops.placeholder."fixture/mieru-laptop-password";
           }
         ];
       }
@@ -389,63 +279,62 @@ let
     && !(enabled.rendered ? egress);
   exportContract =
     provider == {
-      schemaVersion = 2;
-      instanceId = "fixture--mieru";
-      machine = "fixture";
-      role = "gateway";
-      protocol = "mieru";
-      enabled = true;
-      endpoint = {
-        domain = null;
-        ipv4 = "192.0.2.13";
-        port = 443;
-        transport = "tcp";
-      };
-      transportMetadata = {
-        protocol = "mieru";
-        userNames = [
-          "phone"
-          "laptop"
-        ];
-        credentialEncoding = "base64url";
-      };
-      profileNames = [
-        "phone"
-        "laptop"
-      ];
-      secretNames.users = {
-        phone = "fixture/mieru-phone-password";
-        laptop = "fixture/mieru-laptop-password";
+      schemaVersion = 3;
+      connection.mieru = {
+        endpoint = {
+          ipv4 = "192.0.2.13";
+          port = 443;
+        };
+        clients = {
+          phone.passwordSecret = "fixture/mieru-phone-password";
+          laptop.passwordSecret = "fixture/mieru-laptop-password";
+        };
       };
     };
-  guardContract =
-    enabled.table.enable
-    && enabled.table.family == "inet"
-    && lib.hasInfix "chain input_guard" tableContent
-    && lib.hasInfix "type filter hook input priority -10" tableContent
-    && lib.hasInfix "meta nfproto ipv6 tcp dport 443 drop" tableContent
-    && lib.hasInfix "ip daddr != 192.0.2.13 tcp dport 443 drop" tableContent
-    && lib.hasInfix ''meta skuid "mita" ct direction reply accept'' tableContent
-    && lib.hasInfix "ip daddr { 127.0.0.1, 9.9.9.9 } udp dport 53 accept" tableContent
-    && lib.hasInfix "ip daddr { 127.0.0.1, 9.9.9.9 } tcp dport 53 accept" tableContent
-    && lib.hasInfix "100.64.0.0/10" tableContent
-    && lib.hasInfix "169.254.0.0/16" tableContent
-    && lib.hasInfix "224.0.0.0/4" tableContent
-    && lib.hasInfix ''meta skuid "mita" ip6 daddr ::/0 drop'' tableContent
-    && !weakenedGuard.assertionsPass
-    && !disabledGuardTable.assertionsPass
-    && lib.hasInfix "ip daddr 192.0.2.13 tcp dport 443 accept" (
-      unwrap enabled.module.networking.firewall.extraInputRules
-    )
-    && !(enabled.module.networking.firewall ? allowedTCPPorts)
-    && !(enabled.module.networking.firewall ? trustedInterfaces)
-    && highPort.assertionsPass
-    &&
+  guardResults = {
+    enabledTable = enabled.table.enable;
+    inetFamily = enabled.table.family == "inet";
+    inputChain = lib.hasInfix "chain input_guard" tableContent;
+    inputPriority = lib.hasInfix "type filter hook input priority -10" tableContent;
+    ipv6IngressDenial = lib.hasInfix "meta nfproto ipv6 tcp dport 443 drop" tableContent;
+    otherIPv4IngressDenial = lib.hasInfix "ip daddr != 192.0.2.13 tcp dport 443 drop" tableContent;
+    repliesPreserved = lib.hasInfix ''meta skuid "mita" ct direction reply accept'' tableContent;
+    udpResolvers = lib.hasInfix "ip daddr { 127.0.0.1, 9.9.9.9 } udp dport 53 accept" tableContent;
+    tcpResolvers = lib.hasInfix "ip daddr { 127.0.0.1, 9.9.9.9 } tcp dport 53 accept" tableContent;
+    cgnatDenial = lib.hasInfix "100.64.0.0/10" tableContent;
+    linkLocalDenial = lib.hasInfix "169.254.0.0/16" tableContent;
+    multicastDenial = lib.hasInfix "224.0.0.0/4" tableContent;
+    ipv6EgressDenial = lib.hasInfix ''meta skuid "mita" ip6 daddr ::/0 drop'' tableContent;
+    weakenedGuardRejected = weakenedGuard.rejects "the module-owned ingress and process egress guard must not be removed or weakened.";
+    disabledTableRejected = disabledGuardTable.rejects "the module-owned ingress and process egress guard must not be removed or weakened.";
+    destinationScopedIngress = lib.hasInfix "ip daddr 192.0.2.13 tcp dport 443 accept" enabled.module.networking.firewall.extraInputRules;
+    noWildcardIngressPort = enabled.module.networking.firewall.allowedTCPPorts == [ ];
+    nativeLoopbackDefault = enabled.module.networking.firewall.trustedInterfaces == [ "lo" ];
+    highPortAssertions = highPort.assertionsPass;
+    highPortNativeAssertions = highPort.nativeAssertionsPass;
+    highPortTablePorts =
       dportsIn highPort.table.content == [
         "8443"
         "53"
-      ]
-    && dportsIn (unwrap highPort.module.networking.firewall.extraInputRules) == [ "8443" ];
+      ];
+    highPortIngressPort = dportsIn highPort.module.networking.firewall.extraInputRules == [ "8443" ];
+  };
+  guardContract = builtins.deepSeq guardResults (
+    builtins.all (value: value) (builtins.attrValues guardResults)
+  );
+  hostAliasResults = {
+    aliasActuallyDiffers =
+      foreignHostAlias.pkgs.mieru == pkgs.hello && foreignHostAlias.pkgs.mieru != mieruPackage;
+    inherit (foreignHostAlias) assertionsPass nativeAssertionsPass;
+    fixedExecStart = foreignHostAlias.unit.serviceConfig.ExecStart == "${mieruPackage}/bin/mita run";
+    unchangedExecStart =
+      foreignHostAlias.unit.serviceConfig.ExecStart == enabled.unit.serviceConfig.ExecStart;
+    fixedRestartTrigger = foreignHostAlias.unit.restartTriggers == [ mieruPackage ];
+    noOwnedOverlay = enabled.module.nixpkgs.overlays == [ ];
+  };
+  hostAliasContract = builtins.deepSeq hostAliasResults (
+    builtins.all (value: value) (builtins.attrValues hostAliasResults)
+  );
   runtimeContract =
     enabled.unit.serviceConfig.Type == "exec"
     && enabled.unit.serviceConfig.User == "mita"
@@ -455,7 +344,7 @@ let
     && lib.hasPrefix "+" enabled.unit.serviceConfig.ExecStartPre
     &&
       enabled.unit.serviceConfig.Environment == [
-        "MITA_CONFIG_JSON_FILE=/run/secrets-rendered/mita.json"
+        "MITA_CONFIG_JSON_FILE=${enabled.template.path}"
         "MITA_UDS_PATH=/run/mita/mita.sock"
         "MITA_LOG_NO_TIMESTAMP=true"
       ]
@@ -488,12 +377,11 @@ let
       && secret.mode == "0400"
       && secret.restartUnits == [ "mita.service" ]
     ) (builtins.attrValues enabled.module.sops.secrets)
-    && !wrongIdentity.assertionsPass
-    && !dynamicIdentity.assertionsPass
-    && !wrongCommand.assertionsPass
-    && !wrongPackage.assertionsPass
+    && wrongIdentity.rejects "mita identity, command, credential validation, and runtime paths must remain guarded."
+    && dynamicIdentity.rejects "mita identity, command, credential validation, and runtime paths must remain guarded."
+    && wrongCommand.rejects "mita identity, command, credential validation, and runtime paths must remain guarded."
     && lib.getVersion mieruPackage == "3.36.0";
-  passwordGuardContract =
+  passwordValidatorSourceHygiene =
     lib.hasInfix "byte_count" source
     && lib.hasInfix "base64url_byte_count" source
     && lib.hasInfix ''"$byte_count" -gt 64'' source
@@ -505,8 +393,9 @@ let
     && configContract
     && exportContract
     && guardContract
+    && hostAliasContract
     && runtimeContract
-    && passwordGuardContract
+    && passwordValidatorSourceHygiene
     && disabledContract;
 in
 if !contract then
@@ -518,7 +407,10 @@ if !contract then
         disabledResults
         exportContract
         guardContract
-        passwordGuardContract
+        guardResults
+        hostAliasContract
+        hostAliasResults
+        passwordValidatorSourceHygiene
         runtimeContract
         schemaContract
         ;
@@ -532,7 +424,10 @@ else
       disabledContract
       exportContract
       guardContract
-      passwordGuardContract
+      guardResults
+      hostAliasContract
+      hostAliasResults
+      passwordValidatorSourceHygiene
       runtimeContract
       schemaContract
       ;

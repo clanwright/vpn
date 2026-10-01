@@ -4,7 +4,6 @@
   pkgs,
   mihomoPackage,
   manifest,
-  renderedProfiles,
   settings,
   runtimeBase,
   profileRoot,
@@ -172,101 +171,94 @@ let
     '';
 
   title = settings.linksPage.title;
-  phaseScripts = {
-    revoke-current = ''
-      failure_stage=revocation
-      failure_reason=current-generation-revocation-failed
-      rm -f -- ${lib.escapeShellArg profileRoot}
-      find "$runtime_base/generations" -mindepth 1 -maxdepth 1 -exec rm -rf -- {} +
-    '';
-    sync-local-assets = ''
-      failure_stage=assets-readiness
-      failure_reason=local-asset-sync-failed
-      ${localAssetSyncScript}
-    '';
-    check-assets = ''
-      failure_stage=assets-readiness
-      failure_reason=required-assets-missing-or-empty
-      ${lib.concatMapStringsSep "\n" (path: ''
-        test -s ${lib.escapeShellArg path}
-      '') requiredAssetPaths}
-    '';
-    prepare-generation = ''
-      external_generation_expires=0
-      failure_stage=file-installation
-      failure_reason=install-failed
-      stage="$(mktemp -d ${lib.escapeShellArg "${runtimeBase}/generations/.staging.XXXXXX"})"
-      install -d -o root -g ${lib.escapeShellArg readerGroup} -m 0750 "$stage/profiles"
-      html_escape() { printf '%s' "$1" | jq -sRr @html; }
-      ${lib.optionalString settings.linksPage.enable ''
-        install -d -o root -g ${lib.escapeShellArg readerGroup} -m 0750 "$stage/links"
-        links_tmp="$stage/links/index.html"
-        escaped_title="$(html_escape ${lib.escapeShellArg title})"
-        printf '<!doctype html><html><head><meta charset="utf-8"><title>%s</title></head><body><h1>%s</h1><ul>\n' \
-          "$escaped_title" "$escaped_title" > "$links_tmp"
-      ''}
-    '';
-    render-artifacts = ''
-      ${lib.concatMapStringsSep "\n" profileCase checkedManifest.profiles}
-    '';
-    finalize-links = ''
-      failure_stage=file-installation
-      failure_reason=install-failed
-      ${lib.optionalString settings.linksPage.enable ''
-        printf '</ul></body></html>\n' >> "$links_tmp"
-        chown root:${lib.escapeShellArg readerGroup} "$links_tmp"
-        chmod 0440 "$links_tmp"
-      ''}
-    '';
-    seal-generation = ''
-      failure_stage=file-installation
-      failure_reason=install-failed
-      find "$stage" -type d -exec chown root:${lib.escapeShellArg readerGroup} {} +
-      find "$stage" -type d -exec chmod 0750 {} +
-      find "$stage" -type f -exec chown root:${lib.escapeShellArg readerGroup} {} +
-      find "$stage" -type f -exec chmod 0440 {} +
-      generation="$runtime_base/generations/generation-$(date -u +%Y%m%dT%H%M%SZ)-$$"
-      mv -- "$stage" "$generation"
-      stage=""
-    '';
-    expose-generation = ''
-      ${lib.optionalString hasExternal ''
-        if [ "$external_generation_expires" -ne 0 ] && [ "$(( $(date +%s) + external_holdback ))" -ge "$external_generation_expires" ]; then
-          rm -rf -- "$generation"
-          generation=""
-          if [ "''${#private_tmp_files[@]}" -ne 0 ]; then rm -f -- "''${private_tmp_files[@]}"; fi
-          private_tmp_files=()
-          continue
-        fi
-      ''}
-      failure_stage=file-installation
-      failure_reason=install-failed
-      link_tmp="$runtime_base/published/.current.$$"
-      ln -s -- "$generation" "$link_tmp"
-      mv -Tf -- "$link_tmp" ${lib.escapeShellArg profileRoot}
-    '';
-    retire-old-generations = ''
-      failure_stage=cleanup
-      failure_reason=generation-cleanup-failed
-      find "$runtime_base/generations" -mindepth 1 -maxdepth 1 ! -path "$generation" -exec rm -rf -- {} +
-    '';
-    cleanup-private-temporaries = ''
-      failure_stage=cleanup
-      failure_reason=temporary-file-cleanup-failed
-      if [ "''${#private_tmp_files[@]}" -ne 0 ]; then rm -f -- "''${private_tmp_files[@]}"; fi
-      private_tmp_files=()
-      generation=""
-      trap - EXIT
-    '';
-  };
-  publicationScript = lib.concatMapStringsSep "\n" (phase: ''
-    # publication-phase:${phase.id}
-    ${phaseScripts.${phase.id}}
-  '') checkedManifest.publicationPhases;
+  publicationScript = ''
+    # publication-phase:revoke-current
+    failure_stage=revocation
+    failure_reason=current-generation-revocation-failed
+    rm -f -- ${lib.escapeShellArg profileRoot}
+    find "$runtime_base/generations" -mindepth 1 -maxdepth 1 -exec rm -rf -- {} +
+
+    # publication-phase:sync-local-assets
+    failure_stage=assets-readiness
+    failure_reason=local-asset-sync-failed
+    ${localAssetSyncScript}
+
+    # publication-phase:check-assets
+    failure_stage=assets-readiness
+    failure_reason=required-assets-missing-or-empty
+    ${lib.concatMapStringsSep "\n" (path: ''
+      test -s ${lib.escapeShellArg path}
+    '') requiredAssetPaths}
+
+    # publication-phase:prepare-generation
+    external_generation_expires=0
+    failure_stage=file-installation
+    failure_reason=install-failed
+    stage="$(mktemp -d ${lib.escapeShellArg "${runtimeBase}/generations/.staging.XXXXXX"})"
+    install -d -o root -g ${lib.escapeShellArg readerGroup} -m 0750 "$stage/profiles"
+    html_escape() { printf '%s' "$1" | jq -sRr @html; }
+    ${lib.optionalString settings.linksPage.enable ''
+      install -d -o root -g ${lib.escapeShellArg readerGroup} -m 0750 "$stage/links"
+      links_tmp="$stage/links/index.html"
+      escaped_title="$(html_escape ${lib.escapeShellArg title})"
+      printf '<!doctype html><html><head><meta charset="utf-8"><title>%s</title></head><body><h1>%s</h1><ul>\n' \
+        "$escaped_title" "$escaped_title" > "$links_tmp"
+    ''}
+
+    # publication-phase:render-artifacts
+    ${lib.concatMapStringsSep "\n" profileCase checkedManifest.profiles}
+
+    # publication-phase:finalize-links
+    failure_stage=file-installation
+    failure_reason=install-failed
+    ${lib.optionalString settings.linksPage.enable ''
+      printf '</ul></body></html>\n' >> "$links_tmp"
+      chown root:${lib.escapeShellArg readerGroup} "$links_tmp"
+      chmod 0440 "$links_tmp"
+    ''}
+
+    # publication-phase:seal-generation
+    failure_stage=file-installation
+    failure_reason=install-failed
+    find "$stage" -type d -exec chown root:${lib.escapeShellArg readerGroup} {} +
+    find "$stage" -type d -exec chmod 0750 {} +
+    find "$stage" -type f -exec chown root:${lib.escapeShellArg readerGroup} {} +
+    find "$stage" -type f -exec chmod 0440 {} +
+    generation="$runtime_base/generations/generation-$(date -u +%Y%m%dT%H%M%SZ)-$$"
+    mv -- "$stage" "$generation"
+    stage=""
+
+    # publication-phase:expose-generation
+    ${lib.optionalString hasExternal ''
+      if [ "$external_generation_expires" -ne 0 ] && [ "$(( $(date +%s) + external_holdback ))" -ge "$external_generation_expires" ]; then
+        rm -rf -- "$generation"
+        generation=""
+        if [ "''${#private_tmp_files[@]}" -ne 0 ]; then rm -f -- "''${private_tmp_files[@]}"; fi
+        private_tmp_files=()
+        continue
+      fi
+    ''}
+    failure_stage=file-installation
+    failure_reason=install-failed
+    link_tmp="$runtime_base/published/.current.$$"
+    ln -s -- "$generation" "$link_tmp"
+    mv -Tf -- "$link_tmp" ${lib.escapeShellArg profileRoot}
+
+    # publication-phase:retire-old-generations
+    failure_stage=cleanup
+    failure_reason=generation-cleanup-failed
+    find "$runtime_base/generations" -mindepth 1 -maxdepth 1 ! -path "$generation" -exec rm -rf -- {} +
+
+    # publication-phase:cleanup-private-temporaries
+    failure_stage=cleanup
+    failure_reason=temporary-file-cleanup-failed
+    if [ "''${#private_tmp_files[@]}" -ne 0 ]; then rm -f -- "''${private_tmp_files[@]}"; fi
+    private_tmp_files=()
+    generation=""
+    trap - EXIT
+  '';
 in
 {
-  inherit renderedProfiles;
-  inherit (checkedManifest) publicationPhases;
   sops.secrets = secretDecls;
   systemd = {
     tmpfiles.rules = [

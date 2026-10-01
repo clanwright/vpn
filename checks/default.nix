@@ -16,7 +16,7 @@ let
         system
         ;
     };
-    client-render-contracts = import ./client-render-smoke.nix {
+    client-render-contracts = import ./client-render-contracts.nix {
       inherit
         inputs
         pkgs
@@ -120,23 +120,61 @@ let
         ;
     };
   };
+  # This independent inventory makes accidental deletion of an import fail.
+  expectedSuites = [
+    "adguard-safe-search-contracts"
+    "adguardhome-contracts"
+    "anytls-contracts"
+    "awg-contracts"
+    "client-render-contracts"
+    "display-names-contracts"
+    "domain-contracts"
+    "external-subscriptions-contracts"
+    "mieru-contracts"
+    "naiveproxy-contracts"
+    "package-authority-contracts"
+    "provider-contracts"
+    "publisher-manifest-contracts"
+    "result-checker-contracts"
+    "trusttunnel-contracts"
+    "unbound-contracts"
+    "xray-contracts"
+  ];
+  checkInventory =
+    expected: suites:
+    if expected != [ ] && builtins.attrNames suites == expected then
+      suites
+    else
+      throw "evaluationTests suite inventory is empty, missing or unexpected";
   allBooleansTrue =
     value:
     if builtins.isBool value then
       value
     else if builtins.isAttrs value then
-      builtins.all allBooleansTrue (builtins.attrValues value)
+      value != { } && builtins.all allBooleansTrue (builtins.attrValues value)
     else if builtins.isList value then
-      builtins.all allBooleansTrue value
+      value != [ ] && builtins.all allBooleansTrue value
     else
       throw "evaluationTests results must contain only booleans, attribute sets and lists";
+  resultIsTrue = value: builtins.deepSeq value (allBooleansTrue value);
   checkResult =
     name: value:
-    if builtins.deepSeq value (allBooleansTrue value) then
+    if resultIsTrue value then
       value
     else
       throw "Pure Nix evaluation contract '${name}' returned a false diagnostic";
   resultCheckerContracts = {
+    emptySuiteRejected = !(builtins.tryEval (checkResult "empty-suite" { })).success;
+    emptyListRejected = !(builtins.tryEval (checkResult "empty-list" [ ])).success;
+    emptyInventoryRejected = !(builtins.tryEval (checkInventory [ ] { })).success;
+    missingSuiteRejected = !(builtins.tryEval (checkInventory [ "required-contracts" ] { })).success;
+    unexpectedSuiteRejected =
+      !(builtins.tryEval (
+        checkInventory [ "required-contracts" ] {
+          required-contracts = true;
+          unexpected-contracts = true;
+        }
+      )).success;
     falseDiagnosticRejected =
       !(builtins.tryEval (
         builtins.deepSeq (checkResult "false-diagnostic" {
@@ -148,15 +186,28 @@ let
       !(builtins.tryEval (
         builtins.deepSeq (checkResult "non-boolean-diagnostic" { diagnostic = "pass"; }) true
       )).success;
+    nestedNonBooleanRejected =
+      !(builtins.tryEval (
+        builtins.deepSeq (checkResult "nested-non-boolean" { nested = [ { diagnostic = null; } ]; }) true
+      )).success;
+    allLeavesForced =
+      !(builtins.tryEval (resultIsTrue {
+        first = false;
+        later = throw "every leaf must be forced";
+      })).success;
   };
   results = builtins.mapAttrs checkResult (
-    rawResults
-    // {
-      result-checker-contracts = resultCheckerContracts;
-    }
+    checkInventory expectedSuites (
+      rawResults
+      // {
+        result-checker-contracts = resultCheckerContracts;
+      }
+    )
   );
 in
 {
   inherit results;
+  moduleNames = builtins.attrNames self.clan.modules;
+  packageNames = builtins.attrNames self.packages.${system};
   all = builtins.deepSeq results true;
 }

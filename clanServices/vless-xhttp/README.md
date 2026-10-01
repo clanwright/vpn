@@ -60,18 +60,19 @@ Each device short ID is exactly 16 lowercase hex characters (8 bytes).
 Short forms and uppercase spellings are rejected, avoiding equivalent
 zero-padded/case-varied identities in Xray's decoder.
 
-`vpnProvider` retains protocol `vless-xhttp` and publishes the endpoint,
-REALITY target/server names/public key, per-profile short IDs, XHTTP path/mode,
-fingerprint, DoH metadata, and secret names. In direct mode the module opens only the exact
-`bindIPv4:port` destination through nftables; it does not add a global allowed
-TCP port.
+`vpnProvider` schema 3 publishes `connection.vless-xhttp` with the public
+endpoint, client REALITY server name/public key/fingerprint/MLKEM policy, XHTTP
+path, DoH hostname/IPv4 hints and `clients.<device> = { uuidSecret; shortId; }`.
+Server target lists and private-key bindings stay in gateway settings. In direct
+mode the module opens only the exact `bindIPv4:port` destination through
+nftables; it does not add a global allowed TCP port.
 The consumer must explicitly enable the nftables firewall backend for direct
 mode; that mode rejects disabled firewalls or the iptables backend. With
 `localListener`, the module adds no firewall rule. The consumer owns the public
 router's exposure, including keeping internal ports inaccessible externally.
 
 The client flag is exported as
-`transportMetadata.reality.supportX25519MLKEM768`. It describes client policy;
+`connection.vless-xhttp.reality.supportX25519MLKEM768`. It describes client policy;
 it adds no server-side JSON setting.
 
 Operator checks and activation guidance are in

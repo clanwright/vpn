@@ -5,48 +5,46 @@
 }:
 let
   lib = inputs.nixpkgs.lib;
-  appsPkgs = import inputs.apps-nixpkgs { inherit system; };
-  modernAppsPkgs = import inputs.modern-apps-nixpkgs { inherit system; };
-  trustTunnelPkgs = import inputs.trusttunnel-nixpkgs { inherit system; };
+  stockPkgs = inputs.nixpkgs.legacyPackages.${system};
   packageSpecs = {
     mihomo = {
-      package = appsPkgs.mihomo;
+      package = stockPkgs.mihomo;
       version = "1.19.31";
     };
     xray = {
-      package = appsPkgs.xray;
+      package = stockPkgs.xray;
       version = "26.9.9";
     };
     adguardhome = {
-      package = appsPkgs.adguardhome;
+      package = stockPkgs.adguardhome;
       version = "0.107.79";
     };
     dnsproxy = {
-      package = appsPkgs.dnsproxy;
+      package = stockPkgs.dnsproxy;
       version = "0.84.1";
     };
     unbound = {
-      package = appsPkgs.unbound-with-systemd;
+      package = stockPkgs.unbound-with-systemd;
       version = "1.26.0";
     };
     sing-box = {
-      package = modernAppsPkgs.sing-box;
+      package = stockPkgs.sing-box;
       version = "1.14.1";
     };
     mieru = {
-      package = modernAppsPkgs.mieru;
+      package = stockPkgs.mieru;
       version = "3.36.0";
     };
     amneziawg-go = {
-      package = modernAppsPkgs.amneziawg-go;
+      package = stockPkgs.amneziawg-go;
       version = "3.1.20260828";
     };
     amneziawg-tools = {
-      package = modernAppsPkgs.amneziawg-tools;
+      package = stockPkgs.amneziawg-tools;
       version = "3.1.20260812";
     };
     trusttunnel-endpoint = {
-      package = trustTunnelPkgs.trusttunnel-endpoint;
+      package = stockPkgs.trusttunnel-endpoint;
       version = "1.1.0";
     };
   };

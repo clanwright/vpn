@@ -105,7 +105,7 @@ let
     machine.name = "fixture";
   };
   provider = instance.exports.vpnProvider;
-  metadata = provider.transportMetadata;
+  protocolPolicy = import ../modules/contracts/protocol-policy.nix;
   consumer = import ./lib/consumer.nix { inherit inputs root self; };
   consumerResult = consumer { instanceNames = [ "vpn-amneziawg" ]; };
   inherit (consumerResult) machine;
@@ -347,16 +347,36 @@ let
     && !(schemaAccepts (baseSettings // { serverPersistentKeepalive = 25; }));
 
   exportContract =
-    provider.schemaVersion == 2
-    && provider.secretNames.headerProtectionKey == "fixture/awg-header-protection-key"
-    && provider.secretNames.clientPrivateKey.tablet == "consumer/arbitrary-tablet-private-key"
-    && metadata.generation == 3
-    && metadata.profile == validation.profile
-    && metadata.mtu == 1280
-    && !(metadata ? headerProtectionKey)
-    && !(metadata ? peerPublicKeys)
-    && !(builtins.head metadata.peers ? clientPrivateKeySecretName)
-    && !(metadata ? extraOptions)
+    provider == {
+      schemaVersion = 3;
+      connection.amneziawg = {
+        endpoint = {
+          hostname = baseSettings.endpointDomain;
+          ipv4 = baseSettings.listenIPv4;
+          port = baseSettings.listenPort;
+        };
+        inherit (baseSettings) serverPublicKey;
+        headerProtectionKeySecret = "fixture/awg-header-protection-key";
+        clients.tablet = {
+          ipv4 = "10.77.0.2";
+          privateKeySecret = "consumer/arbitrary-tablet-private-key";
+          keepaliveSeconds = 25;
+        };
+      };
+    }
+    && protocolPolicy.awgGeneration == 3
+    && protocolPolicy.awgProfile == validation.profile
+    && protocolPolicy.awgMtu == 1280
+    &&
+      (service.roles.gateway.perInstance {
+        instanceName = "fixture--amneziawg";
+        settings = evalSettings (
+          baseSettings
+          // {
+            peers = map (peer: peer // { clientPersistentKeepalive = null; }) baseSettings.peers;
+          }
+        );
+      }).exports.vpnProvider.connection.amneziawg.clients.tablet.keepaliveSeconds == null
     &&
       validation.profile == {
         s1 = 12;
