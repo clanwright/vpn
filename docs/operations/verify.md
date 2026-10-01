@@ -49,6 +49,12 @@ exact package authority, secret wiring and combined Clan composition. Compiler
 variants avoid repeated full composition; retained composition fixtures cover
 actual units, restart targets and exposure wiring.
 
+The domain suite also checks Clan's bundled native DataMesher source identity
+and dependency follows, native option provenance, its disabled default in the
+combined fixture and absence of runtime contributions. A throwing package value
+checks that disabled import does not require package evaluation. Upstream
+DataMesher package outputs and checks are not executed or built by this gate.
+
 | Result | Domain regression coverage |
 | --- | --- |
 | `client-render-contracts` | Provider/profile compatibility, DNS/routing, client structures and missing-input rejection. |

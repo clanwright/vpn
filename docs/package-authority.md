@@ -28,9 +28,16 @@ Clan, SOPS and Network revisions, including Network-owned nested package
 inputs, are recorded in [flake.lock](../flake.lock). This keeps package
 authority at its owning input rather than duplicating dependency pins in prose.
 
-The pinned Clan API requires a callable `data-mesher` service export. The local
-empty NixOS module export satisfies that interface without activating a mesh, manufacturing
-a service enable flag or selecting a runtime package.
+Clan owns its bundled native DataMesher dependency and NixOS module import.
+VPN does not replace that module or override its dependency. Its native
+`services.data-mesher.enable` default is false; the combined Clan fixture checks
+that no DataMesher runtime is added and that the disabled module does not force
+its package. The dependency follows Clan's existing nixpkgs, flake-parts and
+treefmt inputs rather than introducing separate platform pins.
+
+DataMesher is not a VPN runtime package or public module. Enabling Clan's mesh
+service is separate consumer-owned composition and is outside VPN's stock
+application package qualification and repository runtime support.
 
 ## Runtime package set
 

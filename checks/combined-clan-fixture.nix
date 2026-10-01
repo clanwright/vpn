@@ -1,5 +1,6 @@
 {
   combined,
+  dataMesherSource,
   fixture,
   lib,
   publisherManifest,
@@ -72,6 +73,22 @@ let
   trustTunnelPasswordSecret = machine.sops.secrets."fixture-trusttunnel-password";
   pathTokenSecret = machine.sops.secrets."publisher-profile-path-token-cHJvYmU";
   tmpfilesRules = machine.systemd.tmpfiles.rules;
+  nativeDataMesherResults = {
+    nativeEnableDeclaration =
+      machineOptions.services.data-mesher.enable.declarations == [
+        (dataMesherSource + "/nix/nixosModules/data-mesher/module.nix")
+      ];
+    disabledByNativeDefault =
+      machineOptions.services.data-mesher.enable.default == false
+      && machine.services.data-mesher.enable == false;
+    noServiceOrUnit = !(units ? data-mesher) && !(machine.systemd.units ? "data-mesher.service");
+    noIdentity = !(machine.users.users ? data-mesher) && !(machine.users.groups ? data-mesher);
+    noConfiguration = !(machine.environment.etc ? "data-mesher/dm.toml");
+    noRuntimeTmpfiles = builtins.all (rule: !(lib.hasInfix "data-mesher" rule)) tmpfilesRules;
+    noSystemPackage = builtins.all (
+      package: lib.getName package != "data-mesher"
+    ) machine.environment.systemPackages;
+  };
   afterFinalPrivateReset = lib.last (lib.splitString "private_tmp_files=()" publicationUnit.script);
   afterLocalAssetSync = lib.last (lib.splitString "local_asset_tmp=" publicationUnit.script);
   requiredFixtureAssetNames = map (asset: asset.filename) (
@@ -209,6 +226,7 @@ let
     == lib.sort builtins.lessThan (supportNames ++ serviceNames)
     && builtins.length (builtins.attrNames config._services.allServices) == 11
     && builtins.all (value: value) (builtins.attrValues nativeCompositionResults)
+    && builtins.all (value: value) (builtins.attrValues nativeDataMesherResults)
     && machine.services.xray.enable
     && units ? xray
     && units ? mita
@@ -410,7 +428,7 @@ in
 if !contract then
   throw "Combined external Clan fixture contract failed: ${
     builtins.toJSON {
-      inherit publicationPhaseResults nativeCompositionResults;
+      inherit publicationPhaseResults nativeCompositionResults nativeDataMesherResults;
     }
   }"
 else
@@ -418,6 +436,7 @@ else
     all = true;
     inherit
       nativeCompositionResults
+      nativeDataMesherResults
       assetLifecycleResults
       contract
       publicationPhaseContract

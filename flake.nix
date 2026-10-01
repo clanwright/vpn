@@ -5,14 +5,12 @@
     # One reviewed revision owns platform and unmodified application packages.
     nixpkgs.url = "github:NixOS/nixpkgs/8d5d270900d3fc75655ea2d9d248b234f6631439";
     # Test/integration dependency only; VPN does not re-export or enable it.
-    # Published Network v1.0.0, pinned to its verified peeled commit.
-    network.url = "github:clanwright/network/9421c102c9536a4345446a74aaaeb603cb6a23e3";
-    data-mesher.url = "path:./stubs/data-mesher";
+    # Published Network v1.0.1, pinned to its verified peeled commit.
+    network.url = "github:clanwright/network/e30e08028b88cd4e9706a0644e1f0273ebb88fdb";
     clan-core = {
       url = "github:clan-lol/clan-core/c612dac4b2bfb5278b7c366f250044ddb5401bcb";
       inputs = {
         nixpkgs.follows = "nixpkgs";
-        data-mesher.follows = "data-mesher";
         sops-nix = {
           url = "github:Mic92/sops-nix/5efb5a6f4f5ab192817d28557dd4d650fa14d866";
           inputs.nixpkgs.follows = "nixpkgs";

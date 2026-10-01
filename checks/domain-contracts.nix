@@ -7,6 +7,10 @@
 }:
 let
   lib = inputs.nixpkgs.lib;
+  nativeClanDependencyResults = import ./lib/native-clan-dependencies.nix { inherit inputs root; };
+  nativeClanDependencies = builtins.all (value: value) (
+    builtins.attrValues nativeClanDependencyResults
+  );
   fixture = import ./fixtures/example-clan.nix;
   consume = import ./lib/consumer.nix { inherit inputs root self; };
   vpnExports = import ../modules/contracts/vpn-exports.nix { inherit lib; };
@@ -498,11 +502,16 @@ let
   combined = consume {
     instanceNames = serviceNames;
     includeNetwork = true;
-    extraModule.systemd.services.adguardhome.wants = [ "unbound.service" ];
+    extraModule = {
+      systemd.services.adguardhome.wants = [ "unbound.service" ];
+      # Disabled native imports must not force the uncached application package.
+      services.data-mesher.package = throw "Disabled DataMesher forced its package";
+    };
   };
   inherit (combined) machine;
   combinedClanFixture = import ./combined-clan-fixture.nix {
     inherit combined fixture lib;
+    dataMesherSource = inputs.clan-core.inputs.data-mesher.outPath;
     publisherManifest = (compilePublisher publisherSettings combined.config.exports).manifest;
   };
   overrideAttempt = consume {
@@ -604,6 +613,7 @@ let
     && providerVersionsContract
     && independentPlacements
     && publisherFixtures
+    && nativeClanDependencies
     && combinedClanFixture.contract
     && awgTransportContract
     && mieruEndpointContract
@@ -629,6 +639,8 @@ if !contract then
         publisherFixtureResults
         publisherFixtures
         combinedClanFixture
+        nativeClanDependencies
+        nativeClanDependencyResults
         invalidFieldTypes
         missingAwgClientPrivateKeyBindingRejected
         invalidNestedFields
@@ -657,6 +669,8 @@ else
       naiveProviderResults
       dnsStatePreserved
       combinedClanFixture
+      nativeClanDependencies
+      nativeClanDependencyResults
       independentPlacements
       publisherFixtureResults
       publisherFixtures
